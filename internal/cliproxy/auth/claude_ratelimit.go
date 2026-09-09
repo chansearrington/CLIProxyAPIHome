@@ -55,10 +55,20 @@ func claudeHeadersIndicateUnifiedRateLimitRejection(headers http.Header) bool {
 // reset information is present, so the caller falls back to generic
 // exponential backoff -- same as CPA.
 //
-// Deliberately does NOT add CPA's crypto/rand 1-30s fuzz grace period: that
-// would make Home's own tests non-deterministic, which upstream's AGENTS.md
-// forbids for wall-clock behavior. If a fuzz window is wanted later, its
-// randomness source must be injectable so tests stay deterministic.
+// This function itself is deterministic: it takes `now` as an explicit
+// parameter rather than reading the clock internally, so its own unit tests
+// can pin a fixed instant. Its only caller today (parseUsageRetryHints's
+// "claude" case, in result.go) passes real time.Now().UTC() at the call
+// site -- same as every other provider's 429 path -- so that determinism is
+// local to this function's own tests, not a claim that Claude 429 handling
+// avoids wall-clock time end-to-end.
+//
+// Deliberately does NOT add CPA's crypto/rand 1-30s fuzz grace period
+// either: injecting real randomness here would remove even this function's
+// own test determinism (upstream's AGENTS.md asks for controllable clocks
+// over wall-clock reads in TTL/expiration-style unit tests). If a fuzz
+// window is wanted later, its randomness source must be injectable the same
+// way `now` already is.
 //
 // Mirrors CPA's own
 // internal/runtime/executor/helps/claude_ratelimit.go:parseClaudeRateLimitResetWithFuzz,
