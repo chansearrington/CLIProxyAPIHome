@@ -343,7 +343,18 @@ func blockSiblingModelStatesUntil(auth *Auth, resultModel string, deadline time.
 		sibling.NextRetryAfter = deadline
 		sibling.QuotaResetAt = time.Time{}
 		sibling.Quota = QuotaState{
-			Exceeded:      true,
+			Exceeded: true,
+			// Deliberately quotaScopeModel, not quotaScopeCredential, even
+			// though this whole fan-out only runs for a credential-scoped
+			// rejection (result.CredentialScope): aggregateModelQuota
+			// (invoked by updateAggregatedAvailability right after this
+			// call returns) unconditionally hardcodes Scope: quotaScopeModel
+			// on the auth-level Quota it derives from every ModelState,
+			// ignoring whatever Scope each individual ModelState carries.
+			// Setting "credential" here would be silently clobbered on the
+			// very next aggregation pass -- the credential-scoped signal is
+			// expressed by fanning this state out to every sibling model,
+			// not by this field's value.
 			Scope:         quotaScopeModel,
 			Reason:        "quota",
 			NextRecoverAt: deadline,
