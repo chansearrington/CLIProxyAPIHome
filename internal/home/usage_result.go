@@ -2,6 +2,7 @@ package home
 
 import (
 	"context"
+	"net/http"
 	"strings"
 
 	coreauth "github.com/router-for-me/CLIProxyAPIHome/internal/cliproxy/auth"
@@ -39,8 +40,50 @@ func (r *Runtime) RecordUsagePayload(ctx context.Context, payload string) {
 		}
 	}
 	body := gjson.Get(payload, "fail.body").String()
+	headers := parseResponseHeaders(payload)
 
-	result := coreauth.NewUsageResult(authIndex, provider, model, statusCode, body)
+	result := coreauth.NewUsageResultWithHeaders(authIndex, provider, model, statusCode, body, headers)
 	result.AccessTokenSHA256 = strings.TrimSpace(gjson.Get(payload, "access_token_sha256").String())
 	r.coreManager.MarkResult(ctx, result)
+}
+
+// parseResponseHeaders reads the optional "response_headers" object off a
+// usage payload into an http.Header. The node marshals http.Header as a
+// standard JSON object whose keys are canonical header names and whose
+// values are JSON arrays (Go's encoding/json shape for map[string][]string),
+// e.g. {"Anthropic-Ratelimit-Unified-Status":["rejected"]} -- never a bare
+// string, even for a single value. Returns nil when the field is absent or
+// not a JSON object, so callers fall back to body-only parsing.
+func parseResponseHeaders(payload string) http.Header {
+	node := gjson.Get(payload, "response_headers")
+	if !node.Exists() || !node.IsObject() {
+		return nil
+	}
+	headers := make(http.Header)
+	node.ForEach(func(key, value gjson.Result) bool {
+		name := strings.TrimSpace(key.String())
+		if name == "" {
+			return true
+		}
+		if value.IsArray() {
+			for _, item := range value.Array() {
+				v := item.String()
+				if v != "" {
+					headers.Add(name, v)
+				}
+			}
+			return true
+		}
+		// Defensive fallback: accept a bare string too, in case a
+		// non-standard producer ever sends a single unwrapped value.
+		v := strings.TrimSpace(value.String())
+		if v != "" {
+			headers.Add(name, v)
+		}
+		return true
+	})
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
 }
