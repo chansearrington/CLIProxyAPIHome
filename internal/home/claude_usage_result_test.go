@@ -219,3 +219,77 @@ func TestParseResponseHeadersAbsentFieldReturnsNil(t *testing.T) {
 		t.Fatalf("parseResponseHeaders() = %#v, want nil for a non-object value", got)
 	}
 }
+
+// TestParseResponseHeadersReadsFlatQuotaHeadersShape is the A5/ingest-fix
+// wire-shape test: "quota_headers" is what actually survives
+// sanitizeUsageQuotaHeaders (internal/cluster/quota_ingestion.go) for a
+// recognized provider -- a FLAT map[string]string (its own `filtered`
+// map), a different JSON shape from "response_headers"'s
+// map[string][]string. Before this fix parseResponseHeaders only read
+// "response_headers", so a real production payload -- which after
+// sanitizing carries "quota_headers", not "response_headers" -- parsed to
+// no headers at all.
+func TestParseResponseHeadersReadsFlatQuotaHeadersShape(t *testing.T) {
+	payload := `{
+		"quota_headers": {
+			"Anthropic-Ratelimit-Unified-Status": "rejected",
+			"Anthropic-Ratelimit-Unified-5h-Status": "rejected",
+			"Anthropic-Ratelimit-Unified-5h-Reset": "1700000000"
+		}
+	}`
+	headers := parseResponseHeaders(payload)
+	if headers == nil {
+		t.Fatalf("parseResponseHeaders() = nil, want a populated http.Header")
+	}
+	if got := headers.Get("Anthropic-Ratelimit-Unified-Status"); got != "rejected" {
+		t.Fatalf("headers.Get(Anthropic-Ratelimit-Unified-Status) = %q, want %q", got, "rejected")
+	}
+	if got := headers.Get("Anthropic-Ratelimit-Unified-5h-Reset"); got != "1700000000" {
+		t.Fatalf("headers.Get(Anthropic-Ratelimit-Unified-5h-Reset) = %q, want %q", got, "1700000000")
+	}
+}
+
+// TestParseResponseHeadersQuotaHeadersAloneIsSufficient proves a payload
+// carrying ONLY quota_headers (the real production shape post-sanitizing --
+// response_headers is always deleted by sanitizeUsageQuotaHeaders) still
+// yields usable headers, not nil.
+func TestParseResponseHeadersQuotaHeadersAloneIsSufficient(t *testing.T) {
+	payload := `{"quota_headers": {"Retry-After": "30"}}`
+	headers := parseResponseHeaders(payload)
+	if headers == nil {
+		t.Fatalf("parseResponseHeaders() = nil, want a populated http.Header from quota_headers alone")
+	}
+	if got := headers.Get("Retry-After"); got != "30" {
+		t.Fatalf("headers.Get(Retry-After) = %q, want %q", got, "30")
+	}
+}
+
+// TestParseResponseHeadersResponseHeadersWinsOnCollision proves the merge
+// precedence: when the same header key appears in both response_headers
+// and quota_headers, response_headers' value wins.
+func TestParseResponseHeadersResponseHeadersWinsOnCollision(t *testing.T) {
+	payload := `{
+		"response_headers": {"Retry-After": ["response-headers-value"]},
+		"quota_headers": {"Retry-After": "quota-headers-value"}
+	}`
+	headers := parseResponseHeaders(payload)
+	if headers == nil {
+		t.Fatalf("parseResponseHeaders() = nil, want a populated http.Header")
+	}
+	if got := headers.Get("Retry-After"); got != "response-headers-value" {
+		t.Fatalf("headers.Get(Retry-After) = %q, want %q (response_headers must win on collision)", got, "response-headers-value")
+	}
+	if len(headers.Values("Retry-After")) != 1 {
+		t.Fatalf("headers.Values(Retry-After) = %v, want exactly 1 value (quota_headers' colliding value must not also be appended)", headers.Values("Retry-After"))
+	}
+}
+
+// TestParseResponseHeadersEmptyQuotaHeadersObjectReturnsNil confirms the
+// empty-object degrade applies to quota_headers too, mirroring
+// TestParseResponseHeadersAbsentFieldReturnsNil's coverage of
+// response_headers.
+func TestParseResponseHeadersEmptyQuotaHeadersObjectReturnsNil(t *testing.T) {
+	if got := parseResponseHeaders(`{"quota_headers": {}}`); got != nil {
+		t.Fatalf("parseResponseHeaders() = %#v, want nil for an empty quota_headers object", got)
+	}
+}

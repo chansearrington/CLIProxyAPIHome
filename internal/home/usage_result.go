@@ -47,19 +47,49 @@ func (r *Runtime) RecordUsagePayload(ctx context.Context, payload string) {
 	r.coreManager.MarkResult(ctx, result)
 }
 
-// parseResponseHeaders reads the optional "response_headers" object off a
-// usage payload into an http.Header. The node marshals http.Header as a
-// standard JSON object whose keys are canonical header names and whose
-// values are JSON arrays (Go's encoding/json shape for map[string][]string),
-// e.g. {"Anthropic-Ratelimit-Unified-Status":["rejected"]} -- never a bare
-// string, even for a single value. Returns nil when the field is absent or
-// not a JSON object, so callers fall back to body-only parsing.
+// parseResponseHeaders reads a usage payload's header fields into a single
+// merged http.Header, so callers see Claude/codex rate-limit hints
+// regardless of which of the two wire shapes actually survived sanitizing.
+//
+// "response_headers" is the node's raw http.Header marshal -- keys are
+// header names and values are JSON arrays (Go's encoding/json shape for
+// map[string][]string), e.g.
+// {"Anthropic-Ratelimit-Unified-Status":["rejected"]} -- never a bare
+// string, even for a single value. It is correct to read if it is ever
+// present, but internal/cluster/quota_ingestion.go's
+// sanitizeUsageQuotaHeaders unconditionally deletes this field from every
+// payload before RecordUsagePayload ever sees it (it strips credential
+// material) -- so in production this branch is normally empty and the real
+// data arrives via quota_headers below.
+//
+// "quota_headers" is what sanitizeUsageQuotaHeaders re-attaches for a
+// provider it recognizes (today: codex, claude): a FLAT map[string]string
+// of that provider's allowlisted headers (see the `filtered` map in
+// sanitizeUsageQuotaHeaders) -- a different shape from response_headers, so
+// it is parsed separately below rather than through the array-unwrapping
+// path.
+//
+// The two are merged; response_headers wins on a key collision (it is a
+// stronger signal -- an unsanitized full header set -- on the rare path
+// where both are present). Returns nil when neither field is present or
+// usable, so callers fall back to body-only parsing.
 func parseResponseHeaders(payload string) http.Header {
-	node := gjson.Get(payload, "response_headers")
-	if !node.Exists() || !node.IsObject() {
+	headers := make(http.Header)
+	parseResponseHeadersArrayShape(payload, headers)
+	parseResponseHeadersFlatShape(payload, headers)
+	if len(headers) == 0 {
 		return nil
 	}
-	headers := make(http.Header)
+	return headers
+}
+
+// parseResponseHeadersArrayShape reads "response_headers" (JSON-array
+// values) into headers, in place.
+func parseResponseHeadersArrayShape(payload string, headers http.Header) {
+	node := gjson.Get(payload, "response_headers")
+	if !node.Exists() || !node.IsObject() {
+		return
+	}
 	node.ForEach(func(key, value gjson.Result) bool {
 		name := strings.TrimSpace(key.String())
 		if name == "" {
@@ -82,8 +112,29 @@ func parseResponseHeaders(payload string) http.Header {
 		}
 		return true
 	})
-	if len(headers) == 0 {
-		return nil
+}
+
+// parseResponseHeadersFlatShape reads "quota_headers" (flat string values
+// -- see sanitizeUsageQuotaHeaders' `filtered` map) into headers, in place.
+// Skips any key response_headers already populated, so that field keeps
+// precedence on a collision.
+func parseResponseHeadersFlatShape(payload string, headers http.Header) {
+	node := gjson.Get(payload, "quota_headers")
+	if !node.Exists() || !node.IsObject() {
+		return
 	}
-	return headers
+	node.ForEach(func(key, value gjson.Result) bool {
+		name := strings.TrimSpace(key.String())
+		if name == "" {
+			return true
+		}
+		if len(headers.Values(name)) > 0 {
+			return true
+		}
+		v := strings.TrimSpace(value.String())
+		if v != "" {
+			headers.Add(name, v)
+		}
+		return true
+	})
 }
