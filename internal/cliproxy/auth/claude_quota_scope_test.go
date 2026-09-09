@@ -185,7 +185,7 @@ func TestApplyResultTransitionRespectsDisableCoolingForCredentialScope(t *testin
 	}
 }
 
-// TestRecordUsagePayloadClaudeResetHintDoesNotReArmTheOneSecondLadder is the
+// TestQuotaCooldownAfterFailureClaudeResetHintDoesNotReArmTheOneSecondLadder is the
 // charter-mandated regression test (A5-iii): a Claude 429 with a reset hint
 // ~4h out must NOT re-arm the model-scoped 1s->30m exponential ladder --
 // confirmed by directly comparing against the exponential floor value that
