@@ -224,12 +224,24 @@ func authWebsocketsEnabled(auth *Auth) bool {
 // mutates auth.RateLimitWarnings (that pruning happens only on the
 // result/mutation path, where the manager lock or StateMutator is held;
 // selection can run without holding it).
+//
+// Iterates the fixed claudeRateLimitWarningWindows array (result.go) and
+// does a keyed lookup per window rather than ranging auth.RateLimitWarnings
+// directly: selection runs unlocked while MarkResult mutates that same map
+// under a lock elsewhere, and ranging a map that is concurrently written is
+// the shape that triggers Go's fatal "concurrent map iteration and map
+// write" error, which would take the whole router down. A keyed lookup is
+// the same shape as the pre-existing unsynchronized keyed read of
+// auth.ModelStates in isAuthBlockedForModel below -- it does not introduce
+// a new crash mode, it just stops amplifying the existing one. This does
+// NOT add locking; the underlying race is filed as a separate issue on
+// purpose.
 func authRateLimitWarned(auth *Auth, now time.Time) bool {
 	if auth == nil || len(auth.RateLimitWarnings) == 0 {
 		return false
 	}
-	for _, warning := range auth.RateLimitWarnings {
-		if rateLimitWarningActive(warning, now) {
+	for _, window := range claudeRateLimitWarningWindows {
+		if warning, ok := auth.RateLimitWarnings[window]; ok && rateLimitWarningActive(warning, now) {
 			return true
 		}
 	}
