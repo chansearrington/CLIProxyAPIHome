@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +40,13 @@ type Result struct {
 	// shared Anthropic 5h/7d unified rate-limit window (see
 	// claudeHeadersIndicateUnifiedRateLimitRejection).
 	CredentialScope bool
+	// RateLimitWarnings carries provider early-warning windows parsed from a
+	// SUCCESSFUL response's headers (Claude only today). Nil for every other
+	// provider and for every failure result.
+	RateLimitWarnings map[string]RateLimitWarning
+	// RateLimitAllClear reports that the provider affirmatively signalled that
+	// every window is healthy, so any previously recorded warning is stale.
+	RateLimitAllClear bool
 }
 
 // markResultTransition captures the registry side effects derived from a result transition.
@@ -207,6 +216,7 @@ func (m *Manager) applyResultTransition(auth *Auth, result Result, resultModel s
 			auth.StatusMessage = ""
 			auth.Status = StatusActive
 		}
+		applyRateLimitWarningTransition(auth, result, now)
 		auth.UpdatedAt = now
 		transition.shouldResumeModel = true
 		transition.clearModelQuota = true
@@ -364,6 +374,106 @@ func blockSiblingModelStatesUntil(auth *Auth, resultModel string, deadline time.
 	}
 }
 
+// rateLimitWarningActive reports whether a recorded warning is still within
+// its window, so both the selector's read-only check and this file's
+// mutation path apply the same expiry rule. A warning with no parseable
+// Reset (zero ResetAt) never expires on time and relies on an explicit
+// all-clear instead.
+func rateLimitWarningActive(warning RateLimitWarning, now time.Time) bool {
+	return warning.ResetAt.IsZero() || warning.ResetAt.After(now)
+}
+
+// rateLimitWarningWindowChanged reports whether applying incoming to a
+// credential's existing warning for one window would change persisted
+// state. ObservedAt is deliberately excluded from the comparison: it
+// refreshes on every successful request and must not itself count as a
+// change (that would hammer the store on every request).
+func rateLimitWarningWindowChanged(existing RateLimitWarning, hadExisting bool, incoming RateLimitWarning) bool {
+	if !hadExisting {
+		return true
+	}
+	return !existing.ResetAt.Equal(incoming.ResetAt)
+}
+
+// rateLimitWarningsWouldChange reports whether applying result's rate-limit
+// warning signal to auth would change auth.RateLimitWarnings: a new or
+// changed window, an all-clear against a non-empty map, or an entry already
+// past its Reset sitting in the map. applyRateLimitWarningTransition builds
+// its own set/clear/expire decisions out of the same
+// rateLimitWarningWindowChanged/rateLimitWarningActive primitives this
+// function uses, so the two can never disagree about what counts as a
+// change.
+func rateLimitWarningsWouldChange(auth *Auth, result Result, now time.Time) bool {
+	if auth == nil {
+		return false
+	}
+	if result.RateLimitAllClear {
+		return len(auth.RateLimitWarnings) > 0
+	}
+	for window, incoming := range result.RateLimitWarnings {
+		existing, hadExisting := auth.RateLimitWarnings[window]
+		if rateLimitWarningWindowChanged(existing, hadExisting, incoming) {
+			return true
+		}
+	}
+	for _, existing := range auth.RateLimitWarnings {
+		if !rateLimitWarningActive(existing, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// authFingerprintPrefix returns a short, non-identifying prefix of auth.ID
+// suitable for log correlation without exposing a label, email, or token.
+func authFingerprintPrefix(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
+// applyRateLimitWarningTransition applies a success result's provider
+// early-warning signal to auth.RateLimitWarnings: an affirmative all-clear
+// wipes every window, otherwise each warned window from the result is
+// set/refreshed, and independently any window already past its Reset is
+// swept. Logs one info line per actual change (set / cleared / expired),
+// naming only the credential fingerprint -- the first 8 characters of
+// auth.ID -- never a label, email, token, or full id.
+func applyRateLimitWarningTransition(auth *Auth, result Result, now time.Time) {
+	if auth == nil {
+		return
+	}
+	fp := authFingerprintPrefix(auth.ID)
+	if result.RateLimitAllClear {
+		if len(auth.RateLimitWarnings) > 0 {
+			log.Infof("auth manager: rate limit warnings cleared (all-clear) for %s", fp)
+		}
+		auth.RateLimitWarnings = nil
+		return
+	}
+	for window, incoming := range result.RateLimitWarnings {
+		existing, hadExisting := auth.RateLimitWarnings[window]
+		if !rateLimitWarningWindowChanged(existing, hadExisting, incoming) {
+			continue
+		}
+		if auth.RateLimitWarnings == nil {
+			auth.RateLimitWarnings = make(map[string]RateLimitWarning)
+		}
+		incoming.ObservedAt = now
+		auth.RateLimitWarnings[window] = incoming
+		log.Infof("auth manager: rate limit warning set for %s window=%s", fp, window)
+	}
+	for window, existing := range auth.RateLimitWarnings {
+		if rateLimitWarningActive(existing, now) {
+			continue
+		}
+		delete(auth.RateLimitWarnings, window)
+		log.Infof("auth manager: rate limit warning expired for %s window=%s", fp, window)
+	}
+}
+
 // resultNeedsGlobalTransition reports whether the result must be applied to
 // the persisted auth through the store's StateMutator so the transition stays
 // atomic across Home nodes. Unauthorized transitions must preserve credentials
@@ -374,7 +484,7 @@ func (m *Manager) resultNeedsGlobalTransition(auth *Auth, result Result, resultM
 		return false
 	}
 	if result.Success {
-		return authHasClearableAvailabilityState(auth, resultModel, now)
+		return authHasClearableAvailabilityState(auth, resultModel, now) || rateLimitWarningsWouldChange(auth, result, now)
 	}
 	statusCode := statusCodeFromResult(result.Error)
 	if statusCode == http.StatusUnauthorized {
@@ -500,6 +610,7 @@ type availabilityFingerprintValue struct {
 	modelRetryUnix int64
 	modelResetUnix int64
 	modelQuota     quotaFingerprint
+	warningsDigest uint64
 }
 
 // fingerprintUnix normalizes a time for fingerprint comparison.
@@ -521,6 +632,32 @@ func fingerprintQuota(quota QuotaState) quotaFingerprint {
 	}
 }
 
+// rateLimitWarningsDigest computes an FNV-1a digest over a credential's
+// recorded rate-limit warnings, hashing each window (sorted by name, so map
+// iteration order can never affect the result) plus its ResetAt unix value.
+// ObservedAt is deliberately excluded: it refreshes on every successful
+// request and would make every success look like a state change, hammering
+// the store on every request.
+func rateLimitWarningsDigest(warnings map[string]RateLimitWarning) uint64 {
+	if len(warnings) == 0 {
+		return 0
+	}
+	windows := make([]string, 0, len(warnings))
+	for window := range warnings {
+		windows = append(windows, window)
+	}
+	sort.Strings(windows)
+	h := fnv.New64a()
+	for _, window := range windows {
+		warning := warnings[window]
+		h.Write([]byte(window))
+		h.Write([]byte{':'})
+		h.Write([]byte(strconv.FormatInt(fingerprintUnix(warning.ResetAt), 10)))
+		h.Write([]byte{'\n'})
+	}
+	return h.Sum64()
+}
+
 // availabilityFingerprint builds the comparable availability view of an auth.
 func availabilityFingerprint(auth *Auth, resultModel string) availabilityFingerprintValue {
 	fp := availabilityFingerprintValue{}
@@ -532,6 +669,7 @@ func availabilityFingerprint(auth *Auth, resultModel string) availabilityFingerp
 	fp.unavailable = auth.Unavailable
 	fp.nextRetryUnix = fingerprintUnix(auth.NextRetryAfter)
 	fp.quota = fingerprintQuota(auth.Quota)
+	fp.warningsDigest = rateLimitWarningsDigest(auth.RateLimitWarnings)
 	if resultModel != "" {
 		if state := auth.ModelStates[resultModel]; state != nil {
 			fp.modelPresent = true
@@ -1096,11 +1234,14 @@ func NewUsageResultWithHeaders(authIndex, provider, model string, statusCode int
 		statusCode = http.StatusOK
 	}
 	if statusCode == http.StatusOK {
+		warnings, allClear := parseClaudeRateLimitWarnings(provider, headers)
 		return Result{
-			AuthIndex: authIndex,
-			Provider:  provider,
-			Model:     model,
-			Success:   true,
+			AuthIndex:         authIndex,
+			Provider:          provider,
+			Model:             model,
+			Success:           true,
+			RateLimitWarnings: warnings,
+			RateLimitAllClear: allClear,
 		}
 	}
 	message := body
@@ -1124,6 +1265,53 @@ func NewUsageResultWithHeaders(authIndex, provider, model string, statusCode int
 			HTTPStatus: statusCode,
 		},
 	}
+}
+
+// claudeRateLimitWarningWindows lists the Anthropic unified rate-limit window
+// keys checked for an allowed_warning status on a successful response.
+var claudeRateLimitWarningWindows = [...]string{"5h", "7d", "7d_oi"}
+
+// parseClaudeRateLimitWarnings parses provider early-warning windows out of a
+// SUCCESSFUL Claude response's headers. Anthropic sends
+// Anthropic-Ratelimit-Unified-<window>-Status: allowed_warning on a
+// successful reply roughly 20 minutes before it starts rejecting requests on
+// that window, so this only ever runs on the 200 path (see
+// NewUsageResultWithHeaders), never on a 429.
+//
+// Returns (nil, false) for every provider other than "claude" so no other
+// provider's behavior can change. The second return value reports an
+// affirmative provider-wide all-clear (the unsuffixed
+// Anthropic-Ratelimit-Unified-Status header equals "allowed"), which the
+// caller treats as clearing every previously recorded warning, not just the
+// windows present on this response: per-window headers can vanish from a
+// later response even though the credential is still warned, so absence of
+// a window header must never be read as an all-clear for that window, but an
+// affirmative unsuffixed "allowed" is a safe sweeping all-clear for all of
+// them.
+func parseClaudeRateLimitWarnings(provider string, headers http.Header) (map[string]RateLimitWarning, bool) {
+	if strings.ToLower(strings.TrimSpace(provider)) != "claude" || headers == nil {
+		return nil, false
+	}
+	now := time.Now().UTC()
+	var warnings map[string]RateLimitWarning
+	for _, window := range claudeRateLimitWarningWindows {
+		status := strings.ToLower(strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-"+window+"-Status")))
+		if status != "allowed_warning" {
+			continue
+		}
+		warning := RateLimitWarning{Window: window, ObservedAt: now}
+		if raw := strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-"+window+"-Reset")); raw != "" {
+			if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil {
+				warning.ResetAt = time.Unix(seconds, 0).UTC()
+			}
+		}
+		if warnings == nil {
+			warnings = make(map[string]RateLimitWarning, len(claudeRateLimitWarningWindows))
+		}
+		warnings[window] = warning
+	}
+	allClear := strings.ToLower(strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-Status"))) == "allowed"
+	return warnings, allClear
 }
 
 // parseUsageRetryHints returns a provider-specific retry delay and/or reset
