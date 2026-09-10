@@ -44,6 +44,17 @@ type Result struct {
 	// SUCCESSFUL response's headers (Claude only today). Nil for every other
 	// provider and for every failure result.
 	RateLimitWarnings map[string]RateLimitWarning
+	// RateLimitClearedWindows lists windows whose per-window status header
+	// explicitly reported "allowed" on this SUCCESSFUL response (Claude
+	// only), so applyRateLimitWarningTransition can clear a stale warning for
+	// that ONE window even when the unsuffixed status still reads
+	// "allowed_warning" because a DIFFERENT window is newly warned on the
+	// same response. An ABSENT window header is never collected here -- only
+	// an explicit "allowed" clears; absence must stay a no-op, same as
+	// today (see parseClaudeRateLimitWarnings). Not part of any comparable
+	// fingerprint struct -- it is a transient per-result signal, never
+	// itself persisted on Auth.
+	RateLimitClearedWindows []string
 	// RateLimitAllClear reports that the provider affirmatively signalled that
 	// every window is healthy, so any previously recorded warning is stale.
 	RateLimitAllClear bool
@@ -397,12 +408,16 @@ func rateLimitWarningWindowChanged(existing RateLimitWarning, hadExisting bool, 
 
 // rateLimitWarningsWouldChange reports whether applying result's rate-limit
 // warning signal to auth would change auth.RateLimitWarnings: a new or
-// changed window, an all-clear against a non-empty map, or an entry already
-// past its Reset sitting in the map. applyRateLimitWarningTransition builds
-// its own set/clear/expire decisions out of the same
-// rateLimitWarningWindowChanged/rateLimitWarningActive primitives this
-// function uses, so the two can never disagree about what counts as a
-// change.
+// changed window, a per-window clear (RateLimitClearedWindows) against a
+// window that currently carries a live mark, an all-clear against a
+// non-empty map, or an entry already past its Reset sitting in the map.
+// applyRateLimitWarningTransition builds its own set/clear/expire decisions
+// out of the same rateLimitWarningWindowChanged/rateLimitWarningActive
+// primitives this function uses, so the two can never disagree about what
+// counts as a change. The per-window clear check matters on its own: a
+// response that ONLY clears a window (no new warning, nothing expired)
+// would otherwise report no change and have its clear silently discarded by
+// MutateAuthState's unchanged-fingerprint guard.
 func rateLimitWarningsWouldChange(auth *Auth, result Result, now time.Time) bool {
 	if auth == nil {
 		return false
@@ -413,6 +428,11 @@ func rateLimitWarningsWouldChange(auth *Auth, result Result, now time.Time) bool
 	for window, incoming := range result.RateLimitWarnings {
 		existing, hadExisting := auth.RateLimitWarnings[window]
 		if rateLimitWarningWindowChanged(existing, hadExisting, incoming) {
+			return true
+		}
+	}
+	for _, window := range result.RateLimitClearedWindows {
+		if _, ok := auth.RateLimitWarnings[window]; ok {
 			return true
 		}
 	}
@@ -437,10 +457,15 @@ func authFingerprintPrefix(id string) string {
 // applyRateLimitWarningTransition applies a success result's provider
 // early-warning signal to auth.RateLimitWarnings: an affirmative all-clear
 // wipes every window, otherwise each warned window from the result is
-// set/refreshed, and independently any window already past its Reset is
-// swept. Logs one info line per actual change (set / cleared / expired),
-// naming only the credential fingerprint -- the first 8 characters of
-// auth.ID -- never a label, email, token, or full id.
+// set/refreshed, each window in RateLimitClearedWindows (an explicit
+// per-window "allowed" status) is deleted individually -- this is what lets
+// one window clear while a DIFFERENT window newly warns on the very same
+// response, since the unsuffixed status in that case still reads
+// allowed_warning and the wholesale all-clear branch above never fires --
+// and independently any window already past its Reset is swept. Logs one
+// info line per actual change (set / cleared / expired), naming only the
+// credential fingerprint -- the first 8 characters of auth.ID -- never a
+// label, email, token, or full id.
 func applyRateLimitWarningTransition(auth *Auth, result Result, now time.Time) {
 	if auth == nil {
 		return
@@ -464,6 +489,13 @@ func applyRateLimitWarningTransition(auth *Auth, result Result, now time.Time) {
 		incoming.ObservedAt = now
 		auth.RateLimitWarnings[window] = incoming
 		log.Infof("auth manager: rate limit warning set for %s window=%s", fp, window)
+	}
+	for _, window := range result.RateLimitClearedWindows {
+		if _, ok := auth.RateLimitWarnings[window]; !ok {
+			continue
+		}
+		delete(auth.RateLimitWarnings, window)
+		log.Infof("auth manager: rate limit warning cleared for %s window=%s", fp, window)
 	}
 	for window, existing := range auth.RateLimitWarnings {
 		if rateLimitWarningActive(existing, now) {
@@ -1234,14 +1266,15 @@ func NewUsageResultWithHeaders(authIndex, provider, model string, statusCode int
 		statusCode = http.StatusOK
 	}
 	if statusCode == http.StatusOK {
-		warnings, allClear := parseClaudeRateLimitWarnings(provider, headers)
+		warnings, clearedWindows, allClear := parseClaudeRateLimitWarnings(provider, headers)
 		return Result{
-			AuthIndex:         authIndex,
-			Provider:          provider,
-			Model:             model,
-			Success:           true,
-			RateLimitWarnings: warnings,
-			RateLimitAllClear: allClear,
+			AuthIndex:               authIndex,
+			Provider:                provider,
+			Model:                   model,
+			Success:                 true,
+			RateLimitWarnings:       warnings,
+			RateLimitClearedWindows: clearedWindows,
+			RateLimitAllClear:       allClear,
 		}
 	}
 	message := body
@@ -1278,40 +1311,53 @@ var claudeRateLimitWarningWindows = [...]string{"5h", "7d", "7d_oi"}
 // that window, so this only ever runs on the 200 path (see
 // NewUsageResultWithHeaders), never on a 429.
 //
-// Returns (nil, false) for every provider other than "claude" so no other
-// provider's behavior can change. The second return value reports an
-// affirmative provider-wide all-clear (the unsuffixed
-// Anthropic-Ratelimit-Unified-Status header equals "allowed"), which the
-// caller treats as clearing every previously recorded warning, not just the
-// windows present on this response: per-window headers can vanish from a
-// later response even though the credential is still warned, so absence of
-// a window header must never be read as an all-clear for that window, but an
-// affirmative unsuffixed "allowed" is a safe sweeping all-clear for all of
-// them.
-func parseClaudeRateLimitWarnings(provider string, headers http.Header) (map[string]RateLimitWarning, bool) {
+// Returns (nil, nil, false) for every provider other than "claude" so no
+// other provider's behavior can change. The second return value lists
+// windows whose per-window status header explicitly read "allowed" on this
+// response -- a targeted, single-window clear signal that lets
+// applyRateLimitWarningTransition clear one window's stale mark even when a
+// DIFFERENT window is newly warned on the very same response (so the
+// unsuffixed status still reads allowed_warning and the third return value
+// below never fires). An ABSENT window header is deliberately excluded from
+// this list -- it stays a no-op, same as today, because a header can vanish
+// from a later response even though the credential is still warned. The
+// third return value reports an affirmative provider-wide all-clear (the
+// unsuffixed Anthropic-Ratelimit-Unified-Status header equals "allowed"),
+// which the caller treats as clearing every previously recorded warning,
+// not just the windows present on this response. Only "rejected" (worse
+// than warned) and "allowed_warning" (unchanged) fall through neither new
+// branch; only an explicit "allowed" clears.
+func parseClaudeRateLimitWarnings(provider string, headers http.Header) (map[string]RateLimitWarning, []string, bool) {
 	if strings.ToLower(strings.TrimSpace(provider)) != "claude" || headers == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	now := time.Now().UTC()
 	var warnings map[string]RateLimitWarning
+	var clearedWindows []string
 	for _, window := range claudeRateLimitWarningWindows {
 		status := strings.ToLower(strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-"+window+"-Status")))
-		if status != "allowed_warning" {
-			continue
-		}
-		warning := RateLimitWarning{Window: window, ObservedAt: now}
-		if raw := strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-"+window+"-Reset")); raw != "" {
-			if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil {
-				warning.ResetAt = time.Unix(seconds, 0).UTC()
+		switch status {
+		case "allowed_warning":
+			warning := RateLimitWarning{Window: window, ObservedAt: now}
+			if raw := strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-"+window+"-Reset")); raw != "" {
+				if seconds, errParse := strconv.ParseInt(raw, 10, 64); errParse == nil {
+					warning.ResetAt = time.Unix(seconds, 0).UTC()
+				}
 			}
+			if warnings == nil {
+				warnings = make(map[string]RateLimitWarning, len(claudeRateLimitWarningWindows))
+			}
+			warnings[window] = warning
+		case "allowed":
+			clearedWindows = append(clearedWindows, window)
+		default:
+			// Absent header, "rejected", or any other value: no-op for this
+			// window. Absence must never be read as an all-clear, and
+			// "rejected" is worse than warned, not better -- neither clears.
 		}
-		if warnings == nil {
-			warnings = make(map[string]RateLimitWarning, len(claudeRateLimitWarningWindows))
-		}
-		warnings[window] = warning
 	}
 	allClear := strings.ToLower(strings.TrimSpace(getHeaderCaseInsensitive(headers, "Anthropic-Ratelimit-Unified-Status"))) == "allowed"
-	return warnings, allClear
+	return warnings, clearedWindows, allClear
 }
 
 // parseUsageRetryHints returns a provider-specific retry delay and/or reset

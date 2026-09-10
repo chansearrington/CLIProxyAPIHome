@@ -290,3 +290,158 @@ func TestAuthCloneDoesNotAliasRateLimitWarnings(t *testing.T) {
 		t.Fatalf("original 5h ResetAt = %v, want unchanged at %v", originalWindow.ResetAt, now.Add(20*time.Minute))
 	}
 }
+
+// TestApplyRateLimitWarningTransitionPerWindowAllowedClearsOnlyThatWindow is
+// the Task 1 headline regression: a window whose header explicitly reports
+// "allowed" clears ONLY that window's stale mark, even when a DIFFERENT
+// window newly warns on the very same response and the unsuffixed status
+// therefore still reads allowed_warning -- so the wholesale all-clear path
+// (RateLimitAllClear) never fires and cannot be relied on to save this case.
+func TestApplyRateLimitWarningTransitionPerWindowAllowedClearsOnlyThatWindow(t *testing.T) {
+	now := time.Date(2026, time.September, 9, 0, 0, 0, 0, time.UTC)
+	auth := &Auth{
+		ID:     "auth-per-window-clear",
+		Status: StatusActive,
+		RateLimitWarnings: map[string]RateLimitWarning{
+			"7d_oi": {Window: "7d_oi", ResetAt: now.Add(3 * 24 * time.Hour)},
+		},
+	}
+
+	headers := claudeHeaders(map[string]string{
+		"Anthropic-Ratelimit-Unified-Status":       "allowed_warning",
+		"Anthropic-Ratelimit-Unified-5h-Status":    "allowed_warning",
+		"Anthropic-Ratelimit-Unified-7d_oi-Status": "allowed",
+	})
+	result := NewUsageResultWithHeaders("auth-1", "claude", "claude-opus-4-1", http.StatusOK, "", headers)
+	if result.RateLimitAllClear {
+		t.Fatalf("RateLimitAllClear = true, want false (unsuffixed status is allowed_warning, not allowed)")
+	}
+	if _, ok := result.RateLimitWarnings["7d_oi"]; ok {
+		t.Fatalf("RateLimitWarnings[7d_oi] = present, want absent -- 7d_oi's header is an explicit allowed, not allowed_warning")
+	}
+
+	applyRateLimitWarningTransition(auth, result, now)
+
+	if _, ok := auth.RateLimitWarnings["7d_oi"]; ok {
+		t.Fatalf("RateLimitWarnings[7d_oi] still present after transition, want cleared by its explicit allowed status")
+	}
+	warning5h, ok := auth.RateLimitWarnings["5h"]
+	if !ok {
+		t.Fatalf("RateLimitWarnings[5h] missing after transition, want it set from this response's allowed_warning")
+	}
+	if warning5h.Window != "5h" {
+		t.Fatalf("warning5h.Window = %q, want 5h", warning5h.Window)
+	}
+}
+
+// TestApplyRateLimitWarningTransitionRejectedDoesNotClear proves a window
+// reporting "rejected" -- worse than warned, never better -- is excluded
+// from RateLimitClearedWindows at the parse boundary and never clears an
+// existing mark when applied.
+func TestApplyRateLimitWarningTransitionRejectedDoesNotClear(t *testing.T) {
+	now := time.Date(2026, time.September, 9, 0, 0, 0, 0, time.UTC)
+	auth := &Auth{
+		ID:     "auth-rejected-no-clear",
+		Status: StatusActive,
+		RateLimitWarnings: map[string]RateLimitWarning{
+			"5h": {Window: "5h", ResetAt: now.Add(20 * time.Minute)},
+		},
+	}
+	headers := claudeHeaders(map[string]string{
+		"Anthropic-Ratelimit-Unified-5h-Status": "rejected",
+	})
+	result := NewUsageResultWithHeaders("auth-1", "claude", "claude-opus-4-1", http.StatusOK, "", headers)
+	if len(result.RateLimitClearedWindows) != 0 {
+		t.Fatalf("RateLimitClearedWindows = %#v, want empty -- a rejected window must never clear", result.RateLimitClearedWindows)
+	}
+
+	applyRateLimitWarningTransition(auth, result, now)
+	if _, ok := auth.RateLimitWarnings["5h"]; !ok {
+		t.Fatalf("RateLimitWarnings[5h] cleared, want it to remain -- a rejected window must never clear an existing mark")
+	}
+}
+
+// TestApplyRateLimitWarningTransitionAbsentWindowDoesNotClear proves an
+// ABSENT per-window header is never read as an all-clear for that window:
+// only an explicit "allowed" status clears, absence stays a no-op.
+func TestApplyRateLimitWarningTransitionAbsentWindowDoesNotClear(t *testing.T) {
+	now := time.Date(2026, time.September, 9, 0, 0, 0, 0, time.UTC)
+	auth := &Auth{
+		ID:     "auth-absent-no-clear",
+		Status: StatusActive,
+		RateLimitWarnings: map[string]RateLimitWarning{
+			"7d": {Window: "7d", ResetAt: now.Add(48 * time.Hour)},
+		},
+	}
+	headers := claudeHeaders(map[string]string{
+		"Anthropic-Ratelimit-Unified-5h-Status": "allowed_warning",
+	})
+	result := NewUsageResultWithHeaders("auth-1", "claude", "claude-opus-4-1", http.StatusOK, "", headers)
+	if len(result.RateLimitClearedWindows) != 0 {
+		t.Fatalf("RateLimitClearedWindows = %#v, want empty when 7d's header is absent from this response", result.RateLimitClearedWindows)
+	}
+
+	applyRateLimitWarningTransition(auth, result, now)
+	if _, ok := auth.RateLimitWarnings["7d"]; !ok {
+		t.Fatalf("RateLimitWarnings[7d] cleared, want it to remain -- an absent header must never clear a live mark")
+	}
+}
+
+// TestResultNeedsGlobalTransitionOnClearedWindow is the Task 1.4 anti-inert
+// guard: a response that ONLY clears a window (no new warnings, nothing
+// expired) must still be reported as needing a global transition, or the
+// clear is computed by applyRateLimitWarningTransition and then silently
+// discarded by MutateAuthState's unchanged-fingerprint guard.
+func TestResultNeedsGlobalTransitionOnClearedWindow(t *testing.T) {
+	now := time.Date(2026, time.September, 9, 0, 0, 0, 0, time.UTC)
+	auth := &Auth{
+		ID:     "auth-clear-only",
+		Status: StatusActive,
+		RateLimitWarnings: map[string]RateLimitWarning{
+			"7d_oi": {Window: "7d_oi", ResetAt: now.Add(3 * 24 * time.Hour)},
+		},
+	}
+	result := Result{
+		Provider:                "claude",
+		Success:                 true,
+		RateLimitClearedWindows: []string{"7d_oi"},
+	}
+	if !NewManager(nil, nil, nil).resultNeedsGlobalTransition(auth, result, "claude-opus-4-1", now, false) {
+		t.Fatalf("resultNeedsGlobalTransition = false, want true for a response that only clears a live window")
+	}
+}
+
+// TestAuthRateLimitWarnedKeyedLookupCases proves the Task 2 rewrite (a keyed
+// lookup over the fixed claudeRateLimitWarningWindows array instead of a
+// map range) still behaves identically across the warned / not-warned /
+// expired-only cases.
+func TestAuthRateLimitWarnedKeyedLookupCases(t *testing.T) {
+	now := time.Date(2026, time.September, 9, 0, 0, 0, 0, time.UTC)
+
+	notWarned := &Auth{ID: "not-warned", Status: StatusActive}
+	if authRateLimitWarned(notWarned, now) {
+		t.Fatalf("authRateLimitWarned(notWarned) = true, want false for a credential with no warnings")
+	}
+
+	warned := &Auth{
+		ID:     "warned",
+		Status: StatusActive,
+		RateLimitWarnings: map[string]RateLimitWarning{
+			"5h": {Window: "5h", ResetAt: now.Add(20 * time.Minute)},
+		},
+	}
+	if !authRateLimitWarned(warned, now) {
+		t.Fatalf("authRateLimitWarned(warned) = false, want true for a live 5h warning")
+	}
+
+	expiredOnly := &Auth{
+		ID:     "expired-only",
+		Status: StatusActive,
+		RateLimitWarnings: map[string]RateLimitWarning{
+			"7d": {Window: "7d", ResetAt: now.Add(-time.Minute)},
+		},
+	}
+	if authRateLimitWarned(expiredOnly, now) {
+		t.Fatalf("authRateLimitWarned(expiredOnly) = true, want false -- its only window's ResetAt has already passed")
+	}
+}
