@@ -234,8 +234,9 @@ func authWebsocketsEnabled(auth *Auth) bool {
 // the same shape as the pre-existing unsynchronized keyed read of
 // auth.ModelStates in isAuthBlockedForModel below -- it does not introduce
 // a new crash mode, it just stops amplifying the existing one. This does
-// NOT add locking; the underlying race is filed as a separate issue on
-// purpose.
+// NOT add locking. The underlying lack of synchronization is
+// pre-existing in this package and is deliberately left out of scope
+// for this change rather than fixed here.
 func authRateLimitWarned(auth *Auth, now time.Time) bool {
 	if auth == nil || len(auth.RateLimitWarnings) == 0 {
 		return false
