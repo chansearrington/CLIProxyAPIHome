@@ -17,9 +17,19 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - No Go toolchain is installed on the laptop, and none should be. `go build`, `go vet`, `go test`
   and `gofmt` run only inside the `golang:1.26-bookworm` container on the Ark.
-- Source, Go build cache, module cache and temp dir live on the Ark's data array under
+- Source, Go build cache, module cache and an output dir live on the Ark's data array under
   `/mnt/user/appdata/cpa-home-build/{src,gocache,gomod,tmp}` and are bind-mounted into the
-  container. That keeps every build artifact off the Ark's small Docker disk image.
+  container by `/mnt/user/appdata/cpa-home-build/run-go.sh '<command>'`. That keeps every build
+  artifact off the Ark's small Docker disk image (measured 2026-09-16: a full gofmt + vet + test +
+  compile run grew the Docker disk by zero).
+- Inside the container `/tmp` is an exec-enabled tmpfs (`--tmpfs /tmp:exec,size=1g`), not a bind
+  mount. Go's test temp dirs on the bind-mounted Unraid array (a FUSE share) hit "directory not
+  empty" on cleanup and produced three false FAILs in `internal/cluster` on 2026-09-16; on tmpfs the
+  full suite is clean. Docker's default tmpfs is `noexec`, which breaks `go test` outright, so the
+  `exec` option is required. Write compile output to `/out/<name>` (the array), never to `/tmp`.
+- `go vet ./...` reports exactly one finding on `fleet`: `internal/cluster/refresh.go:172:2:
+  unreachable code`. It is upstream's (a duplicated `return` after an if/else), untouched by this
+  fork, and present on `dev` too. Do not fix it here; a vet run whose only line is that one passes.
 - The Dockerfile compiles with `CGO_ENABLED=1` (glibc-linked). A binary compiled outside the
   Dockerfile must use the same builder image and run on `debian:bookworm`; a static build is a
   deliberate change that must be documented, not an accident.
