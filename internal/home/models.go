@@ -162,6 +162,7 @@ func dispatchModelInfoForAuth(authID, upstreamModel, routeModel string) *Dispatc
 		ContextLength:       selected.ContextLength,
 		MaxCompletionTokens: selected.MaxCompletionTokens,
 		Thinking:            selected.Thinking,
+		NativeCapabilities:  selected.NativeCapabilities,
 		UserDefined:         selected.UserDefined,
 	}
 }
