@@ -1,0 +1,69 @@
+<!-- ws-0001 upstream sync — ship card write-up. HTML fragment (house classes only). Published via
+     fleet-ask create --type ship --artifact <this-file>. Deploy happens only on a decided ship. -->
+
+<div class="callout callout--green">
+  <p class="callout-title">🟢 Ready to ship — one decision: swap the Ark's Home to the 1.0.73 fleet build</p>
+  <p>The fleet's Home fork has been brought up to upstream's latest release (1.0.73). Nothing you rely
+  on changes: every one of our own Claude rate-limit fixes is still in, unchanged. The image is built,
+  tested, and sitting on the Ark. Approving swaps the running container to it. Holding leaves everything
+  exactly as it is today.</p>
+</div>
+
+<h2>What you get</h2>
+<table>
+  <thead><tr><th>Item</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>New image</td><td><span class="mono">cpa-home:1.0.73-claude-fleet-2b43b07</span> (ID <span class="mono">sha256:60179681754f…</span>)</td></tr>
+    <tr><td>Rollback target</td><td><span class="mono">cpa-home:1.0.72-claude-warn-a5b5273</span> (ID <span class="mono">sha256:fb50b9f44131…</span>) — the image running right now, already durably tagged</td></tr>
+    <tr><td>Built from</td><td>fork branch <span class="mono">fleet</span> at <span class="mono">2b43b07</span> = upstream <span class="mono">dev</span> at <span class="mono">04fac5f</span> (release 1.0.73) plus our fixes, rebased, no merge commits</td></tr>
+    <tr><td>Upstream changes picked up</td><td>Devin login support and a Meta API-key credential type (upstream 1.0.73); dispatch replies now carry a model's native web-search capability flag (upstream #118). None touch Claude rate-limit handling.</td></tr>
+    <tr><td>Our fixes carried forward</td><td>All of them: unified Claude rate-limit resets (upstream PR #115) and the early-warning de-preference (upstream PR #116). Upstream still has neither; both PRs are open with no review.</td></tr>
+  </tbody>
+</table>
+
+<h2>What was checked (all inside the build container on the Ark, none on the laptop)</h2>
+<table>
+  <thead><tr><th>Check</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Formatting (gofmt)</td><td><span class="pill pill--green">clean</span></td></tr>
+    <tr><td>Static analysis (go vet)</td><td><span class="pill pill--green">only the one known upstream finding</span> (refresh.go:172, pre-existing, not ours)</td></tr>
+    <tr><td>Full test suite</td><td><span class="pill pill--green">33 packages pass, 0 failures</span></td></tr>
+    <tr><td>Compile</td><td><span class="pill pill--green">builds</span> (glibc-linked x86-64, same as the Dockerfile)</td></tr>
+    <tr><td>Fix is in the binary</td><td><span class="pill pill--green">yes</span> — the rate-limit marker is present in the new image and absent from the original 1.0.72 image; a control marker present in both proves the check can see inside either</td></tr>
+    <tr><td>Really 1.0.73 code</td><td><span class="pill pill--green">yes</span> — Devin catalog and Meta API-key strings are in the new binary and not in the current one</td></tr>
+    <tr><td>Version stamp</td><td><span class="mono">1.0.73-claude-fleet</span> and the full commit hash are baked in</td></tr>
+    <tr><td>Management panel</td><td>64 files / 3,919,143 bytes mirrored, digest matches the pinned recipe-v2 value; the new binary's own embed table lists exactly the 61 assets that were mirrored</td></tr>
+    <tr><td>Disk gate</td><td>101 GB free before, 100 GB after; no build containers left behind</td></tr>
+  </tbody>
+</table>
+
+<h2>Things to know before you decide (stated, not hidden)</h2>
+<ul>
+  <li><strong>Panel is one version behind the code.</strong> The management panel is not in the public
+  source; it was mirrored out of the running 1.0.72 image, as the runbook requires. So this 1.0.73
+  server ships the 1.0.72 panel. Upstream's new Devin login screen will not appear in the UI until
+  upstream publishes a 1.0.73 image we can mirror from. Everything the panel does today keeps working.</li>
+  <li><strong>Not reproducible from public source alone</strong>, for the same reason. Same disclosure
+  as the last two deploys.</li>
+  <li><strong>The known scheduler defect (agent-os #717) is unchanged.</strong> The early-warning
+  de-preference is still dead code on the Ark's fast path. That is its own workstream (ws-0003) and is
+  neither better nor worse in this image.</li>
+  <li><strong>"Newest models" do not depend on this deploy.</strong> Home already downloads the live
+  model catalog every 3 hours; the Ark's log shows it doing so today, and Fable 5.1 and Opus 5.5 are
+  already in that catalog. Separately: the catalog has dropped gpt-5.4 and gpt-5.4-mini, which agent-os
+  still references in places — flagged for agent-os, not fixed by this image.</li>
+  <li><strong>The branch tip will be two docs-only commits past the image</strong> (this write-up and
+  the close-out). The binary is unaffected.</li>
+  <li><strong>Reached the Ark over Tailscale, not the LAN address</strong> — the LAN path from the laptop
+  was not answering this session. Same host, same key, same user.</li>
+</ul>
+
+<div class="callout callout--info">
+  <p class="callout-title">What happens on each answer</p>
+  <p><strong>Ship:</strong> under the fleet lock, the compose file is pointed at the new tag, the
+  container is recreated, and the post-deploy checks from the runbook are run (container healthy,
+  nodes re-register, one real Claude request through a node). Rollback is one compose edit back to the
+  tag above, verified by image ID first. <strong>Hold:</strong> nothing moves; the image stays on the
+  Ark, harmless, until you say otherwise.</p>
+</div>
+<p class="muted">Fork branch: github.com/chansearrington/CLIProxyAPIHome tree fleet · Upstream release: router-for-me/CLIProxyAPIHome v1.0.73 · Runbook: agent-os docs/runbooks/cpa-home-build-and-rollback.md</p>

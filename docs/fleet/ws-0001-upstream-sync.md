@@ -189,3 +189,77 @@ Caveats:
   means egress is blocked and Home is stuck on the embedded fallback.
 - "Id exists in the catalog" is not "the node's executor handles a brand-new model family". Nothing
   on the fleet's wanted list is in that situation.
+
+### Tasks 4-7 (2026-09-24, after Chanse's go in the workstream pane)
+
+All Ark commands ran as `root` with key `~/.ssh/cronos_ark` over Tailscale (`100.110.133.6`), because
+the LAN address `192.168.1.143` did not answer from the laptop this session. Same host, same key.
+
+**Task 4 — Ark verification (criterion 3): PASS.** Source on the Ark at
+`/mnt/user/appdata/cpa-home-build/src`, checked out at `2b43b07`, every command inside
+`golang:1.26-bookworm` via `run-go.sh`:
+
+| step | command | result |
+|---|---|---|
+| format | `gofmt -l .` | rc 0, no output |
+| vet | `go vet ./...` | exactly one line: `internal/cluster/refresh.go:172:2: unreachable code` (known upstream) |
+| test | `go test -count=1 ./...` | 33 packages `ok`, 13 `[no test files]`, 0 FAIL, rc 0 |
+| compile | `CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -o /out/ws-0001-check ./cmd/home` | rc 0, 73,229,808 bytes, ELF x86-64 dynamically linked; removed after the run |
+
+Bonus read-only check that closes the criterion-5 caveat: `docker logs cpa-home | grep "model
+refresh"` on the live container shows `periodic model refresh completed from
+https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json` at
+2026-09-24 02:31 local. The remote catalog download works on the Ark today.
+
+**Task 5 — branches (criterion 7): done.**
+
+- `fleet` → `2b43b07` (the rebased line). Because the fork commits were rewritten by the rebase, this
+  was not a fast-forward; it was a branch move pushed with `--force-with-lease=fleet:9d8bf4e`. The
+  old tip is preserved as annotated tag `fleet-pre-ws-0001` (`9d8bf4e`), pushed to origin.
+- `main` → `26a0afb` = `upstream/main` (pure fast-forward). `dev` → `04fac5f` = `upstream/dev`
+  (created locally from `origin/dev`, fast-forward). Both pushed.
+- The Ark's local `fleet` (was `b9f97fd`, no local-only commits) was moved to `origin/fleet` so the
+  runbook's Block 1 could pass its equality gate.
+
+**Task 6 — image + ship card (criterion 8): done.**
+
+- Disk gate before the build: `/var/lib/docker` 150G, 101G free (33%). After: 100G free. No
+  containers left behind.
+- Step 0: the running image is `cpa-home:1.0.72-claude-warn-a5b5273`, ID
+  `sha256:fb50b9f4413158963e50a588246f4497d423f3f4c6f2305122b1a1b5a1fd4c60`, already a durable tag.
+  **That is the rollback target.** No new rollback tag was created (same reasoning as the previous
+  deploy in the runbook §3).
+- Panel: the 2026-09-09 mirror still existed on the Ark at `/tmp/panel-mirror/static-full` and
+  re-validated exactly: 64 files, 3,919,143 bytes, recipe-v2 digest
+  `8c7fa7c22e5bc90c70402b9893e2991fcaa834edacd723a6863b3bd961dac9fd`. Copied into
+  `internal/managementasset/static/` (65 files with `.gitkeep`), removed again after the build.
+- Runbook Block 1 verbatim: `CANDIDATE_TAG=cpa-home:1.0.73-claude-fleet-2b43b07`,
+  `FULL_SHA=2b43b07cf2d2e8c4854f00f166cfcce9c496a230`. Block 2 with that SHA pasted in and the two
+  tag lines changed to `VERSION=1.0.73-claude-fleet` / `cpa-home:1.0.73-claude-fleet-$SHORTSHA`
+  (Chanse's decision in the pane; the brief's convention wins over FLEET.md's `1.0.72-claude-<line>`
+  and the runbook's `1.0.72-fleet`). All gates passed; `docker build` rc 0.
+- **Image: `cpa-home:1.0.73-claude-fleet-2b43b07`, ID
+  `sha256:60179681754f9cc74ede119754ae7169a81f033fc6feb7892c4730e5d7739fe0`, 185,502,992 bytes,
+  created 2026-09-24T03:50:00-05:00.**
+- Verification against the extracted binaries (counts are new / running / original-1.0.72):
+  `isClaudeRateLimitHeaderKey` 1 / 1 / 0, `NewUsageResultWithHeaders` 1 / 1 / 0, control
+  `quotaCooldownAfterFailure` 1 / 1 / 1, control `CLIProxyAPIHome` 27 / 27 / 27. 1.0.73-only strings
+  (new / running): `models.router-for.me/devin_models.json` 1 / 0, `meta-api-key` 4 / 0,
+  `native_capabilities` 1 / 0. Baked strings: `1.0.73-claude-fleet` ×3, full SHA ×3. The new binary's
+  embed table lists 61 assets, identical to the mirrored set (diff empty).
+- Ship card **`ppsn5AM7hz`** raised (`--type ship`, workstream `ws-0001-upstream-sync`, risk
+  yellow) with the hosted write-up from `docs/fleet/ws-0001-ship.artifact.html`. Disclosed on it: the
+  1.0.72 panel on 1.0.73 code (upstream's Devin login screen absent from the UI), non-reproducibility
+  from public source, agent-os #717 unchanged, "newest models" not dependent on this deploy, and the
+  dropped `gpt-5.4`/`gpt-5.4-mini` catalog ids. **No container was restarted.**
+
+**Task 7 — close-out.** This section; `fleet` fast-forwarded to include the two docs-only commits
+after the image (this write-up and the ws-0002 correction); workstream branch and worktree removed;
+herdr space closed.
+
+**Acceptance criteria status:** 1 ✅ · 2 ✅ (no conflict; hunk shown above) · 3 ✅ · 4 ✅ · 5 ✅ ·
+6 ✅ (untouched) · 7 ✅ · 8 ✅ (built, tagged, card raised, awaiting the ship decision).
+
+**Follow-ups handed off (not done here):** agent-os: pins to `gpt-5.4` / `gpt-5.4-mini` will break
+when the catalog refresh drops them; ws-0002 (Copilot provider) as re-scoped above; ws-0003 (#717)
+based on `fleet` at this close-out.
