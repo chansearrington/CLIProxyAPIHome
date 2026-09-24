@@ -2,11 +2,11 @@
 
 Workstream brief for the `fleet` fork of CLIProxyAPIHome. Created 2026-09-24.
 
-- Branch: `ws-0002/copilot-provider` (based on `fleet` @ `9d8bf4e`, same base as ws-0001)
+- Branch: `ws-0002/copilot-provider` (based on `fleet` @ `5c212e9`, the post-ws-0001 line: upstream 1.0.73 @ `04fac5f` + fork commits; rebased 2026-09-24 from the pre-ws-0001 base `9d8bf4e`)
 - Worktree: `.claude/worktrees/ws-0002-copilot-provider`
 - herdr space: `CLIProxyAPIHome | ws-0002 | Copilot provider` (agent alias `cpahome-ws-0002`)
-- Runs in parallel with ws-0001 (upstream sync). Rebases onto the synced `fleet` once ws-0001
-  lands, before anything ships. Nothing here goes to upstream Home unless it is a clean fix.
+- ws-0001 (upstream sync) landed before this work started; no further rebase is planned. Nothing
+  here goes to upstream Home unless it is a clean fix.
 
 ## Goal
 
@@ -94,8 +94,8 @@ may switch accounts mid-conversation. Recommend, don't decide.
    Copilot one is; Home's usage view attributes each to the right credential.
 8. Any Home code change: tests in the container, `docs/management/api.md` updated if the API
    changed, `gofmt`/vet clean (known refresh.go vet line excepted).
-9. Rebased onto the post-ws-0001 `fleet`; full suite green; rollout to the remaining nodes and any
-   Home image only on a decided `ship` card. Never stop a mini's `cpa-home-node`; restart in place.
+9. Full suite green on the Ark; rollout to the remaining nodes and any Home image only on a
+   decided `ship` card. Never stop a mini's `cpa-home-node`; restart in place.
 
 ## Tasks
 
@@ -109,7 +109,7 @@ may switch accounts mid-conversation. Recommend, don't decide.
 6. Canary install + login + model list (criteria 4–6). One node only.
 7. Pooling proof (criterion 7).
 8. Home changes if any (criterion 8).
-9. Rebase onto synced `fleet` (after ws-0001 closes), full tests, close-out here, ship card.
+9. Full tests on the Ark, close-out here, ship card.
 
 ## Stop points
 
