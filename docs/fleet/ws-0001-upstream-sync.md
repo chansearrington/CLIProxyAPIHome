@@ -263,3 +263,25 @@ herdr space closed.
 **Follow-ups handed off (not done here):** agent-os: pins to `gpt-5.4` / `gpt-5.4-mini` will break
 when the catalog refresh drops them; ws-0002 (Copilot provider) as re-scoped above; ws-0003 (#717)
 based on `fleet` at this close-out.
+
+## Deployed — 2026-09-24 17:24:52Z (ship card `ppsn5AM7hz`, decided `ship` by Chanse)
+
+Executed by the coordinator (the ws-0001 lead had already closed) per agent-os
+`docs/runbooks/cpa-home-build-and-rollback.md` §8 shape and the Part B sequence, under all four
+fleet-locks (`fleet-lock hold moxy … hyper … lara … chip`), canonical
+`FLEET_LOCK_SESSION=cpa-home-runtime-20260907-root` / `FLEET_LOCK_ACTOR=cpa-home-root`.
+
+- Pre-swap ID checks (all by `{{.Id}}`, never by tag name): rollback target
+  `cpa-home:1.0.72-claude-warn-a5b5273` = `sha256:fb50b9f44131…` = the running container; new
+  `cpa-home:1.0.73-claude-fleet-2b43b07` = `sha256:60179681754f…`.
+- DB backup `data/backups/home-pre-1073-20260924T172308Z.db` via `VACUUM INTO` (1,632,468,992 B,
+  `PRAGMA integrity_check` = ok). Compose backup `docker-compose.yml.pre-1073-20260924T172308Z.bak`.
+- `docker compose up -d home`: container recreated, `started=2026-09-24T17:24:53Z`, port answering
+  after 4 s, `RestartCount 0`, no panic/fatal in the log.
+- Post-deploy: `GET /v0/management/nodes` → 5/5 healthy; `cpa_node_membership` all five `active`
+  with `connected_at 17:24:57Z`; ledger since swap 9 rows / 0 failed; `claude-fable-5-1` and
+  `claude-opus-5-5` completions through the MacBook node → 200. Nodes logged a ~4 s
+  "cluster discovery transport failed" reconnect during the swap, nothing after.
+- **Rollback target for this deploy = `cpa-home:1.0.72-claude-warn-a5b5273` (ID `fb50b9f44131…`)**,
+  by restart-in-place on that tag after re-verifying the ID. Older tags untouched.
+- Card `ppsn5AM7hz` marked actioned at 17:26:26Z. Acceptance criterion 8 now fully ✅.

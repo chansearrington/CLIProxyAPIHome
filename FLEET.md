@@ -37,7 +37,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   `.gitkeep`). A deployable image needs the panel mirrored from the running instance first. A binary
   compiled from a bare checkout ships a blank panel and is a smoke test only, never a deploy.
 - `docker build` on the Ark is gated on the Ark's Docker disk having enough free space. The gate,
-  the tag convention (`cpa-home:1.0.72-claude-<line>-<short-sha>`) and the rollback procedure are
+  the tag convention (`cpa-home:<upstream-version>-claude-fleet-<short-sha>`, Chanse 2026-09-24; earlier images used `1.0.72-claude-<line>-<sha>`) and the rollback procedure are
   in the agent-os repo: `docs/runbooks/cpa-home-build-and-rollback.md`.
 
 ## Deploying
