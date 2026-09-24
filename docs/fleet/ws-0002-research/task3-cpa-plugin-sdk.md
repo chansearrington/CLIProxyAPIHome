@@ -638,3 +638,161 @@ deploy runbook rather than as a CPA fact.
   selection is `pickNextViaHome` (§1d). ⇒ **On the fleet, model-id pooling between a Copilot plugin credential and a
   native Claude credential is decided 100% by Home's dispatcher and Home's model catalogue, and the CPA-side guards in
   this section are irrelevant to that decision.** The only CPA-side requirement is the executor-key match.
+
+---
+
+## 5. v7.3.16 delta (`c404af96ebacedf8168b3c2bdbf4449a21cd1c1e`, 2026-09-24) vs v7.2.159 (`ac02da6c`)
+
+Context: the fleet is being upgraded from 7.2.159 to v7.3.16 (darwin_aarch64 release archive), so the scoping must hold at
+both commits. `git rev-parse v7.3.16` = `c404af96…`; 276 commits after `ac02da6c`. Everything in §1–§4 was re-checked against
+`c404af96` below; unless a row says otherwise, the cited code is byte-identical (line numbers may shift by a few lines).
+
+### 5a. ABI / schema constants and mismatch rules at c404af96 — unchanged
+
+| Constant | ac02da6c | c404af96 | Line at c404af96 |
+|---|---|---|---|
+| `pluginabi.ABIVersion` | 1 | **1** | `sdk/pluginabi/types.go:7` |
+| `pluginabi.SchemaVersion` | 6 | **6** | `sdk/pluginabi/types.go:20` |
+| `SchemaVersionStreamChunkOmitRequestBody / WebSocketResponseObserver / StreamChunkOmitHistory / RawManagementResponse` | 3/4/5/6 | 3/4/5/6 | `:23,26,29,32` |
+
+Host rules are identical: `pluginHostABIVersion = pluginabi.ABIVersion` (`internal/pluginhost/abi.go:9`); native loader
+still requires exact ABI equality — `if uint32(client.api.abi_version) != pluginHostABIVersion { … "plugin ABI version %d is not supported" }`
+(`internal/pluginhost/loader_unix.go:162-164`, was `:154-157`); RPC register still sends `SchemaVersion: pluginabi.SchemaVersion`
+(`rpc_client.go:71`) and rejects only `resp.SchemaVersion > pluginabi.SchemaVersion` (`rpc_client.go:76-77`), zero → 1
+(`:80-84`). ⇒ **A plugin built for 7.2.159 (`abi_version == 1`, `schema_version <= 6`) loads unchanged on v7.3.16, and
+vice-versa.** No new schema version was minted in these 276 commits; the additions below are purely additive JSON fields.
+
+### 5b. `git diff --stat ac02da6c..c404af96` over the plugin SDK / host / Home-sync paths
+
+```
+$ git diff --stat ac02da6c..c404af96 -- sdk/pluginabi sdk/pluginapi internal/pluginhost sdk/cliproxy/home_plugins.go internal/homeplugins internal/home
+ internal/home/client.go                            |   5 +
+ internal/home/client_test.go                       |  20 ++
+ internal/home/requests.go                          |   1 +
+ internal/pluginhost/adapters_executors.go          |   3 +-
+ internal/pluginhost/adapters_test.go               | 102 +++-
+ internal/pluginhost/adapters_usage_translation.go  |  48 +-
+ internal/pluginhost/auth_provider.go               |  43 ++
+ internal/pluginhost/auth_provider_test.go          | 108 +++
+ internal/pluginhost/callback_contexts.go           | 124 +++-
+ internal/pluginhost/client_guard.go                |  24 +-
+ internal/pluginhost/host.go                        | 155 +++-
+ internal/pluginhost/host_callbacks.go              | 205 +++-
+ internal/pluginhost/host_callbacks_test.go         | 866 ++++
+ internal/pluginhost/host_callbacks_unix.go         |   6 +-
+ internal/pluginhost/host_model_stream_callbacks.go |   3 +
+ internal/pluginhost/host_test.go                   | 140 +++
+ internal/pluginhost/http_bridge.go                 |  34 +-
+ internal/pluginhost/http_bridge_test.go            |  16 +
+ internal/pluginhost/http_operation_bridge.go       | 431 ++++  (new)
+ internal/pluginhost/http_operation_bridge_test.go  |  95 +    (new)
+ internal/pluginhost/http_stream_bridge.go          |  87 +-
+ internal/pluginhost/loader_unix.go                 |  35 +-
+ internal/pluginhost/loader_windows.go              |  29 +-
+ internal/pluginhost/loader_windows_test.go         |  79 +
+ internal/pluginhost/rpc_client.go                  |  22 +-
+ internal/pluginhost/rpc_client_error_test.go       |  51 +
+ internal/pluginhost/rpc_schema.go                  |  15 +
+ internal/pluginhost/rpc_schema_test.go             |  59 +
+ internal/pluginhost/scheduler.go                   |   8 +
+ internal/pluginhost/scheduler_test.go              |  35 +
+ sdk/pluginabi/types.go                             |  49 +-
+ sdk/pluginabi/types_test.go                        |  57 +
+ sdk/pluginapi/types.go                             |  33 +
+ sdk/pluginapi/types_test.go                        |  67 +-
+ 34 files changed, 2889 insertions(+), 166 deletions(-)
+```
+
+`sdk/cliproxy/home_plugins.go` and `internal/homeplugins/` are **untouched** (not in the stat). ~1,900 of the 2,889 added
+lines are tests (`host_callbacks_test.go` alone is 866). The substantive, plugin-visible changes:
+
+| Area | Change at c404af96 | Relevance to a Copilot provider plugin |
+|---|---|---|
+| **Error envelope** | `pluginabi.Error` gains `Error()`/`StatusCode()` methods, `NewError(code,msg,httpStatus…)`, `NewErrorEnvelope(...)` helpers; comment now states "When omitted or 0, CPA defaults to HTTP 500" (`sdk/pluginabi/types.go:121-165`). Host's `marshalRPCError` now takes an optional status (`rpc_client.go:393-396`). | Convenience only; the wire shape `{ok:false,error:{code,message,retryable,http_status}}` is unchanged, so §1g (return `http_status: 429` for quota) still holds. |
+| **Host HTTP callbacks** | Two new host methods `host.http.operation_open` / `host.http.cancel` (`sdk/pluginabi/types.go:97-98`) backed by a new `http_operation_bridge.go` (431 lines) and per-plugin-instance callback identity (`hostCallbackInstance` threaded through `loader_unix.go:100-106,143-155,173-178,221-224`, `client_guard.go:13-44`, `rpc_client.go:17-22,79`, `callback_contexts.go`). Plugin HTTP operations are now cancellable and are torn down on `Shutdown`/unload. | Additive: an old plugin that never calls the new methods behaves as before. Better cleanup on plugin reload. |
+| **Per-request proxy override** | `HostModelExecutionRequest` gains `ForcedProvider`, `AuthID`, `ProxyURL` (`sdk/pluginapi/types.go:628-634`); executor requests get `HTTPClient: host.newHTTPClientWithProxy(auth, opts.ProxyURL, provider)` (`adapters_executors.go:1044`; `http_bridge.go` "Priority: request override, then auth proxy, then config proxy"). | Additive. |
+| **Scheduler plugins** | New capability flag `SchedulerAcrossPriorities` (`sdk/pluginapi/types.go:85-88`; `rpc_schema.go:28,148-160`; `scheduler.go:37-43`). | Not used by a provider plugin. |
+| **Usage record to plugins** | `pluginapi.UsageRecord` gains `RequestID`, `TraceID`, `ResponseServiceTier`, `ResponseModel`, `Stream` (`sdk/pluginapi/types.go:1408-1411,1440-1448`; populated in `adapters_usage_translation.go:165-194`). | Only affects plugins that *consume* usage (`UsagePlugin`); the host-side accounting for a plugin *executor* (§1f) is unchanged: `NewExecutorUsageReporter` still uses `executor.Identifier()` as provider, and `tokenAccountingSemanticsFor` is unchanged at `sdk/cliproxy/usage/accounting.go:340`. |
+| **Quota UI** | `QuotaFetchResponse.Summary []QuotaMetric` (`sdk/pluginapi/types.go:1625-1641`). | Additive, display only. |
+| **Auth refresh** | `preserveFileAuthPriority(&data, auth)` inserted in both `Host.RefreshAuth` (`auth_provider.go:393`) and `executorAdapter.Refresh` (`adapters_executors.go:932`), plus `pluginTokenStorage.SetMetadata` now strips a stale `priority` from `rawJSON` when metadata no longer has one (`auth_provider.go:458-472`). This is commit c404af96 itself — see §5d. | Fixes priority loss on plugin-auth refresh for **file-backed** auths (standalone nodes). |
+| **Home dispatch payload** | Node now sends `node_kind` in the RESP auth-dispatch request, taken from an `X-Node-Kind` header (`internal/home/requests.go:12`; `client.go:1299-1310`; set from `NodeKindMetadataKey` in `conductor_home.go:1017-1024`). Home's model-info in the dispatch response may carry `native_capabilities` (`conductor_home.go:359-368,382`). | Both `omitempty`; an older Home ignores `node_kind`. Nothing plugin-specific. |
+
+**Unchanged and re-verified at c404af96** (function present at the new line shown, body identical for the cited logic):
+`storageJSONFromAuth` (`adapters_executors.go:1048`, still `Storage.RawJSON()` → else `json.Marshal(auth.Metadata)`);
+`modelHasNativeExecutor` (`:280`); `selectExecutorInputFormat`/`selectExecutorOutputFormat` (`:462`/`:477`);
+`executorKeyFromAuth` (`sdk/cliproxy/auth/conductor_execution.go:1778`); Home executor lookup + `openai-compatibility`
+fallback (`conductor_home.go:1169-1190`); `tryRegisterPluginModelsForAuth` (`sdk/cliproxy/service_executors.go:498`);
+`applyModelPrefixes` (`sdk/cliproxy/service_models.go:622`); `OAuthModelAliasChannel` default-passthrough
+(`sdk/cliproxy/auth/oauth_model_alias.go:476`); `case 429:` quota cooldown (`conductor_cooldown.go:868`);
+`RefreshAuthViaHome` (`internal/runtime/executor/helps/home_refresh.go:93`); `candidateDirs`/`pluginExtension`
+(`platform.go:308`/`:103`); `loader_unix.go:1` build tag; `translator.Register` keying and `OpenAI→Claude` pair
+(`sdk/translator/registry.go:30,166,179`; `internal/translator/claude/openai/chat-completions/init.go:11-15`);
+`release.yaml` darwin-arm64 on `macos-15` with `CGO_ENABLED=1` (`:108-109`, `:176`). So **§1, §2's plugin-vs-vendor
+analysis, §4.1, §4.2 and §4.3 all hold at v7.3.16.**
+
+Outside the requested dirs, two larger churns are worth a sentence each because they touch cited files but not the cited
+logic: `sdk/cliproxy/auth/scheduler.go` (+182) and `conductor_selection.go` (+234) grew (across-priorities scheduler
+support, `executorLocked` helper) — the mixed-provider round-robin merge in `pickMixedWithStrategy` (§1d) is still the
+flatten-and-round-robin at the best priority; and `internal/redisqueue/plugin.go` (+84) adds `execution_id`, `trace_id`,
+`node_kind`, `is_fork`, `is_compaction`, `response_model`, `resolved_client_ip` to the usage payload pushed to Home
+(`plugin.go:174-210`) — still no provider allowlist. New native providers `devin` and `meta` (and `kimi-ai`/`kimi.ai`
+aliases) were added to the baseline executor list (`service_executors.go:208-215,294-313`); **`github-copilot` is still
+not a native provider at v7.3.16**, and PR #5661's 9-file conflict set (§2) is against this same `dev`.
+
+### 5c. Home-managed nodes: plugin loading and plugin auths — no change
+
+- Lifecycle branch is identical: `homeEnabled := s.cfg != nil && s.cfg.Home.Enabled` (`sdk/cliproxy/service_lifecycle.go:53`),
+  auth store not loaded when Home is enabled (`:77-94`), watcher/token providers skipped (`:96-110`). The only
+  `service_lifecycle.go` diff is an unrelated mDNS/discovery advertiser (`:177`, `:318-323`).
+- Plugin runtime sync is identical: `syncPluginModelRuntime` → `pluginHost.RegisterModels` + `registerAvailableExecutors{includeBaseline: homeEnabled, includePlugins: true, auths: s.coreManager.List()}`
+  (`sdk/cliproxy/service_plugins.go:136-154`, was `:129-148`); `registerPluginExecutors` unchanged (`:44-49`). The
+  `service_plugins.go` diff is a `done` hook on registration tasks (`:35`, `:253-266`) and a Kimi alias normalisation
+  (`:334-343`) — nothing Home- or plugin-auth-specific.
+- Home plugin sync (`sdk/cliproxy/home_plugins.go`) and installer (`internal/homeplugins/sync.go`) are **byte-identical**
+  between the two tags (absent from the diff stat). The sync request still sends `GOOS/GOARCH` + installed versions and
+  the sync key still hashes `plugins.enabled|dir|auth-revision|configs.*`.
+- Plugin auth delivery on a Home node is unchanged: dispatched `Auth` still arrives via `RPopAuthWithSessionHierarchy`
+  (`conductor_home.go:1027-1032`), `Auth.Storage` is still `json:"-"` (`sdk/cliproxy/auth/types.go:64`; the `types.go`
+  diff is +2 unrelated lines), so the plugin's `StorageJSON` is still `json.Marshal(auth.Metadata)`
+  (`adapters_executors.go:1048-1063`); refresh still goes to Home (`home_refresh.go:93-127`). The one new field the
+  node sends Home per dispatch is `node_kind` (§5b), which Home may ignore.
+- `/v1/models` on a Home node still comes entirely from Home (`internal/api/server_routes.go:608-611` → `handleHomeModels`
+  → `loadHomeModelEntries` → `client.GetModels`), so §4.3's conclusion stands: pooling is Home's decision.
+
+### 5d. What commit c404af96 itself fixes — "fix(auth): preserve file priority across plugin auth refreshes"
+
+Author Luis Pater (maintainer), 2026-09-24 08:09 +0800, 12 files / +377 −14, `Closes: #6089`
+(https://github.com/router-for-me/CLIProxyAPI/issues/6089, filed 2026-09-23, closed 2026-09-24, no comments).
+
+**The bug (from #6089):** auth JSON files parsed by a **plugin** `AuthProvider` did not get the file's `"priority"` field
+copied into `auth.Attributes["priority"]` / `auth.Metadata["priority"]` — the built-in providers did
+(`internal/watcher/synthesizer/file.go` old `:200-209`), but the plugin branches in `synthesizer/file.go` and
+`sdk/auth/filestore.go` only applied `disabled`, weight and model aliases. Consequences: `GET /v0/management/auth-files`
+showed `priority: 0` for plugin credentials, and the scheduler's `authPriority(candidate)` was always 0, so priority-tier
+routing never applied to plugin credentials. A second, implied problem is what the commit title names: even after a
+runtime patch, the plugin's `RefreshAuth` response (`AuthData`) replaced attributes/metadata wholesale, so the priority
+was lost again on the next refresh.
+
+**The fix:**
+
+1. New helper `coreauth.ApplyAuthPriorityMetadata(auth, metadata)` + marker attribute `AttributeFilePriority = "file_priority"`
+   (`sdk/cliproxy/auth/priority.go:1-42`, new file): parses `priority` (number or numeric string) from the file JSON into
+   `Metadata["priority"]`, `Attributes["priority"]`, and sets `Attributes["file_priority"]="true"`.
+2. Both plugin-parse sites now call it and push the metadata back into the plugin token storage so the file round-trips
+   the value: `internal/watcher/synthesizer/file.go:141-146` and `sdk/auth/filestore.go:301-306` (each:
+   `ApplyAuthPriorityMetadata(auth, metadata)`; if `file_priority` set → `auth.Storage.SetMetadata(auth.Metadata)`). The
+   native branch was refactored to use the same helper (`synthesizer/file.go:216`).
+3. Plugin host refresh paths preserve it: `preserveFileAuthPriority(&data, auth)` in `Host.RefreshAuth`
+   (`internal/pluginhost/auth_provider.go:393`, helper `:412-441`) and in `executorAdapter.Refresh`
+   (`adapters_executors.go:932`). Only when `Attributes[source_backend]=="file"`; it re-copies `path`, `source`,
+   `source_backend`, `file_priority`, and — iff `file_priority=="true"` — `priority` in both attributes and metadata,
+   otherwise deletes a stray `priority`. `pluginTokenStorage.SetMetadata` strips `priority` from `rawJSON` when the
+   metadata no longer carries one (`auth_provider.go:458-472`) so a removed priority does not resurrect from the file.
+4. Management PATCH keeps the marker in sync (`internal/api/handlers/management/auth_files_fields.go:695-703`).
+
+**Relevance to ws-0002:** this fix only concerns **file-backed** plugin auths on a node that loads its own auth-dir — i.e.
+standalone nodes. On the fleet's Home-managed nodes no auth files are loaded and refresh is delegated to Home (§1b, §5c),
+so the bug never manifested there and the fix is inert; the equivalent concern on the fleet is whether **Home** carries
+the `priority` of a plugin credential through its own dispatch/refresh cycle (a Task 2 / Home-side question). It is,
+however, a useful data point that the maintainer is actively fixing plugin-`AuthProvider` edge cases within a day of
+report — the plugin path is being maintained, which supports the §2 recommendation.
