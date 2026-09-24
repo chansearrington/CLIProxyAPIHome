@@ -368,6 +368,9 @@ entries (different serving config); they stay separate on purpose.
    cap and a 16K non-streaming output cap that the native accounts do not; with (i) roughly half
    of long Claude Code sessions would hit a 400 mid-conversation. (ii) still satisfies "served
    by whichever account has quota" and is a one-attribute change per credential to flip later.
+   Priority is decided in Home (its own selector reads the credential's `priority`); on the
+   node side, CPA 7.3.16's own commit `c404af96` fixed plugin credentials losing their
+   `priority` on refresh (upstream issue #6089), so both halves now honour it.
 4. **Home-side session affinity** already keeps a conversation on the credential it started on
    while that credential is healthy, which limits mid-conversation switching to the moments the
    pool actually fails over.
