@@ -73,11 +73,18 @@ Sequential unless marked ‖ (can run in parallel with its sibling).
 
 ## Out of scope / follow-ups
 
-- **ws-0002 (to be scoped): GitHub account as models across the fleet.** Neither Home nor CPA
-  has a GitHub/Copilot provider today (Home `internal/auth/`: antigravity, claude, codex, devin,
-  kimi, meta, vertex, xai; CPA repo code search: 0 hits for "copilot"). This is a new provider,
-  mostly in CPA (it makes the API calls); Home would only distribute the credential. Scope it
-  against CPA first; decide whether to build it or wait for upstream.
+- **ws-0002 (to be scoped): GitHub Copilot as a provider across the fleet.** Upstream CPA has NO
+  native Copilot provider and the maintainer said in July 2026 (issue #4317) it will not be a
+  top-level provider. Open CPA PR #5661 (2026-09-09, +1423 lines, no maintainer review) adds one; do
+  not count on it. The realistic route is the community plugin
+  arthur-sommer-etc/cliproxyapi-copilot-plugin (MIT, official plugin ABI v1 targeting CPA v7.2.118,
+  v0.3.3 2026-08-05, pushed 2026-09-08): device-code GitHub login, model discovery, executor.
+  Upstream Home already has a plugin store, plugin-store-auth (plugin OAuth) and a plugin-sync task
+  to nodes, and X-CPA-SUPPORT-PLUGIN requires CGO (our Dockerfile is CGO_ENABLED=1). Scoping
+  questions for ws-0002: (1) does Home plugin store accept a third-party plugin source or only a
+  curated list; (2) does the minis CPA 7.2.154 satisfy the plugin ABI; (3) does the plugin
+  credential flow work through Home plugin-store-auth or only node-local; (4) model-ID collisions
+  with native claude-* (plugin supports prefix exclusion).
 - **ws-0003 (queued): scheduler-path fix for agent-os #717.** Base on the post-sync `fleet`.
 - CPA node upgrades on the minis (7.2.154 → 7.3.x) are agent-os work, not this repo.
 
