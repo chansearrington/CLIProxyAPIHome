@@ -407,15 +407,53 @@ Not needed: PR #1 (prefix preservation), because we do not prefix.
    quota page matters for Copilot.
 3. `docs/management/api.md:897` correction (registry vs pinned artifacts).
 
-### What I need from Chanse before task 5 (plain-text yes/no in this pane)
+### Chanse's decisions on the proposal (2026-09-25, interactive Q&A in the ws-0002 pane)
 
-1. Mapping table + mechanism above: agree, or change any row.
-2. Pooling policy: (ii) native-first/Copilot-overflow to start (recommended), or (i) equal split.
-3. Where the `darwin/arm64` artifact gets built: GitHub Actions macOS runner in our fork
-   (recommended), the MacBook, or a mini.
-4. Fork the plugin under `chansearrington/` and carry the four patches: yes/no.
-5. Which Copilot plan(s)/accounts will be logged in (Pro cannot see Opus/Fable/GPT-5.5/Sol;
-   Pro+/Max or a Business org can), and acknowledgement of the third-party-client risk above.
+These supersede the pooling parts of the brief's Goal, "Chanse's decisions (2026-09-24)", the
+Design question, and the mapping proposal above, which stay as the record of what was proposed.
+
+1. **Separate, not pooled (changed his mind from 2026-09-24).** Verbatim intent: "I don't want
+   my GitHub Copilot to be labeled and used in the pool. I want it to be separate ... If I choose
+   Opus 5.5, I'm using my pooled Anthropic accounts, but if I choose Copilot Opus 5.5, I'm using
+   only my GitHub credentials." Still: no model excluded, Claude included.
+2. **Naming: `copilot/<GitHub's own id>`**, e.g. `copilot/claude-opus-5.5`, `copilot/gpt-5.5`,
+   `copilot/gemini-3.8-flash`. Mechanism, zero Home code: the plugin stamps every Copilot
+   credential with `prefix: copilot`, and Home's existing `force-model-prefix: true` setting drops
+   the bare id (`internal/home/models.go:691-733`). `force-model-prefix` only affects credentials
+   that have a prefix; verified read-only on the Ark 2026-09-25 that none of the six current
+   credentials has one, so native model names are unchanged. The Group B alias rules and the
+   `OAuthModelAliasChannel` Home fix are **no longer needed**. The 128K-cap failover risk is gone
+   because a session only lands on Copilot when the client asks for a `copilot/` model.
+3. **Mac build: GitHub Actions macOS runner in the fork.** Linux build on the Ark as planned.
+4. **Fork `chansearrington/cliproxyapi-copilot-plugin` and carry five patches:** (1) declare
+   plugin schema 1 for Home's SDK v7.2.83; (2) set `Prefix: "copilot"` on every `AuthData` the
+   plugin returns (login, parse, refresh), which also covers what upstream PR #1 fixes; (3) map
+   upstream 402 to 429; (4) prefer `/v1/messages` for Claude-family ids; (5) darwin/arm64 build
+   and release job (from upstream PR #2). Offer (1)-(4) back upstream as PRs.
+5. **Account: Chanse's Microsoft work seat**, GitHub account `carringt_microsoft`
+   (enterprise-managed user), Copilot Enterprise assigned by the `my-copilot` enterprise,
+   1,000,000 AI credits/month resetting on the 1st, internal-only models listed (e.g. "GPT-5.6 Sol
+   Fast (internal only)", "GPT Daybreak Blue", "mai-experimental"). **The lead recommended a
+   separate personal account on Pro+ and advised against this; Chanse chose the work seat.**
+   Concerns raised and recorded: the seat is employer-owned and likely outside employee
+   acceptable-use rules; fleet prompts (personal data) would be processed and logged under the
+   enterprise; the plugin presents itself as VS Code, which on an enterprise seat reads as
+   bypassing enterprise controls; internal-only models get exposed to the fleet; enterprise
+   policy may block the path. Technical consequences: the plugin uses the enterprise API host
+   from the token exchange (`endpoints.api`, handled at `internal/provider/token.go:141-157`); the
+   stored GitHub token for this account lives in Home's DB on the Ark and is dispatched to nodes
+   like every other credential. "Multiple Copilot accounts" stays a later option.
+
+### Acceptance criteria changed by these decisions
+
+- Criterion 6 now reads: all discovered Copilot models appear in the canary node's model list
+  as `copilot/<id>`, none excluded, and **no bare Copilot id** appears.
+- Criterion 7 (pooling proof) is replaced by a **separation proof**: a request for
+  `copilot/<model>` is served only by the Copilot credential; a request for the native name
+  (e.g. `claude-opus-5-5`) is never served by it, including while every native credential for
+  that model is disabled; Home's usage view attributes each to the right credential.
+- Home changes expected: only config (`force-model-prefix: true`, plugin store manifest,
+  `load-in-home: true`); no Go change unless the canary shows otherwise.
 
 ## Close-out
 
