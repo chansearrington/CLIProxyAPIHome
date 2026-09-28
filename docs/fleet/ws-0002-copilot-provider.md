@@ -455,6 +455,84 @@ Design question, and the mapping proposal above, which stay as the record of wha
 - Home changes expected: only config (`force-model-prefix: true`, plugin store manifest,
   `load-in-home: true`); no Go change unless the canary shows otherwise.
 
+## Task 5 record — plugin built (2026-09-28)
+
+**Source.** Fork `chansearrington/cliproxyapi-copilot-plugin` (public; `main` mirrors upstream
+`7f16b6011e93266f6d317166ef7cb6f0262f511f`). Branch `fleet`, release commit
+**`1d51c025e23de056f8988ace84e2e1fb900a7a8e`**, tag **`v0.3.4`**. Five commits on top of upstream,
+one per agreed patch, each with tests, plus `FORK.md`:
+
+| Commit | Patch |
+|---|---|
+| `f888311` | declare registration schema 1 (Home's SDK v7.2.83 host accepts it; nodes accept ≤ 6) |
+| `e48c953` | every credential gets `Prefix: "copilot"` (login, parse, refresh) |
+| `01a885e` | upstream 402 (credits exhausted) reported to the host as 429 `quota_exhausted` |
+| `1ffe0ac` | Claude-family models prefer `/v1/messages` when Copilot offers it |
+| `1d51c02` | darwin/arm64 Make/package targets, macos-15 CI + release jobs, `scripts/smoke-load.py` (dlopen + `cliproxy_plugin_init` check on every package), version 0.3.4, metadata points at the fork |
+
+**Verification.**
+- On the Ark, `golang:1.26-bookworm` (go1.26.8 linux/amd64), source cloned from a git bundle
+  of the exact commit into `/mnt/user/appdata/cpa-home-build/plugin-src`: `gofmt -l` empty,
+  `go vet ./...` clean, `go test -count=1 ./...` all packages ok; the eight new or changed tests
+  ran and passed by name.
+- Fork CI run `36384438799` (commit `1d51c02`): tests on ubuntu and on macos-15 (go1.26.8
+  darwin/arm64) ok; darwin library is `Mach-O 64-bit dynamically linked shared library arm64`,
+  `codesign --verify`: "valid on disk / satisfies its Designated Requirement" (linker ad-hoc
+  signature, so the Gatekeeper concern is closed), links only `libSystem`, and loads via dlopen.
+- Release run `36384564452` (tag `v0.3.4`): validate, build-linux-amd64 (tests + build in
+  `golang:1.26-bookworm`), build-darwin-arm64 (macos-15), release: all success.
+- **Reproducible:** the Linux library GitHub built is byte-identical to the one the Ark built
+  (inner `.so` sha256 below). The Ark-built library also loads on Debian bookworm glibc 2.36,
+  the same base as Home's runtime image.
+
+**Artifacts** (release `v0.3.4`,
+`https://github.com/chansearrington/cliproxyapi-copilot-plugin/releases/download/v0.3.4/<file>`):
+
+| File | Size (bytes) | sha256 of the zip (what Home pins) | sha256 of the library inside |
+|---|---|---|---|
+| `cliproxyapi-copilot_0.3.4_linux_amd64.zip` (for Home) | 13250064 | `60a67e8ff82a746da8e289c105a21ebd791b2547f4af3b9183f182379a9a6b93` | `c91f122ef423b7f4f142685c2345ab57e950d22e95a6f817d55bdd5be2e4bb81` (= Ark build) |
+| `cliproxyapi-copilot_0.3.4_darwin_arm64.zip` (for the nodes) | 7142109 | `0e989ee4613d159bec86ef37661ed89d7b1a3c3b265ad648748345a265ca42ba` | `94d787e57019ff501d366f37fad2ed28bd60df79ec67cca7b2e9c9a5f771c979` |
+| `checksums.txt` | 217 | `f43b5cb82a0547b421dafab38003804ab820a281d83db4b12ffc8d276b13b9fa` | — |
+
+Each zip holds exactly one file at its root, `cliproxyapi-copilot.so` / `.dylib`, which is the
+layout the node installer requires (CPA `internal/pluginstore/install.go:318-390` at `c404af96`).
+Plugin id = `cliproxyapi-copilot`; config key = `plugins.configs.cliproxyapi-copilot`.
+
+**Draft Home config for task 6 (NOT applied):**
+
+```yaml
+force-model-prefix: true
+plugins:
+  enabled: true            # already true in Home's DB
+  configs:
+    cliproxyapi-copilot:
+      enabled: true
+      load-in-home: true
+      store:
+        id: cliproxyapi-copilot
+        version: 0.3.4
+        schema-version: 2
+        name: GitHub Copilot subscription provider
+        description: Fleet fork of arthur-sommer-etc/cliproxyapi-copilot-plugin
+        author: chansearrington
+        repository: https://github.com/chansearrington/cliproxyapi-copilot-plugin
+        install:
+          type: direct
+          artifacts:
+            - {goos: linux,  goarch: amd64, url: https://github.com/chansearrington/cliproxyapi-copilot-plugin/releases/download/v0.3.4/cliproxyapi-copilot_0.3.4_linux_amd64.zip,  sha256: 60a67e8ff82a746da8e289c105a21ebd791b2547f4af3b9183f182379a9a6b93, size: 13250064}
+            - {goos: darwin, goarch: arm64, url: https://github.com/chansearrington/cliproxyapi-copilot-plugin/releases/download/v0.3.4/cliproxyapi-copilot_0.3.4_darwin_arm64.zip, sha256: 0e989ee4613d159bec86ef37661ed89d7b1a3c3b265ad648748345a265ca42ba, size: 7142109}
+```
+
+**Found while preparing task 6 (read-only, `fleet` code):**
+- Home's plugin config is global. Once installed, **every node downloads and loads the plugin**
+  (plugin-sync has no per-node targeting); there is no config-only way to put it on one node.
+- Dispatch is scoped per API key by channel group (`internal/cluster/api_keys.go:944-990`,
+  `internal/home/runtime.go:891-911`): a Copilot credential in its own channel group can only be
+  used by keys bound to that group. All five fleet keys are bound to group 1 today.
+- The model list sent to nodes is **not** scoped per key (`internal/respserver/get/default.go:62-78`
+  → `buildModelsJSON`): once logged in, `copilot/…` names appear on every node's `/v1/models`;
+  requests for them from keys outside the Copilot group are refused.
+
 ## Close-out
 
 (filled in at the end)
