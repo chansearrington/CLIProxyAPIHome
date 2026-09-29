@@ -533,6 +533,32 @@ plugins:
   → `buildModelsJSON`): once logged in, `copilot/…` names appear on every node's `/v1/models`;
   requests for them from keys outside the Copilot group are refused.
 
+## Task 6 plan — approved by Chanse 2026-09-28 (users + Copilot-only channel group)
+
+Chanse's idea, adopted: model the agents as Home users so usage is attributable per agent by
+name, and give only Chanse's user access to Copilot. Mechanism, verified in `fleet` code:
+users are an owner/billing layer (`internal/cluster/users.go`); **access** is decided by the API
+key's channel groups (`internal/cluster/api_keys.go:944-990`). A user-owned key is blocked only
+when the user has `credits <= 0` without `credits_unlimited`, or an exceeded period limit
+(`internal/cluster/user_period_limit.go:835-870`), so every user is created with
+`credits_unlimited: true` and no limits. Usage reports group by user
+(`/usage/aggregates?group_by=user`, `/usage/overview` top users).
+
+Steps, each verified before the next; every one reversible:
+0. Online backup of `home.db` into `data/backups/` (sqlite `.backup`).
+1. Create users `chanse`, `moxy`, `chip`, `hyper`, `lara` (`credits_unlimited: true`).
+2. Bind API keys 2-6 to their users (Hyper, Chip, Moxy, Lara, MacBook Pro → chanse); key 1
+   (unnamed, no channels) left unbound. Prove one real request per agent key still succeeds.
+3. `force-model-prefix: true` and the plugin store manifest from the task 5 record
+   (`load-in-home: true`). Prove Home loaded it and every node reports `plugin-status` ok and
+   stays healthy.
+4. Chanse logs in `carringt_microsoft` through Home's device-code flow.
+5. New channel group "Copilot — Chanse only" = the Copilot credential; bind it to the MacBook
+   key in addition to group 1. The Copilot credential is not added to group 1.
+6. Proof: `copilot/<model>` answered via the MacBook key and attributed to the Copilot
+   credential; the same request with an agent key is refused; native names never route to
+   Copilot; no bare Copilot id in any model list.
+
 ## Close-out
 
 (filled in at the end)
