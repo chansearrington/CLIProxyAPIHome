@@ -559,6 +559,58 @@ Steps, each verified before the next; every one reversible:
    credential; the same request with an agent key is refused; native names never route to
    Copilot; no bare Copilot id in any model list.
 
+## Task 6 progress record (2026-09-29, times UTC)
+
+**Step 0 — backup.** My first backup used sqlite's online `.backup`, which restarts every time
+Home writes and never finished (agent-os `docs/runbooks/cpa-home-build-and-rollback.md` §8 already
+says: use `VACUUM INTO`). The coordinator killed it and took the replacement
+`data/backups/ws-0002-before-users-and-copilot-2026-09-29T16-36-25Z.db` (2,169,200,640 bytes);
+verified here: `quick_check` ok, 6 credentials, 6 API keys, 5 live users. **This is the rollback
+point for everything below.**
+
+**Steps 1-2 — users.** The five users already existed (created 2026-09-09): Moxy 2, Chanse 3,
+Chip 4, Hyper 5, Lara 6 (user 1 `moxy.kit@outlook.com` is soft-deleted). No key was bound. Chip
+had `credits_unlimited: false` with 0 credits, which would have blocked Chip's key the moment it
+was bound; set to `true` first (16:3xZ). Keys matched to machines by sha256 fingerprint prefix
+of each mini's OpenClaw `cpa-gui` key (no key printed). Bound one at a time, each followed by a
+real request from that machine (all HTTP 200 "ok"): key 5 Lara→Lara, 2 Hyper→Hyper, 4 Moxy→Moxy,
+3 Chip→Chip, 6 MacBook Pro→Chanse; all keep `channels: [1]`; key 1 (unnamed, no channels) left
+unbound. Zero `user_credits`/`user_period_limit` refusals afterwards;
+`/usage/aggregates?group_by=user` now reports Chanse, Chip, Lara, Hyper, Moxy.
+
+**Step 3 — plugin install, and a CPA node bug.** `PUT /config.yaml` at 16:41:37Z with exactly
+three changes (`force-model-prefix: true`, the `plugins.configs.cliproxyapi-copilot` block from
+the task 5 record, the `openai-compatibility` credential root omitted so Home leaves it alone).
+All six API keys were carried verbatim: a config replace soft-deletes any key missing from the
+upload (`internal/cluster/repository.go`, `replaceAPIKeysTxWithStats`), and bindings of kept keys
+are preserved (verified after). Home loaded the plugin in-process at once (`/plugins`:
+registered, `oauth_provider: copilot`).
+
+Every node then looped on `failed to stage home config; retrying error=load home plugins:
+plugin cliproxyapi-copilot installed but not loaded` (~2,000 lines/min into Home's log) while
+still serving on its previous config. **Cause (CPA v7.3.16 `c404af96`, upstream bug):** on a
+hot config update the node installs the new plugin file, then `MarkLoadResults` checks
+`pluginHost.PluginRegistered` (`sdk/cliproxy/service_home.go:183-186`,
+`internal/homeplugins/sync.go:677-712`) **before** the new config is applied, and plugins are
+only loaded when config is applied, so a newly added plugin can never pass. The config worker
+retries the same payload forever and never dequeues a newer one
+(`service_home.go:664-682`), so rolling the config back (16:43:15Z) did not help. The startup
+path is ordered correctly (`cmd/server/main.go:677-690`: `pluginHost.ApplyConfig` then
+`MarkLoadResults`), but exits the process if a load fails.
+
+Recovery: re-applied the plugin config (16:44:24Z) and restarted nodes in place with the
+runbook command `launchctl kickstart -k gui/$UID/ai.openclaw.cpa-home-node`, the MacBook first
+(16:44:25Z; about 10 s of 503s while Home released the old membership), then one at a time with
+health + plugin-registered + real-request checks: Lara 16:45:22Z, Hyper 16:45:44Z, Moxy 16:46:11Z,
+Chip 16:46:30Z. Each back in 14-20 s. Result at 16:47Z: all five nodes `plugin_report_state:
+reported_ok`, plugin `loaded` 0.3.4, no retry lines after 16:46:30Z, zero failed requests in the
+prior 10 minutes, native model list unchanged (55 ids; the only new one, `claude-sonnet-5-5`,
+comes from the Anthropic accounts).
+
+**Lesson for any future plugin add or version bump through Home:** expect this loop on every
+node; the fix is a restart in place per node. Follow-up: report upstream to
+router-for-me/CLIProxyAPI with the file/line evidence above.
+
 ## Close-out
 
 (filled in at the end)
