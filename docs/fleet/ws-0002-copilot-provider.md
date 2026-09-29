@@ -611,6 +611,18 @@ comes from the Anthropic accounts).
 node; the fix is a restart in place per node. Follow-up: report upstream to
 router-for-me/CLIProxyAPI with the file/line evidence above.
 
+**Step 5 prepared ahead of the login (16:47Z).** Channel group 2 "Copilot — Chanse only" created
+(empty until the Copilot credential exists). Key 6 (MacBook Pro, user Chanse) bound to
+`channels: [1, 2]`. Key 1 (the 2026-09-07 pilot canary key, stored only on the Ark, unused since
+2026-09-08) was unscoped (`channels: []` = any credential), so it was scoped to `[1]`; agent keys
+2-5 stay `[1]`. A new Copilot credential is reachable only through key 6. MacBook request after
+the change: HTTP 200.
+
+**Step 4 — waiting on Chanse.** Device code started 16:48:17Z via `GET /copilot-auth-url`
+(`https://github.com/login/device?user_code=…`); not approved, expired 17:03:19Z ("GitHub device
+code expired"). Next: start a fresh code when Chanse is present, then add the new credential to
+channel group 2 and run the separation proof (step 6).
+
 ## Close-out
 
 (filled in at the end)
