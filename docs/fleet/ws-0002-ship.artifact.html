@@ -1,0 +1,41 @@
+<!-- ws-0002 Copilot provider — ship card write-up for the Home plugin-login fix. HTML fragment
+     (house classes only). Published via fleet-ask create --type ship --artifact <this-file>. -->
+
+<div class="callout callout--green">
+  <p class="callout-title">🟢 Approved in the ws-0002 pane — swap the Ark's Home to the plugin-login fix</p>
+  <p>Chanse approved this ship in the ws-0002 workstream pane on 2026-09-30 ("Ship it now, I
+  approve"). This card is the Inbox record of that decision. The fix lets Home save a login made
+  through a plugin, which every plugin login currently fails to do; it is what stands between the
+  approved GitHub Copilot login and a working Copilot account. Nothing else changes.</p>
+</div>
+
+<h2>What changes</h2>
+<table>
+  <thead><tr><th>Item</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>New image</td><td><span class="mono">cpa-home:1.0.73-claude-fleet-9ba431f</span> (ID <span class="mono">sha256:f83c5493b720…</span>)</td></tr>
+    <tr><td>Rollback target</td><td><span class="mono">cpa-home:1.0.73-claude-fleet-2b43b07</span> (ID <span class="mono">sha256:60179681754f…</span>), the image running now, already durably tagged</td></tr>
+    <tr><td>Built from</td><td>fork branch <span class="mono">fleet</span> at <span class="mono">9ba431f</span> = the running build's code plus one fix commit and docs</td></tr>
+    <tr><td>The fix</td><td>A plugin login returns its own credential name (e.g. <span class="mono">copilot-&lt;login&gt;.json</span>) but Home's database needs a UUID, so the save failed with "auth index is required". Home now gives plugin credentials a stable UUID before saving; logging the same account in again updates it instead of duplicating it. 33 lines of code plus tests.</td></tr>
+  </tbody>
+</table>
+
+<h2>What was checked (inside the build container on the Ark)</h2>
+<table>
+  <thead><tr><th>Check</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Formatting (gofmt)</td><td><span class="pill pill--green">clean</span></td></tr>
+    <tr><td>Static analysis (go vet)</td><td><span class="pill pill--green">only the known upstream finding</span> (refresh.go:172)</td></tr>
+    <tr><td>Full test suite</td><td><span class="pill pill--green">33 packages pass, 0 failures</span> (needs a 3 GB test temp space now; the 1 GB one runs out of room while linking)</td></tr>
+    <tr><td>New tests for the fix</td><td><span class="pill pill--green">4 pass</span>: stable UUID, storable, same account → same record, different account or provider → different record</td></tr>
+    <tr><td>Fix is in the binary</td><td><span class="pill pill--green">yes</span>: marker present in the new binary, absent in the running one; the existing Claude rate-limit fix and the control marker are present in both</td></tr>
+    <tr><td>Runbook gates</td><td>Block 1 and Block 2 verbatim (only the SHA and the 1.0.73-claude-fleet tag convention filled in); panel mirror 64 files / 3,919,143 bytes; disk 99 GB free after</td></tr>
+  </tbody>
+</table>
+
+<h2>Things to know</h2>
+<ul>
+  <li>The fleet pauses for a few seconds while the container restarts; nodes reconnect on their own.</li>
+  <li>Found alongside: CPA nodes loop when Home adds a plugin while they run (fixed on 2026-09-29 by restarting each node in place). Recorded in the ws-0002 brief, to be reported upstream.</li>
+  <li>The same Home fix will be offered upstream as a PR; upstream has not fixed it as of <span class="mono">upstream/dev</span> <span class="mono">e16d6f1</span>.</li>
+</ul>

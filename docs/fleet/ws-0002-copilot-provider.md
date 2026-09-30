@@ -623,6 +623,50 @@ the change: HTTP 200.
 code expired"). Next: start a fresh code when Chanse is present, then add the new credential to
 channel group 2 and run the separation proof (step 6).
 
+**Step 4 retry and a Home bug (2026-09-30).** Fresh code at 02:28:33Z; Chanse approved at
+GitHub and the plugin's poll succeeded, but Home failed the save at 02:29:39Z: `cluster plugin
+oauth: save auth failed provider=copilot error=auth index is required`
+(`internal/cluster/management/plugin_oauth.go:229-236` → `internal/cluster/repository.go:84-89`,
+which requires `ID == Index`, a UUID). The plugin returns its own identifier
+(`copilot-<login>.json`) and no index, so **every plugin login fails on Home 1.0.73**; native
+logins get a UUID from `EnsureOAuthPayloadUUID`, plugin logins get nothing. Not fixed upstream as
+of `upstream/dev` `e16d6f1`. Nothing was stored.
+
+**Fix, shipped on Chanse's in-pane approval ("Ship it now, I approve", 2026-09-30).** Commit
+`9ba431f` on `fleet`: `cluster.EnsurePluginAuthIdentity` gives a plugin-created auth a
+deterministic UUID from provider + plugin identifier (re-login updates the same record, a
+different account or provider gets a different one), keeps the plugin identifier as `FileName`,
+leaves existing UUIDs alone; called once before `UpsertAuth` in the plugin login path. 4 new tests.
+
+- Ark, `golang:1.26-bookworm`: gofmt clean; vet = only the known `refresh.go:172`; **full suite
+  33/33 test packages ok, rc 0**; compile ok. The suite **fails with a 1 GB `/tmp` tmpfs**
+  ("No space left on device" while linking 4 cgo test binaries in parallel); a 3 GB tmpfs passes
+  (Ark had 86 GB RAM available). FLEET.md updated.
+- `origin/fleet` had moved to `7171da7` (ws-0001 deploy record, docs only); branch rebased onto it,
+  code tree byte-identical to the tested one, `fleet` fast-forwarded to `9ba431f` with
+  `--force-with-lease`.
+- Four fleet-locks held (canonical `cpa-home-runtime-20260907-root` / `cpa-home-root`, heartbeat
+  every 60 s, no failures) from before the backup to after validation; released 02:4xZ.
+- `VACUUM INTO` backup `data/backups/home-pre-ws0002-20260930T023857Z.db`, 2,224,803,840 bytes,
+  integrity ok, sha256 `2c661cfc398d2d16b6508d37edd8e8cdde67a6c946c907c8df8e8fe5a38817ce`.
+- Runbook Block 1 verbatim (host → Tailscale address): `FULL_SHA=9ba431f6475da421e71a091d82825f5ec05e5982`.
+  Panel mirror `/tmp/panel-mirror/static-full` copied in (64 files / 3,919,143 bytes) and removed
+  after. Block 2 verbatim except `EXPECT_SHA` and the `1.0.73-claude-fleet` tag lines. Disk 99 GB free after.
+- **Image `cpa-home:1.0.73-claude-fleet-9ba431f`, ID
+  `sha256:f83c5493b72083db8d730c4a69a5c173501ba3007ba83fd4b701f8d894ce4dcf`, 185,503,088 bytes.**
+  Binary markers new/running: `EnsurePluginAuthIdentity` 1/0, full SHA 3/0,
+  `isClaudeRateLimitHeaderKey` 1/1, `1.0.73-claude-fleet` 3/3, control `CLIProxyAPIHome` present in both.
+- Ship card **`BqIotjm7HX`** (type ship, risk yellow) raised as the Inbox record of the pane approval.
+- Swap 02:41:19Z: rollback tag `cpa-home:1.0.73-claude-fleet-2b43b07` verified = running ID
+  `sha256:60179681754f…` first; compose backed up as `docker-compose.yml.pre-ws0002-<ts>.bak`, one
+  `image:` line changed, `docker compose up -d home`. Running `sha256:f83c5493b720…`, restarts 0,
+  no panic; Home loaded the Copilot plugin; 5/5 nodes healthy with plugins `reported_ok`; one real
+  request from every agent key and the MacBook: HTTP 200; 23 requests after the swap, 0 failed.
+  **Rollback = compose back to `cpa-home:1.0.73-claude-fleet-2b43b07` after re-verifying its ID.**
+
+**Step 4, third attempt:** code at 02:42:16Z on the fixed Home, not approved, expired 02:57:17Z.
+Waiting on Chanse.
+
 ## Close-out
 
 (filled in at the end)
