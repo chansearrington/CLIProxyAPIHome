@@ -667,6 +667,61 @@ leaves existing UUIDs alone; called once before `UpsertAuth` in the plugin login
 **Step 4, third attempt:** code at 02:42:16Z on the fixed Home, not approved, expired 02:57:17Z.
 Waiting on Chanse.
 
+**Step 4 done, and a second Home bug (2026-09-30).** Chanse approved code `250D-AE35`; Home saved
+credential **`e3b5f1d8-fe50-54e5-a0e6-a1526863d84e`** (label `carringt_microsoft`, provider
+`copilot`, prefix `copilot`, active) at 03:08:13Z, proving fix `9ba431f`. It then listed no models:
+`pluginhost: models for auth … failed: Copilot auth storage is empty`. Cause: in cluster mode Home's
+runtime keeps **minimal auths** (`internal/cluster/runtime.go:798`, `modelMetadataFromAuth` keeps
+only Home-owned metadata) and `tryRegisterPluginModelsForAuth` handed that minimal auth to the
+plugin host, whose `storageJSONFromAuth` then had nothing to send. Refresh and dispatch already load
+the full auth (`resolveFullRefreshAuth`, `resolveFullDispatchAuth`); discovery did not. Proven with a
+throwaway reproduction on the Ark (Home's SDK v7.2.83 host + the real `.so`): a credential shaped like
+the stored one reaches GitHub (HTTP 401 on a fake token), so the stored data was fine.
+
+**Fix 2, shipped on Chanse's in-pane approval ("Ship it now", 2026-09-30).** Commit `95ba2db` on
+`fleet`: `Runtime.pluginDiscoveryAuth` loads the full auth via `ClusterAdapter.GetFullAuth` for the
+plugin's model discovery only, falling back to the runtime auth. 2 new tests. Ark: gofmt clean, vet
+= known line only, full suite 33/33 ok. Four locks held throughout, heartbeat clean. Backup
+`data/backups/home-pre-ws0002-20260930T031947Z.db` (2,233,610,240 bytes, integrity ok, sha256
+`b634802334bcf7c2d9f071a501e6d1c8bd920b115b5b3a1dbfc65a876e706dcf`). Block 1 → `FULL_SHA=95ba2dbe9e46c0439c4046786de593d1b0a399f1`;
+panel 64/3,919,143; Block 2 → **`cpa-home:1.0.73-claude-fleet-95ba2db`, ID
+`sha256:d1d6bb3eaed4d15d4bde3dc3af2f0c6ff0e6986439a7f5378050e25a9cd725a1`**. Markers new/running:
+`pluginDiscoveryAuth` 2/0, `EnsurePluginAuthIdentity` 1/1, full SHA 3/0, `isClaudeRateLimitHeaderKey`
+1/1. Ship card **`utBbyJNLOu`**. Swap 03:22:40Z after the rollback gate (`9ba431f` tag = running ID
+`sha256:f83c5493b720…`): restarts 0, no panic, plugin loaded, 5/5 nodes healthy `reported_ok`, a real
+request from every agent and the MacBook HTTP 200, 37 requests after the swap, 0 failed. Locks
+released. **Rollback = compose back to `cpa-home:1.0.73-claude-fleet-9ba431f` after re-verifying its ID.**
+
+**Step 5.** Credential `e3b5f1d8…` added to channel group 2 "Copilot — Chanse only" (03:23Z); it is
+the group's only member and is in no other group. Key bindings: 1-5 `[1]`, 6 (MacBook Pro, user
+Chanse) `[1,2]`.
+
+**Step 6 — separation proof (03:24Z), attributed from Home's `usage` table:**
+
+| Request (key) | Model asked | Result | Served by |
+|---|---|---|---|
+| MacBook, OpenAI chat | `copilot/gpt-5-mini` | 200 (empty body, see below) | provider `copilot`, credential `e3b5f1d8…`, alias `copilot/gpt-5-mini` |
+| MacBook, OpenAI chat | `copilot/claude-haiku-4.5` | 200 (empty body, see below) | `copilot`, `e3b5f1d8…` |
+| MacBook, Anthropic `/v1/messages` | `copilot/claude-haiku-4.5` | 200 "ok" | `copilot`, `e3b5f1d8…` |
+| MacBook, OpenAI chat | `claude-haiku-4-5-20251001` (native name) | 200 "ok" | provider `claude`, `chanse.arrington@gmail.com` |
+| Lara's key, OpenAI chat | `copilot/gpt-5-mini` | **503 `auth_not_found: no auth available`** | none (refused) |
+
+Model list after the fix: **47 `copilot/…` ids, zero bare Copilot ids** (force-model-prefix). A native
+name has no Copilot candidate at all, so it cannot route to Copilot even when every native account
+is exhausted; the proof does that structurally instead of disabling Chanse's live Claude accounts.
+Copilot also lists legacy and internal ids (`gpt-4o`, `gpt-4.1`, `gpt-5.6-sol-fast`,
+`gpt-6.1-sol`, `trajectory-compaction`, embeddings); nothing was excluded, per decision.
+
+**Known limitation — OpenAI chat-completions format returns empty through Copilot.** Format matrix
+(03:25Z): `/v1/messages` (streaming and not, Claude and GPT) and `/v1/responses` return real answers;
+`/v1/chat/completions` returns an empty skeleton (non-streaming) or `empty_stream` (streaming), although
+Copilot served the request. The node translates chat → Claude for the plugin and the plugin's
+Claude-format answer back to chat, and the return leg comes back empty. Not yet pinned to host or
+plugin. Claude Code (the MacBook's use) speaks `/v1/messages` and is unaffected; agents cannot reach
+Copilot. Proposed fix: plugin v0.3.5 accepting `openai` chat format natively (Copilot serves
+`/chat/completions` for every model), which needs a Home manifest bump and an in-place restart of
+every node (CPA issue #6225 loop).
+
 ## Close-out
 
 (filled in at the end)

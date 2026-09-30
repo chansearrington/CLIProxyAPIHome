@@ -1,0 +1,29 @@
+<!-- ws-0002 — second ship: Home plugin model-discovery fix. HTML fragment, house classes only. -->
+<div class="callout callout--green">
+  <p class="callout-title">🟢 Approved in the ws-0002 pane — swap the Ark's Home to the plugin model-discovery fix</p>
+  <p>Chanse approved this ship in the ws-0002 pane on 2026-09-30 ("Ship it now"). After the first fix,
+  the GitHub Copilot login saved correctly, but Home could not list the account's models: it asked
+  the plugin using the slimmed-down in-memory copy of the credential, which carries no tokens. Home
+  now loads the full credential for that one call, the way it already does for refresh and for real
+  requests. This card is the Inbox record of that decision.</p>
+</div>
+<h2>What changes</h2>
+<table>
+  <thead><tr><th>Item</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>New image</td><td><span class="mono">cpa-home:1.0.73-claude-fleet-95ba2db</span> (ID <span class="mono">sha256:d1d6bb3eaed4…</span>)</td></tr>
+    <tr><td>Rollback target</td><td><span class="mono">cpa-home:1.0.73-claude-fleet-9ba431f</span> (ID <span class="mono">sha256:f83c5493b720…</span>), running now</td></tr>
+    <tr><td>Built from</td><td><span class="mono">fleet</span> at <span class="mono">95ba2db</span> = the running build plus one fix commit and docs</td></tr>
+  </tbody>
+</table>
+<h2>What was checked (Ark build container)</h2>
+<table>
+  <thead><tr><th>Check</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>gofmt / go vet</td><td><span class="pill pill--green">clean</span> / only the known upstream finding</td></tr>
+    <tr><td>Full test suite</td><td><span class="pill pill--green">33 packages pass, 0 failures</span>; 2 new tests (full credential loaded in cluster mode; falls back safely on every failure)</td></tr>
+    <tr><td>Reproduction</td><td>With Home's own plugin host and the real Copilot plugin, a credential carrying its token reaches GitHub; the slim copy produces exactly the live error</td></tr>
+    <tr><td>Fix is in the binary</td><td><span class="pill pill--green">yes</span> (marker 2/0 new/running; first fix and Claude fix present in both)</td></tr>
+    <tr><td>Runbook</td><td>Blocks 1 and 2 verbatim with the SHA filled in; panel 64 files / 3,919,143 bytes; 99 GB free</td></tr>
+  </tbody>
+</table>
