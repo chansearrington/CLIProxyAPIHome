@@ -227,6 +227,7 @@ func (h *Handler) respondPluginAuthStatus(c *gin.Context, ctx context.Context, s
 			return true
 		}
 		for _, auth := range auths {
+			cluster.EnsurePluginAuthIdentity(auth)
 			if _, errUpsert := h.repo.UpsertAuth(ctx, auth, "upsert"); errUpsert != nil {
 				log.WithError(errUpsert).WithField("provider", provider).Error("cluster plugin oauth: save auth failed")
 				_ = h.repo.SetOAuthSessionError(ctx, session.State, "Failed to save authentication tokens")
