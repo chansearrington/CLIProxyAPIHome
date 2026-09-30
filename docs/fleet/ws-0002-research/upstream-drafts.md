@@ -29,8 +29,10 @@ login path calls it for each auth before `CompleteOAuthSessionWithAuths`.
 
 **Tests:** 4 new tests in `internal/cluster/plugin_auth_identity_test.go` (UUID assigned and
 storable via `AuthToRecord`, stable across re-login, distinct per account and per provider,
-existing UUID kept, `FileName` fallback, empty auth untouched). Full suite on `dev` + this
-change: see the Ark run recorded below.
+existing UUID kept, `FileName` fallback, empty auth untouched). Verified on the fleet's Ark in
+`golang:1.26-bookworm` against `upstream/dev` `e16d6f1` + this commit (2026-09-30): gofmt clean,
+`go vet` only the pre-existing `internal/cluster/refresh.go:172` finding, `go test -count=1 ./...`
+33 test packages ok, 0 failures.
 
 ## 2. Issue on router-for-me/CLIProxyAPI — Home-managed node loops forever when Home adds a plugin
 
