@@ -722,6 +722,75 @@ Copilot. Proposed fix: plugin v0.3.5 accepting `openai` chat format natively (Co
 `/chat/completions` for every model), which needs a Home manifest bump and an in-place restart of
 every node (CPA issue #6225 loop).
 
+**Chat-format fix, v0.3.5 and v0.3.6 (2026-09-30, go-ahead relayed by the coordinator from
+Chanse's standing "stop stopping" rule).** Root cause of the empty OpenAI-chat answers: the
+official Claude -> X converters in CPA's translator library read Claude SSE `data:` lines only,
+so a Claude JSON body became an empty completion and `event:`-prefixed stream frames were dropped
+(`empty_stream`). Also reported by Chanse: `/v1/messages` on `copilot/gpt-5.6-sol` with
+`max_tokens` 10 → HTTP 400 (Copilot's `/responses` minimum is 16).
+
+- **Plugin PR #1** (https://github.com/chansearrington/cliproxyapi-copilot-plugin/pull/1, merged
+  `6aaf2e7`, tag **v0.3.5**): native `openai` chat format (chat clients go straight to Copilot
+  `/chat/completions`), chat ↔ Responses routes for Responses-only models, bare-JSON chat stream
+  chunks (the host frames them), `max_output_tokens` ≥ 16 on `/responses`. Local review round 1
+  (MUST 0, SHOULD 3, all fixed with tests), round 2 (MUST 0, SHOULD 1 deferred: terminal usage on
+  chat streams to Responses-only models).
+- The v0.3.5 proof passed 17/19; `/v1/responses` on a Claude model failed (string `input` dropped
+  by the translator; Claude JSON answers again empty through the library converter).
+- **Plugin PR #2** (https://github.com/chansearrington/cliproxyapi-copilot-plugin/pull/2, merged
+  `758ada4`, tag **v0.3.6**): Responses string `input` normalised; every Claude → X conversion now
+  renders a Claude JSON answer as its event stream and hands stream frames over as data lines.
+  Local review MUST 0, SHOULD 1 deferred (text-block citations dropped when synthesising SSE).
+- Evidence for both merges: Ark `golang:1.26-bookworm`, gofmt/vet clean, full plugin suite ok.
+- Releases (both built by the fork's Actions on `macos-15` + ubuntu, zips verified, one library
+  at the root): v0.3.5 linux `0559729f…` 13,262,652 B / darwin `0067ae30…` 7,149,449 B; **v0.3.6
+  linux `18c51ba7bf2203e2bae546756c72c25ecc37229e353be6a2587dd1955a209ca9` 13,272,759 B / darwin
+  `0eeed83328486a8b12170092e7b98d4f6e86e953242f564213c83eb4b0e0c9dc` 7,152,729 B.**
+- Rollout under the four fleet-locks (heartbeat clean), backup
+  `data/backups/home-pre-ws0002-20260930T054149Z.db` (2,275,180,544 B, integrity ok, sha256
+  `1ac4164abe325f88808a377f17bc10eee21787e90c98a8bf21a36b6cacfe49ca`), config bumps by `PUT
+  /config.yaml` (only version, URLs, sha256, size change; six keys carried; canary credential
+  root omitted) at 05:44:28Z (0.3.5) and 05:54:26Z (0.3.6). **A version bump of an
+  already-registered plugin hot-reloads on Home and every node (`plugin hot reloaded
+  active_version=… retired_version=…`) with no retry loop, so no node restart was needed;** only
+  adding a brand-new plugin hits CPA #6225. All five nodes `0.3.6 installed loaded`, healthy.
+  Rollback = `PUT` the saved previous config (the Ark copies were deleted at close-out; rebuild
+  from the task 5 record with the previous version's URL/sha/size).
+- **Proof on v0.3.6 (05:54Z): 19/19 non-empty** — `copilot/gpt-5-mini`,
+  `copilot/claude-haiku-4.5`, `copilot/gpt-5.6-sol` × `/v1/chat/completions`, `/v1/responses`,
+  `/v1/messages` × streaming and not, plus `copilot/gpt-5.6-sol` `/v1/messages` `max_tokens` 10.
+  Every agent key HTTP 200 on native models; Lara's key still refused for `copilot/` (503
+  `auth_not_found`). Failures since the rollout began: only the two v0.3.5 proof failures.
+
 ## Close-out
 
-(filled in at the end)
+(2026-09-30)
+
+**Outcome.** GitHub Copilot is a working, separate provider on the whole fleet. Chanse's work
+Copilot seat (`carringt_microsoft`, credential `e3b5f1d8-fe50-54e5-a0e6-a1526863d84e`) serves 47
+models as `copilot/<GitHub id>`, reachable only through Chanse's MacBook key (channel group 2), in
+all three client formats. Native model names never route to Copilot. The agents are Home users
+(Moxy, Chip, Hyper, Lara, Chanse), so usage reports per agent by name.
+
+**Acceptance criteria** (as amended by Chanse's decisions): 1 scoping report ✅ · 2 mapping +
+mechanism approved ✅ (separate, `copilot/` prefix) · 3 plugin built reproducibly, pinned, checksums
+recorded ✅ (v0.3.4 Ark-identical; v0.3.5/0.3.6 via the fork's Actions) · 4 canary + fleet install,
+nodes healthy ✅ (fleet-wide by Home's design; access fenced to one key) · 5 login via the agreed
+flow, nothing secret in the repo ✅ · 6 all models listed as `copilot/…`, none excluded, no bare ids
+✅ · 7 separation proof ✅ · 8 Home changes tested in the container, gofmt/vet clean ✅ (no
+Management API change, so `docs/management/api.md` is untouched) · 9 full suite green, shipped on
+decided cards `BqIotjm7HX` and `utBbyJNLOu` ✅.
+
+**What shipped.** Home `fleet`: `9ba431f` (plugin login identity), `95ba2db` (plugin model
+discovery), live image `cpa-home:1.0.73-claude-fleet-95ba2db`. Plugin fork
+`chansearrington/cliproxyapi-copilot-plugin` `fleet` @ `758ada4`, release v0.3.6 live. Upstream:
+Home PR router-for-me/CLIProxyAPIHome#123 (open), CPA issue router-for-me/CLIProxyAPI#6225 (open).
+
+**Follow-ups (not done here).**
+- Plugin SHOULDs deferred from review: terminal usage counts on chat streams to Responses-only
+  models (PR #1 round 2); text-block citations when synthesising Claude SSE (PR #2).
+- Home fix for model discovery (`95ba2db`) is not yet offered upstream; #123 covers the login fix only.
+- Offer the general plugin patches (402→429, `/v1/messages` preference, native chat format,
+  Responses clamp, darwin build) to `arthur-sommer-etc/cliproxyapi-copilot-plugin`.
+- Copilot is absent from Home's quota page (`quota_snapshots.go` allowlist); usage and cost work.
+- The account is Chanse's employer-owned seat; the concerns recorded in the decisions section stand.
