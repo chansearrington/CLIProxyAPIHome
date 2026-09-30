@@ -48,6 +48,16 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   ad hoc.
 - Never stop the fleet's `cpa-home-node` services on the minis; restart in place only.
 
+## Plugins (Home-managed)
+
+- Plugins reach the nodes through Home's config (`plugins.configs.<id>` with a pinned `store`
+  manifest); every node downloads and loads them, so access is fenced with channel groups, not
+  per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
+  (ws-0002; its `FORK.md` lists the patches it carries).
+- Adding a new plugin while nodes run makes every node loop on "installed but not loaded"
+  (CPA issue #6225); recover with an in-place restart of each node. Bumping the version of an
+  already-loaded plugin hot-reloads cleanly with no restart.
+
 ## Secrets
 
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
