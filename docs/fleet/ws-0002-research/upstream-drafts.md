@@ -1,7 +1,9 @@
-# ws-0002 — upstream submissions (drafts, not yet posted)
+# ws-0002 — upstream submissions
 
-Both post publicly under Chanse's GitHub account on repos he does not own, so each waits for his
-yes. Evidence for both is in `docs/fleet/ws-0002-copilot-provider.md` (Task 6 records).
+**Posted 2026-09-30 on Chanse's yes ("Post both"):** PR
+https://github.com/router-for-me/CLIProxyAPIHome/pull/123 (branch `fix/plugin-auth-identity`,
+`c02cb14`) and issue https://github.com/router-for-me/CLIProxyAPI/issues/6225. Texts below are what
+was posted. Evidence for both is in `docs/fleet/ws-0002-copilot-provider.md` (Task 6 records).
 
 ## 1. PR to router-for-me/CLIProxyAPIHome `dev` — branch `fix/plugin-auth-identity` (`c02cb14`)
 
