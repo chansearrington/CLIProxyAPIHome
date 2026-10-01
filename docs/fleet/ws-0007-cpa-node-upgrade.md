@@ -160,3 +160,35 @@ never `pgrep` (AC5).
   (Chanse's live Claude Code traffic + proofs), Chip 3, Moxy/Hyper/Lara 1 each (the proofs; their
   agents were idle). The ~5 s of 503s during the MacBook handoff were node-local (no membership yet)
   and never reached Home, as the runbook says.
+
+### #6225 fix proof (AC4)
+
+**Offline reproduction, on the Ark** (`golang:1.26-bookworm`, Go 1.26.8, private dir
+`cpa-home-build/ws0007-cpa`, deleted afterwards — verified by `ls`), run by a subagent and checked
+against the fix diff I read myself (`needsLoadMarking`, `tryDequeueLatest`):
+
+- **v8.0.7 (`97f244b8`)**, upstream's three regression tests unmodified
+  (`go test -count=1 -run Issue6225 -v ./sdk/cliproxy/`): all **PASS** —
+  `TestStageHomeOverlay_InstalledPluginAtRuntime_Issue6225`,
+  `TestHomeConfigWorkQueue_TryDequeueLatest_Issue6225`,
+  `TestHomeConfigWorkerPreemptsFailingConfigWithNewerPayload_Issue6225`. Full `./sdk/cliproxy/`
+  package: `ok` (24.9 s).
+- **Pre-fix code** (`097511b8`, bfa5aed's parent; and **v8.0.4** `d33f63f8`, what the fleet ran):
+  the same tests, minus two assertions on the new `needsLoadMarking` field and minus the
+  `tryDequeueLatest` unit test (that method doesn't exist pre-fix), both **FAIL** with the live
+  symptom:
+  - `stageHomeOverlayWithClient() error = load home plugins: home plugins: plugin myplugin installed
+    but not loaded` (the exact loop message ws-0002 saw on every node);
+  - `worker never recovered to strategy 'recovered', current="initial"` after ~20
+    `failed to stage home config; retrying` lines — the worker never picks up the newer config.
+  - Control: the adapted file passes at v8.0.7, so the adaptation didn't weaken the tests.
+
+**Why no live reproduction:** the only real trigger is adding a *brand-new* plugin to Home's
+config, which goes to Home itself and all five nodes at once. That needs a second, harmless plugin
+with darwin/arm64 + linux artifacts and a pinned store manifest (none exists), a `PUT /config.yaml`
+(soft-deletes any API key not carried), and — if the fix misbehaved — the failure mode is every node
+refusing further config changes until restarted. Removing and re-adding the Copilot plugin instead
+would cut Copilot off and risks its stored credential. Neither is a "safe reproduction that does not
+disturb the live fleet", so I did not do one. Residual risk: low (the fix is small and its tests
+reproduce the exact message); **follow-up:** the next real new-plugin add is the live proof — watch
+Home's log for `installed but not loaded` retry lines and restart a node in place if one loops.
