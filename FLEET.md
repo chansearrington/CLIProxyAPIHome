@@ -55,9 +55,13 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Adding a new plugin while nodes run makes every node loop on "installed but not loaded"
-  (CPA issue #6225); recover with an in-place restart of each node. Bumping the version of an
-  already-loaded plugin hot-reloads cleanly with no restart.
+- Nodes run CPA **8.0.7** (`97f244b8`, since 2026-10-01, ws-0007). On CPA ≤ 8.0.4, adding a new
+  plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
+  8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
+  live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
+  the version of an already-loaded plugin hot-reloads cleanly with no restart.
+- After a node restart, Home's `GET /nodes` shows a plugin as `skipped loaded` (library on disk
+  already identical); that is healthy. Check for `loaded` + `reported_ok`, not `installed`.
 
 ## Secrets
 
