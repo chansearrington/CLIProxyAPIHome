@@ -21,7 +21,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0003 | Sonnet 5.5 across the fleet | CLIProxyAPIHome `ws-0003/sonnet-5-5` | `cpahome-ws-0003` | **done** — no Home change; minis' Claude Code 2.1.284→2.1.286 |
 | ws-0004 | Upstream contributions | CLIProxyAPIHome `ws-0004/upstream-contrib` (+ plugin repo) | `cpahome-ws-0004` | **done** — Home PR #124, plugin offer issue #3; nothing live changed |
 | ws-0005 | Copilot on the quota page | CLIProxyAPIHome `ws-0005/copilot-quota` | `cpahome-ws-0005` | **done** — live `cpa-home:1.0.73-claude-fleet-16f609d` |
-| ws-0006 | Copilot plugin polish | cliproxyapi-copilot-plugin `ws-0006/plugin-polish` | `cpaplugin-ws-0006` | started |
+| ws-0006 | Copilot plugin polish | cliproxyapi-copilot-plugin `ws-0006/plugin-polish` | `cpaplugin-ws-0006` | **done** — plugin v0.3.7 live on Home + 5 nodes |
 
 All four run in parallel. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -60,3 +60,13 @@ time (see below).
 - 2026-10-01 — ws-0003 done, verified by the orchestrator: MacBook `claude -p --model sonnet` → `claude-sonnet-5-5` end_turn via the node; all four minis report Claude Code 2.1.286; worktree/branch gone; space closed. Side fact: nodes run CPA 8.0.4 (d33f63f8), not 7.3.16.
 - 2026-10-01 — ws-0004 done, verified: router-for-me/CLIProxyAPIHome#124 open on `dev` (2 files, no internal names in the body); arthur-sommer-etc/cliproxyapi-copilot-plugin#3 open; CPA #6225 closed upstream (fix in v8.0.5); Ark `run-go.sh` now 3g tmpfs with backup `.bak-20260930`; worktrees/branches gone. Corrected its follow-up: nodes are on CPA 8.0.4, so #6225's fix is a patch bump to 8.0.5.
 - 2026-10-01 — ws-0005 deployed 00:14Z but its driver hung in a `pgrep -f` self-match loop for ~46 min holding all four fleet-locks (blocking ws-0006) and skipping the post-swap proof. Orchestrator ran the proof under the still-held locks (4 minis + MacBook 200 'ok'; Copilot quota healthy/fresh, Enterprise, 1,000,000 premium; others unchanged), then killed the driver to release the locks. ws-0005 recorded the incident and closed out; worktree/branch removed. **Lesson for all drivers: never poll a remote job with `pgrep -f <name>` from a shell whose own command line contains `<name>` — use a pid file or a DONE marker in the log.**
+- 2026-10-01 — ws-0006 done, verified: release v0.3.7 has darwin/arm64 + linux assets; Home log shows every node hot-reloading 0.3.6 → 0.3.7 at 20:07 CDT with no restart; after its `PUT /config.yaml`, all four agent keys + the MacBook key still get 200 (`claude-sonnet-5-5`), and the MacBook gets `copilot/gpt-5-mini` 'ok'. Spaces closed.
+- 2026-10-01 — **round closed.** All herdr workstream spaces closed (only the orchestrator remains); no ws-0003..0006 worktrees or branches left in either repo. Kept on purpose: `origin/fix/plugin-model-discovery` (head of upstream PR #124), the fork's `offer/*` branches (plugin issue #3), Home backups `home-pre-ws0005-*` / `home-pre-ws0006-*`.
+
+## Open follow-ups from this round
+
+1. Nodes CPA 8.0.4 → 8.0.5+ for the plugin-install-loop fix (#6225). Patch bump; own workstream.
+2. Non-streamed `/v1/responses` on Copilot is recorded in Home's usage with 0 tokens (client gets the real counts) — likely the node's usage extraction for plugin Responses JSON (ws-0006).
+3. Claude Code on the minis only updates when run; consider a scheduled update (ws-0003).
+4. `gpt-6.1-sol` missing from the minis' OpenClaw pickers — WS-547's picker-drift card (ws-0003).
+5. When upstream merges #124 / #123, drop those commits from `fleet` at the next rebase (ws-0004).
