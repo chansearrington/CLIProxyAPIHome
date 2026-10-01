@@ -316,3 +316,20 @@ uninstall and remove the application that you created."
   `~/Library/Preferences/bartender-backup-pre-homeusage-removal-20260930T213231.plist`.
 - Source `tools/home-menubar/` deleted from `fleet` (still in git history at PR #2's merge).
 - What Chanse actually wants is multiple accounts inside CodexBar itself — researched next.
+
+## Multi-account inside CodexBar (research 2026-10-01, spot-checked by the orchestrator)
+
+- CodexBar (v0.60.3 and v0.70.0, released 2026-09-30) supports several accounts per provider, shown
+  inside that provider's one menu bar icon (layout `stacked` = all at once, up to 6; already set).
+  One icon per account is not built (issue #1843, open).
+- Ways in: Claude = pasted claude.ai `sessionKey` cookie / OAuth access token per account, or a
+  "claude-swap" adapter (`ClaudeSwapAccountReader.swift:38` runs `<exe> --list --json`); Codex =
+  in-app "Add account" (own `codex login` in a CodexBar-managed home); Copilot = in-app GitHub
+  sign-in per account.
+- Safety: never copy Home's Codex/Claude refresh tokens into CodexBar — a refresh on the laptop
+  revokes Home's copy. Separate logins (cookie, own `codex login`) are independent of Home's.
+- Key point for accuracy: limits (5-hour, weekly) are per account, so CodexBar watching the same
+  account Home uses shows the same % no matter which machine spent it. CodexBar's token/cost
+  counts, however, come from this Mac's own logs and will never include the minis' traffic.
+- Current config: no `tokenAccounts`; one Codex managed account that duplicates the laptop's own
+  login.
