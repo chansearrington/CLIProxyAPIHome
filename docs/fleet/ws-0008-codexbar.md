@@ -1,6 +1,6 @@
 # ws-0008 — CodexBar and CPA: usage in the menu bar
 
-Status: built + proven on the real menu bar (10/10 windows match); PR #2 in local review (2026-10-01)
+Status: done — Home Usage menu bar item live on the laptop, PR #2 merged into fleet (2026-10-01)
 
 - Branch `ws-0008/codexbar` off `fleet` (for this brief); worktree `.claude/worktrees/ws-0008-codexbar`
 - herdr: `CLIProxyAPIHome | ws-0008 | CodexBar`, alias `cpahome-ws-0008`
@@ -220,8 +220,8 @@ everything it does get right). It is laptop-only and removable in one command. D
 
 ## Review (2026-10-01)
 
-Independent code review (subagent) of `108ba17`: decoding matches the Go structs, no secret leaks,
-date parsing verified. Fixed in `fcd2bda`:
+Independent code review (subagent) of `31695ad`: decoding matches the Go structs, no secret leaks,
+date parsing verified. Fixed in `64fd1f0`:
 - MUST: optional calls (overview, per-credential detail) swallowed 401/403 with `try?` — a rotated
   key could have sent several failing requests in one poll. Now auth errors always propagate.
 - MUST: "Refresh now" before the first load sent `credential_ids: []`, which Home reads as "all"
@@ -271,3 +271,34 @@ date parsing verified. Fixed in `fcd2bda`:
 - **Suggestion (your call, nothing changed):** CodexBar's Claude icon shows "–" because the Claude
   login on this Mac isn't the one the fleet uses. If it bothers you, turn off just the Claude
   provider in CodexBar's settings; Home Usage covers it now.
+
+### Outcome and evidence
+
+- **Outcome:** Home's accounts (2× Claude, Codex, Copilot, xAI, Antigravity) are in the menu bar
+  with Home's own numbers, through a small native app next to CodexBar. CodexBar could not be
+  pointed at Home: no CPA provider, plugins get no menu bar icon and keep secrets in plain text,
+  and upstream has refused every CPA provider PR.
+- **Acceptance, by brief step:**
+  1. Research from CodexBar's source (v0.60.3 + main) and Home's code, with file:line, in Findings ✅
+  2. Options table with pros/cons, effort, upkeep and key storage ✅
+  3. Recommended (c), built, laptop-only and reversible (`uninstall.sh`) ✅. Nothing on the Ark,
+     Home or the nodes was changed, so no fleet-locks were needed. The only Ark access was
+     read-only: `docker inspect` and reading the key into the Keychain.
+  4. Proof: real menu bar screenshot with the dropdown open, plus an API snapshot taken in the same
+     second, 10/10 windows match (`docs/fleet/ws-0008-proof/*20261001T020830Z*`); not-covered list
+     in Proof ✅
+  5. Plain-English write-up at the top of this Close-out ✅
+- **Reviews:** subagent review (2 MUST + 6 SHOULD + NITs, all fixed); fleet `local-pr-review` on
+  PR #2 twice: `dd3376b` MUST 0 / SHOULD 2 (#3, #4 fixed in `256d29e`), `256d29e` MUST 0 /
+  SHOULD 1 (#5, failed manual refresh now shown, fixed in the next commit).
+- **Live (laptop only):** `~/Applications/Home Usage.app`, LaunchAgent
+  `com.chansearrington.home-usage`, Keychain item `cpa-home-management`/`home-usage`, Bartender
+  `Show` entry (backup `~/Library/Preferences/bartender-backup-pre-ws0008-20260930T205348.plist`).
+- **Follow-ups (none blocking):**
+  - If Home's management password is ever rotated, update the Keychain item; the app will show
+    `CPA ⚠︎` until then, by design.
+  - A read-only management key in Home would let this app (and similar tools) stop holding the
+    root secret. That is upstream-sized work and was not started.
+  - Optional for Chanse: turn off CodexBar's Claude provider, which shows `–` on this Mac.
+- **Cleanup:** after merge, remove worktree `.claude/worktrees/ws-0008-codexbar` and branch
+  `ws-0008/codexbar` (local and remote); `/tmp/ws8-*`, `/tmp/cbsrc` and `/tmp/ws8-proof` deleted.

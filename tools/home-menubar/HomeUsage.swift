@@ -591,11 +591,25 @@ final class Controller: NSObject, NSApplicationDelegate {
                 pause("Home rejected the key (HTTP \(code)). Paused — fix the Keychain item, then Retry.")
                 render()
                 return
-            } catch {}
+            } catch {
+                // The provider re-check never started; say so instead of a quiet normal poll.
+                polling = false
+                problem = "Refresh now failed (\(Self.describe(error))); showing Home's last numbers."
+                render()
+                return
+            }
             polling = false
             // Probes run in the background on Home; give them a moment before re-reading.
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             await poll()
+        }
+    }
+
+    private static func describe(_ error: Error) -> String {
+        switch error {
+        case FetchError.http(let code): return "HTTP \(code)"
+        case FetchError.transport(let msg): return msg
+        default: return error.localizedDescription
         }
     }
 
