@@ -19,7 +19,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws | Title | Repo / branch | herdr alias | Status |
 |---|---|---|---|---|
 | ws-0003 | Sonnet 5.5 across the fleet | CLIProxyAPIHome `ws-0003/sonnet-5-5` | `cpahome-ws-0003` | **done** — no Home change; minis' Claude Code 2.1.284→2.1.286 |
-| ws-0004 | Upstream contributions | CLIProxyAPIHome `ws-0004/upstream-contrib` (+ plugin repo) | `cpahome-ws-0004` | started |
+| ws-0004 | Upstream contributions | CLIProxyAPIHome `ws-0004/upstream-contrib` (+ plugin repo) | `cpahome-ws-0004` | **done** — Home PR #124, plugin offer issue #3; nothing live changed |
 | ws-0005 | Copilot on the quota page | CLIProxyAPIHome `ws-0005/copilot-quota` | `cpahome-ws-0005` | started |
 | ws-0006 | Copilot plugin polish | cliproxyapi-copilot-plugin `ws-0006/plugin-polish` | `cpaplugin-ws-0006` | started |
 
@@ -58,3 +58,4 @@ time (see below).
 
 - 2026-09-30 — round started; ws-0003..ws-0006 briefs written and sessions launched.
 - 2026-10-01 — ws-0003 done, verified by the orchestrator: MacBook `claude -p --model sonnet` → `claude-sonnet-5-5` end_turn via the node; all four minis report Claude Code 2.1.286; worktree/branch gone; space closed. Side fact: nodes run CPA 8.0.4 (d33f63f8), not 7.3.16.
+- 2026-10-01 — ws-0004 done, verified: router-for-me/CLIProxyAPIHome#124 open on `dev` (2 files, no internal names in the body); arthur-sommer-etc/cliproxyapi-copilot-plugin#3 open; CPA #6225 closed upstream (fix in v8.0.5); Ark `run-go.sh` now 3g tmpfs with backup `.bak-20260930`; worktrees/branches gone. Corrected its follow-up: nodes are on CPA 8.0.4, so #6225's fix is a patch bump to 8.0.5.
