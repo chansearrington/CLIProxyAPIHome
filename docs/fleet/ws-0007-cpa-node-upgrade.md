@@ -107,3 +107,20 @@ which this brief requires. Order: MacBook (canary; all four locks held so no oth
 concurrently) → Moxy → Hyper → Lara → Chip, each mini under its own `fleet-lock hold` (canonical
 session/actor). Remote completion is read from the script's own `RESULT=` line (synchronous ssh),
 never `pgrep` (AC5).
+
+### Canary attempt 1 — upgraded, proved, then auto-rolled back by an over-strict check (01:38–01:39Z)
+
+- Under all four locks (01:38:22Z → 01:39:35Z, released cleanly). `upgrade-node-core.sh` →
+  `RESULT=UPGRADED node_version=8.0.7 restart_at=2026-10-01T01:38:24Z` (ready in ~19 s).
+- Proof on 8.0.7: `claude-sonnet-5-5` 200 'ok' (first try, 12 s after restart),
+  `copilot/gpt-5-mini` 200 'ok', `gpt-5.6-sol` 200 'ok'; `--version` 8.0.7 `97f244b8`; Home: healthy,
+  `reported_ok`, plugin `0.3.7 skipped loaded`.
+- My driver demanded the literal `installed loaded`, so it called `ROLLBACK_ONLY=1` →
+  `RESULT=ROLLED_BACK node_version=8.0.4` (01:39:15Z); post-rollback `claude-sonnet-5-5` 200 'ok'.
+  The rollback path is therefore proven live on this box.
+- **Why `skipped` is healthy:** `internal/pluginstore/install.go:279-285` (v8.0.7) sets
+  `Skipped: true` when the library already on disk is byte-identical to the store's; the sync then
+  reports install `skipped` (`internal/homeplugins/sync.go:187-188`). Control: the MacBook back on
+  **8.0.4** after its restart also reports `0.3.7 skipped loaded`. The other four show `installed`
+  only because their last report dates from the 0.3.7 hot install. The check now accepts
+  `(installed|skipped) loaded` and still requires `healthy True reported_ok` and `loaded`.
