@@ -175,3 +175,9 @@ this workstream (`cpa-home:1.0.73-claude-fleet-16f609d`).
   not caused by this change; needs a look on the CPA side.
 - Offer the v0.3.5-0.3.7 patches upstream (ws-0004 owns upstream offers; `offer/*` branches in the
   fork must stay).
+
+**Cleanup done (01:15Z).** Plugin worktree and branch `ws-0006/plugin-polish` removed (local and
+remote; merged in `1a2925b`), local `fleet` fast-forwarded. Ark working files `/root/ws0006`
+(config copies holding API keys) and the build dir `cpa-home-build/plugin-ws0006` deleted; laptop
+temp files deleted. Kept on purpose: the backup `home-pre-ws0006-20261001T010500Z.db` and tag
+`v0.3.7`.
