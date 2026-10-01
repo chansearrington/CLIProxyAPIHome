@@ -333,3 +333,17 @@ uninstall and remove the application that you created."
   counts, however, come from this Mac's own logs and will never include the minis' traffic.
 - Current config: no `tokenAccounts`; one Codex managed account that duplicates the laptop's own
   login.
+
+## Resolved (2026-10-01) — both Claude accounts inside CodexBar
+
+- CodexBar 0.60.3 → Settings → Providers → Claude → **Claude cookies = Manual** reveals the "Claude
+  credentials" list; Chanse added two claude.ai `sessionKey` accounts ("Hype", "Gmail"). These are
+  web sessions independent of Home's OAuth credentials (no refresh-token sharing).
+- Only one account can be "selected" — that only picks which drives the menu bar number (one icon
+  per provider; per-account icons = steipete/CodexBar#1843, open). Settings → Menu → Multi-account
+  layout = **Stacked** (already set) shows a card per account in the Claude dropdown.
+- Verified with `codexbar usage --provider claude --all-accounts --format json`: both accounts read
+  via `web`; Hype 5-hour 100 % (matches Home's 429 cooldown on hypesports), Gmail 25 %. Chanse
+  confirmed both cards visible.
+- CodexBar's "Cost" figures are local session logs priced at API list price — not real spend and not
+  fleet-wide.
