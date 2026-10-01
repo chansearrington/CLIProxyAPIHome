@@ -1,6 +1,6 @@
 # ws-0007 — CPA nodes 8.0.4 → 8.0.5+
 
-Status: in progress — all five nodes on 8.0.7 and proven; #6225 proof + pin bump next
+Status: done — all five nodes on CPA 8.0.7 (2026-10-01 01:44Z), proven; agent-os #772 merged
 
 - Branch `ws-0007/cpa-node-upgrade` off `fleet`; worktree `.claude/worktrees/ws-0007-cpa-node-upgrade`
 - herdr: `CLIProxyAPIHome | ws-0007 | CPA node upgrade`, alias `cpahome-ws-0007`
@@ -192,3 +192,37 @@ would cut Copilot off and risks its stored credential. Neither is a "safe reprod
 disturb the live fleet", so I did not do one. Residual risk: low (the fix is small and its tests
 reproduce the exact message); **follow-up:** the next real new-plugin add is the live proof — watch
 Home's log for `installed but not loaded` retry lines and restart a node in place if one loops.
+
+## Close-out (2026-10-01 ~01:55Z)
+
+**Outcome:** all five nodes (MacBook Pro, Moxy, Hyper, Lara, Chip) moved CPA **8.0.4 → 8.0.7**
+(`97f244b8`, binary sha `c46f68ee…1365`) between 01:40Z and 01:44Z, one box at a time with no
+lasting failure. Home was not changed.
+
+| AC | Evidence |
+|---|---|
+| 1. Release choice | v8.0.7 = newest; `bfa5aed` contained (compare `ahead`), absent from 8.0.4; plugin ABI 1 / schema 6, cloak `2.1.280`, `internal/home/` all unchanged; one optional config key; 8.0.5 skipped for its twice-corrected Codex change. See "Release choice". |
+| 2. Canary order, locks, rollback | MacBook (all four locks) → Moxy → Hyper → Lara → Chip, each mini under its own `fleet-lock hold`, released after; `launchctl kickstart -k` only (no stop); `.bak` = `cli-proxy-api.8.0.4.bak`. The rollback was exercised live once on the MacBook (`RESULT=ROLLED_BACK`, 200 after), caused by an over-strict check of mine, not by 8.0.7. |
+| 3. Per-box proof | Each box: `--version` 8.0.7 `97f244b8`; Home `healthy True reported_ok`, `cliproxyapi-copilot 0.3.7 skipped loaded` (`skipped` = already on disk, healthy); own key 200 'ok' on `claude-sonnet-5-5`; MacBook key 200 'ok' on `copilot/gpt-5-mini` (max_tokens 400) and `gpt-5.6-sol`. Re-checked at 01:52Z: all five still 200, Home ledger 756 rows / **0 failed** since 01:38Z. |
+| 4. Fix proven | Upstream's three Issue6225 tests PASS at v8.0.7 and the portable ones FAIL at 8.0.4 / the fix's parent with the exact live message (`installed but not loaded`; worker never recovers). No safe live repro exists (adding a plugin hits Home + all nodes at once) — reasoning recorded above. |
+| 5. No `pgrep` polling | The driver ran every remote step synchronously and read completion from `upgrade-node-core.sh`'s own `RESULT=` line; every wait loop was bounded (≤ 6 tries, ≤ 90 s); locks were held only for 33–73 s per box. |
+| 6. Facts updated | This brief; `FLEET.md` (node version, fix status, `skipped loaded`); agent-os PR **#772** merged (`7ff95d03`): `CORE_VERSION/CORE_SHA256` → 8.0.7 in `enroll-fleet-node.mjs` / `enroll-chip.mjs` (bumped after Hyper was on the new sha), rollout notes in `cpa-model-currency.md`, version lines in `cpa-home-pilot.md`; reviewed by `local-pr-review` (gpt-6-astra): no findings, 292/292 tests. |
+
+**What is live now:** CPA 8.0.7 on all five nodes; Copilot plugin v0.3.7 loaded everywhere; Home
+unchanged (`cpa-home:1.0.73-claude-fleet-16f609d`). Rollback per node if ever needed:
+`ROLLBACK_ONLY=1` with the same FROM/TO env restores the verified `cli-proxy-api.8.0.4.bak`.
+
+**Follow-ups:**
+1. The first real *new* plugin added through Home is the live proof of the #6225 fix — watch Home's
+   log for `installed but not loaded` retry lines; restart a node in place if one still loops.
+2. agent-os's release watcher still holds a stale `cardStatus: open` for the 8.0.4 card in
+   `~/.openclaw/state/cpa-release-watcher.json` (its own runs read it as `stored_card_actioned`, so
+   it is harmless). Its next daily check (2026-10-01 14:13Z) should find the fleet on the latest
+   release and raise nothing.
+3. Upstream 8.0.5–8.0.7 are hours old; `82f8e92b` (shared uTLS client) and `81756a57` (credential
+   auto-refresh loop) are the changes to suspect if odd upstream-connection errors appear.
+
+**Cleanup:** agent-os worktree/branch `ws-0007/cpa-core-pin-8.0.7` removed (local + remote); the
+Ark scratch dir `cpa-home-build/ws0007-cpa` deleted (verified); laptop scratch `/tmp/ws0007`
+deleted; staged `.new` binaries consumed by the script on every box. Kept on purpose: each node's
+`cli-proxy-api.8.0.4.bak` (rollback target).
