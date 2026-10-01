@@ -238,3 +238,32 @@ date parsing verified. Fixed in `fcd2bda`:
 - Auth-pause test: fake server on `localhost:18999` answering 401 → exactly **1** request, bar
   `CPA ⚠︎`, `authPaused=1`; a relaunched instance sent **0** requests. Restored to the real Home
   afterwards (`CPA 92%`).
+
+## Close-out
+
+### For Chanse — what you'll see, how to read it, how to turn it off
+
+- **What's new:** a small orange or white **`CPA 92%`** in your menu bar, just left of CodexBar's
+  icons. It's a separate little app called **Home Usage**, and it starts by itself at login.
+  CodexBar is unchanged; it simply can't see the accounts Home uses (details above), so Home Usage
+  sits next to it instead of inside it.
+- **The number** is the fullest limit across your Claude and Codex accounts right now, the one
+  most likely to slow the fleet down. White means under 80 %, orange 80 % or more, red 95 % or
+  more. Home switches between your two Claude accounts on its own, so one account at 92 % doesn't
+  mean you're blocked; the dropdown shows the other one.
+- **Click it** to see every account Home holds: each limit (5-hour, weekly, monthly…) with how much
+  is used and when it resets in your local time, plus how many requests and tokens that account
+  handled in the last 24 hours. The bottom line is the whole fleet's last 24 hours. "numbers from
+  5 h ago" means Home hasn't re-checked that account because nobody has used it lately.
+- **Refresh now** makes Home re-check the accounts with Claude, OpenAI, etc. on the spot. It
+  refreshes by itself every 2 minutes anyway, without bothering the providers.
+- **If you see `CPA ⚠︎`**: Home refused the app's key, so the app stopped asking, on purpose (Home
+  locks out a computer after five wrong tries). Ask me to fix the key, then click **Retry once**.
+- **Turn it off:** click it → **Quit Home Usage** (it comes back at your next login). To remove it
+  for good, ask me, or run `tools/home-menubar/uninstall.sh` in this repo.
+- **One thing I changed in Bartender:** it hid the new icon automatically, so I moved it to
+  Bartender's "shown" list (your old Bartender settings are backed up first). You can still drag it
+  anywhere in Bartender like any other icon.
+- **Suggestion (your call, nothing changed):** CodexBar's Claude icon shows "–" because the Claude
+  login on this Mac isn't the one the fleet uses. If it bothers you, turn off just the Claude
+  provider in CodexBar's settings; Home Usage covers it now.
