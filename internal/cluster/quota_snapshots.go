@@ -1813,7 +1813,7 @@ func quotaCredentialStatus(record AuthRecord, now time.Time) string {
 
 func quotaProviderPlanned(provider string) bool {
 	switch normalizeQuotaProviderID(provider) {
-	case "claude", "antigravity", "codex", "kimi", "xai":
+	case "claude", "antigravity", "codex", "kimi", "xai", "copilot":
 		return true
 	default:
 		return false

@@ -139,3 +139,23 @@ func TestCollectQuotaUnsupportedWithoutTrigger(t *testing.T) {
 		t.Fatalf("collect status = %d body=%s", response.Code, response.Body.String())
 	}
 }
+
+func TestCollectQuotaAcceptsCopilotProvider(t *testing.T) {
+	handler, closeRepo := newUsageObservabilityTestHandler(t)
+	defer closeRepo()
+	trigger := &fakeQuotaRecollectTrigger{accepted: 1}
+	handler.SetQuotaRecollectTrigger(trigger)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/quota/collect", handler.CollectQuota)
+
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/quota/collect", strings.NewReader(`{"providers":["copilot"]}`)))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("collect status = %d body=%s", response.Code, response.Body.String())
+	}
+	if _, ok := trigger.providers["copilot"]; !ok || len(trigger.providers) != 1 {
+		t.Fatalf("providers = %v, want copilot", trigger.providers)
+	}
+}
