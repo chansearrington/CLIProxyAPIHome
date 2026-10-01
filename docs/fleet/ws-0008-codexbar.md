@@ -212,10 +212,11 @@ everything it does get right). It is laptop-only and removable in one command. D
   $0.00 of $0.00 exhausted; Antigravity 0-1 %, numbers 21 h old, marked unavailable.
 - An earlier shot at 02:07:23Z showed long note lines clipped at the right edge; fixed by moving
   status notes to their own short line (`old (reset since)`), rebuilt, re-shot above.
-- **Not covered:** accounts Home does not hold (the Grok CLI login CodexBar shows; xAI's real
-  balance needs a prepaid team — Home shows $0 of $0); Home's own staleness rule (idle accounts are
-  only re-measured when used or on "Refresh now"); the "Iguana Necktie" Claude window is a label
-  Anthropic returns, shown as-is; CodexBar's widgets (plugins/other apps cannot feed them).
+- **Not covered:** accounts Home does not hold (the Grok CLI login CodexBar shows); xAI shows
+  "$0.00 of $0.00, exhausted" exactly as Home's collector reports it (why Home sees a $0 limit
+  was not investigated here); Home's own staleness rule (idle accounts are
+  only re-measured when used or on "Refresh now"); the "Iguana Necktie" Claude window is the label Home
+  reports for that window, shown as-is (origin not investigated); CodexBar's widgets (plugins/other apps cannot feed them).
 
 ## Review (2026-10-01)
 
