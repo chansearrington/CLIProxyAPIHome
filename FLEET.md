@@ -11,7 +11,8 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - `fleet` is the deployed line. It is `dev` plus the fleet's own fixes, rebased forward as upstream
   moves. The live image on the Ark is always built from a commit on this branch.
 - A change meant for upstream gets its own `feat/…` or `fix/…` branch off `dev`, and a PR against
-  upstream `dev`. Open upstream PRs from this fork today: #115, #116 and #123 (ws-0002 plugin-login fix).
+  upstream `dev`. Open upstream PRs from this fork today: #115, #116, #123 (ws-0002 plugin-login fix) and #124 (ws-0004
+  plugin model-discovery fix, fleet commit `95ba2db`).
 
 ## Building and testing — the Ark only, always inside Docker
 
