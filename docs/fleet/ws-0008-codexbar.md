@@ -1,6 +1,6 @@
 # ws-0008 — CodexBar and CPA: usage in the menu bar
 
-Status: research — CodexBar source + Home read paths (2026-10-01)
+Status: building option (c) — native Home menu bar item (2026-10-01)
 
 - Branch `ws-0008/codexbar` off `fleet` (for this brief); worktree `.claude/worktrees/ws-0008-codexbar`
 - herdr: `CLIProxyAPIHome | ws-0008 | CodexBar`, alias `cpahome-ws-0008`
@@ -105,3 +105,66 @@ Chanse's macOS menu bar.
 - The secret lives on the Ark as `MANAGEMENT_PASSWORD` in `/mnt/user/appdata/cpa-home/.env`
   (value never printed). The laptop already holds the Ark's root SSH key, which is strictly more
   powerful, so a copy in the laptop's login Keychain does not widen who can control the fleet.
+
+### CodexBar's source (v0.60.3 = tag commit `2b78164`; main and v0.70.0 checked too)
+
+- **Providers are a fixed built-in list** (`Sources/CodexBarCore/Providers/Providers.swift:21`,
+  69 at v0.60.3). No CLIProxyAPI provider. Generic gateways exist (LLM Proxy, LiteLLM, Sub2API,
+  ClawRouter, Bifrost), each reading its own gateway's API shape — none speaks Home's.
+- **Local plugins exist** (`docs/plugins.md`): one `.js`/`.ts` file in
+  `~/.config/codexbar/providers/` (already created, empty), sandboxed GET/POST to approved origins
+  only, returns rate windows + detail rows. Limits that matter here:
+  - **No menu bar icon of its own.** Status items are only vended for built-in `UsageProvider`
+    cases (`StatusItemController+StatusItemVending.swift:6-18`); a plugin is a card appended inside
+    a built-in provider's dropdown, or a dropdown tab with Merge Icons on. Same on main
+    (`docs/plugins.md:404-407` there).
+  - **Secrets are stored as plain text** in `~/.config/codexbar/config.json` (`pluginSecrets`,
+    `CodexBarConfig.swift:194-196`, `SettingsStore+Config.swift:75-81`), not the Keychain.
+  - Plain HTTP only to loopback/RFC 1918/`.local`; Home's Tailscale `100.x` address would need HTTPS
+    (`ProviderEndpointOverrideValidator.swift:150-175`).
+  - Plugins are excluded from widgets.
+- No URL scheme, no push/ingest path; `codexbar serve` is read-only; `hooks` only fire outward.
+  `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`/proxy env vars are ignored.
+- Upstream: every CPA-specific PR was closed unmerged (#235, #335, #1614, #2413, #2415, #2442,
+  #2457 — the last on 2026-09-22 as "niche integration … use the plugin-host architecture").
+  A built-in provider is ~27 files / ~525 lines (xKiro, `9090006`).
+
+### Why CodexBar's numbers are wrong on this Mac
+
+- **Claude**: usage % comes from Anthropic's OAuth usage API for whatever Claude login sits on this
+  Mac (`ClaudeOAuthUsageFetcher.swift:61`; source `cli` here). But Claude Code on this laptop does
+  not use that login — `~/.claude/settings.json` sends everything to the local CPA node
+  (`ANTHROPIC_BASE_URL=http://127.0.0.1:18317`, `apiKeyHelper` = the MacBook fleet key), which
+  spends Home's two Claude accounts. So the % describes an account the fleet doesn't use.
+- **Token/cost counts** are summed from this Mac's own session logs (`~/.claude/projects/**/*.jsonl`,
+  `~/.codex/sessions`) and priced at list price — they never see the minis' traffic, and the
+  "cost" is not what Home's accounts actually spend.
+- **Codex**: `~/.codex/auth.json` is a direct ChatGPT login (`auth_mode: chatgpt`), so the % is that
+  one login, not Home's Codex credential(s). **Grok**: the local Grok CLI login, likewise.
+- There is no setting in CodexBar that can re-point these at Home.
+
+## Options
+
+| | Option | In the menu bar? | Effort | Upkeep | Where the Home key lives | Verdict |
+|---|---|---|---|---|---|---|
+| a | CodexBar plugin reading Home | No — only a card inside CodexBar's dropdown | Small (1 file) + a localhost relay for the key and the `100.x` HTTP rule | Plugin API is young (Aug 2026), may shift | Plain text in CodexBar's config — or a relay holding it in Keychain | Second best |
+| b | Built-in CPA/Home provider upstream + local build meanwhile | Yes | Large (~27 files) | High: unsigned local build loses auto-update, Keychain prompts; upstream has refused 7 CPA PRs | Keychain | No |
+| c | **Small native "Home" menu bar item** (single Swift file, built on this Mac) | **Yes, its own number** | Small-medium (~300 lines) | Low: no third-party code; the built app keeps working through Xcode/CodexBar updates | **Login Keychain**, read via `/usr/bin/security` | **Recommended** |
+| c′ | Same via SwiftBar/xbar script | Yes | Small | Adds a third-party app to install and update | Keychain | Fine, but needs another app |
+| d | Home's web panel / widget | No (browser tab) | None | None | Browser session | Already exists; not what Chanse asked for |
+
+**Decision (2026-10-01): build (c).** It is the only option that puts correct numbers in the menu
+bar itself, keeps the key in the Keychain, and leaves CodexBar untouched (Chanse keeps it for
+everything it does get right). It is laptop-only and removable in one command. Design:
+
+- Reads `GET /v0/management/quota/credentials` + each credential's detail (all windows, incl.
+  Codex's 5-hour) and `GET /usage/overview` (fleet tokens, last 24 h) every 2 minutes — database
+  reads only, no provider calls. "Refresh now" forces `POST /quota/collect` for the shown
+  credentials, only on click.
+- Bar text: the highest "used %" across the Claude and Codex windows that limit work right now;
+  dropdown: every account with each window's used %, reset time and freshness.
+- Key: the Home management secret copied from the Ark's `.env` into the login Keychain over
+  stdin (never argv, never a file). Stops polling on the first 401/403 so it can never trip Home's
+  5-strikes ban.
+- Source in this repo at `tools/home-menubar/`; app at `~/Applications/Home Usage.app`; started at
+  login by `~/Library/LaunchAgents/com.chansearrington.home-usage.plist`.
