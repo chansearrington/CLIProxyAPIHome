@@ -1,6 +1,6 @@
 # ws-0008 — CodexBar and CPA: usage in the menu bar
 
-Status: started 2026-10-01
+Status: research — CodexBar source + Home read paths (2026-10-01)
 
 - Branch `ws-0008/codexbar` off `fleet` (for this brief); worktree `.claude/worktrees/ws-0008-codexbar`
 - herdr: `CLIProxyAPIHome | ws-0008 | CodexBar`, alias `cpahome-ws-0008`
@@ -63,3 +63,17 @@ Chanse's macOS menu bar.
 - Keep the `Status:` line below current, and commit brief updates to your branch as you go.
 - Close-out: outcome, evidence per acceptance criterion, what is live, follow-ups. Then remove your
   worktree/branch once merged, and set Status to `done`.
+
+## Findings (written as we go)
+
+### Local CodexBar install (checked 2026-10-01)
+
+- Correction to "Facts at start": the config is `~/.config/codexbar/config.json` (there is no
+  `~/.codexbar/`). App preferences are in the `com.steipete.codexbar` defaults domain; data
+  (usage history, Codex account snapshots) in `~/Library/Application Support/CodexBar/`.
+- Enabled providers: `claude` (source `cli`), `codex` (`liveSystem`), `grok`. 60+ others listed
+  but disabled, including generic proxy ones: `litellm`, `llmproxy`, `sub2api`, `clawrouter`,
+  `openrouter`. There is no `cliproxyapi`/CPA provider in 0.60.3.
+- Menu bar mode `percent`, refresh every two minutes, launch at login on, a WidgetKit extension
+  running (`CodexBarWidget.appex`).
+- Xcode + Swift 6.4 are installed on the laptop; SwiftBar/xbar are not.
