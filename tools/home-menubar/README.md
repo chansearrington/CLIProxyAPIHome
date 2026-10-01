@@ -32,10 +32,14 @@ every account this Home manages. Built for the fleet in ws-0008
    reopen it.
 
 Settings (optional): `defaults write com.chansearrington.home-usage homeURL http://host:8327` and
-`pollSeconds` (minimum 30, default 120).
+`pollSeconds` (minimum 30, default 120). The default URL is the Ark's Tailscale name, which only
+resolves on the tailnet; the app's transport-security exception covers `*.taile4a41.ts.net` only,
+so a different host needs HTTPS (or a matching `NSExceptionDomains` entry in `install.sh`).
+Apple Silicon only (`-target arm64-apple-macos14`).
 
 `"Home Usage.app/Contents/MacOS/HomeUsage" --print` fetches once and prints the bar text and menu
-as plain text (used for proof and troubleshooting).
+as plain text (used for proof and troubleshooting); `--show-menu` asks the running app to open
+its menu for four seconds so it can be screenshotted without moving the mouse.
 
 ## Turn it off
 
@@ -48,5 +52,8 @@ as plain text (used for proof and troubleshooting).
 - Home has no read-only key; the management key can change everything. It lives only in the
   login Keychain and in memory; it is never logged or written to disk by this app.
 - On a 401/403 the app stops polling at once (Home bans a client IP for 30 minutes after five bad
-  keys) and waits for **Retry once**.
+  keys), remembers that across relaunches (`authPaused`), and waits for **Retry once**. Tested
+  against a fake server that always answers 401: one request, then silence, also after a relaunch.
+- "Refresh now" only appears once accounts are loaded and only names those accounts (Home reads an
+  empty list as "all").
 - It never calls `/usage-queue` (destructive) or `/api-key-usage` (embeds raw keys).

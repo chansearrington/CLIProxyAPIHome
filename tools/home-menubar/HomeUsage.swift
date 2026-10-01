@@ -16,7 +16,17 @@ import Foundation
 enum Settings {
     // The app bundle ID is com.chansearrington.home-usage, so `defaults write` that domain.
     static let defaults = UserDefaults.standard
-    static var homeURL: String { defaults.string(forKey: "homeURL") ?? "http://100.110.133.6:8327" }
+    // The Ark's Tailscale (MagicDNS) name: it only resolves on the tailnet, so the key is never
+    // sent in clear text to some other network's 100.x address when Tailscale is off.
+    static var homeURL: String {
+        defaults.string(forKey: "homeURL") ?? "http://home-server-the-ark.taile4a41.ts.net:8327"
+    }
+    /// Survives relaunches so a rejected key is never retried automatically (Home bans an IP
+    /// after five failures); only the menu's "Retry once" clears it.
+    static var authPaused: Bool {
+        get { defaults.bool(forKey: "authPaused") }
+        set { defaults.set(newValue, forKey: "authPaused") }
+    }
     static var pollSeconds: TimeInterval {
         let v = defaults.double(forKey: "pollSeconds")
         return v >= 30 ? v : 120
@@ -98,11 +108,8 @@ struct UsageTotals: Decodable {
     }
 }
 
-struct UsageTop: Decodable { let credentials: [UsageEntry]? }
-struct UsageOverview: Decodable {
-    let totals: UsageTotals
-    let top: UsageTop?
-}
+struct UsageOverview: Decodable { let totals: UsageTotals }
+struct UsageAggregates: Decodable { let items: [UsageEntry] }
 
 /// One account as shown in the menu: the snapshot plus its full window list.
 struct Account {
@@ -120,6 +127,7 @@ enum FetchError: Error {
 
 // MARK: - Home client
 
+@MainActor
 final class HomeClient {
     private let session: URLSession
     private var cachedKey: String?
@@ -134,31 +142,37 @@ final class HomeClient {
 
     func forgetKey() { cachedKey = nil }
 
-    private func key() throws -> String {
+    private func key() async throws -> String {
         if let k = cachedKey { return k }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        p.arguments = ["find-generic-password", "-s", Settings.keychainService,
-                       "-a", Settings.keychainAccount, "-w"]
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { throw FetchError.noKey }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        let k = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard p.terminationStatus == 0, !k.isEmpty else { throw FetchError.noKey }
+        // Run `security` off the main thread and give up after 10 s (a locked keychain can block).
+        let k = await Task.detached { () -> String? in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+            p.arguments = ["find-generic-password", "-s", Settings.keychainService,
+                           "-a", Settings.keychainAccount, "-w"]
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = FileHandle.nullDevice
+            do { try p.run() } catch { return nil }
+            let deadline = Date().addingTimeInterval(10)
+            while p.isRunning && Date() < deadline { usleep(50_000) }
+            if p.isRunning { p.terminate(); return nil }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            let k = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return p.terminationStatus == 0 && !k.isEmpty ? k : nil
+        }.value
+        guard let k else { throw FetchError.noKey }
         cachedKey = k
         return k
     }
 
-    private func request(_ path: String, method: String = "GET", body: Data? = nil) throws -> URLRequest {
+    private func request(_ path: String, method: String = "GET", body: Data? = nil) async throws -> URLRequest {
         guard let url = URL(string: Settings.homeURL + "/v0/management" + path) else {
             throw FetchError.transport("bad Home URL")
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("Bearer " + (try key()), forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer " + (try await key()), forHTTPHeaderField: "Authorization")
         if let body {
             req.httpBody = body
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -179,23 +193,36 @@ final class HomeClient {
     }
 
     func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
-        let data = try await send(try request(path))
+        let data = try await send(try await request(path))
         do { return try JSONDecoder().decode(T.self, from: data) } catch {
             throw FetchError.transport("unexpected reply from Home")
         }
     }
 
+    /// Like `get`, but a non-auth failure returns nil so one optional call cannot sink the poll.
+    /// Auth failures always propagate: every rejected request counts toward Home's ban.
+    private func optional<T: Decodable>(_ path: String, as type: T.Type) async throws -> T? {
+        do { return try await get(path, as: type) } catch FetchError.auth(let code) {
+            throw FetchError.auth(code)
+        } catch { return nil }
+    }
+
     func collect(credentialIDs: [String]) async throws {
+        // Home treats an empty list as "every eligible credential", which is never what we want.
+        guard !credentialIDs.isEmpty else { return }
         let body = try JSONSerialization.data(withJSONObject: ["credential_ids": credentialIDs])
-        _ = try await send(try request("/quota/collect", method: "POST", body: body))
+        _ = try await send(try await request("/quota/collect", method: "POST", body: body))
     }
 
     /// Loads every account with all of its windows and last-24h usage.
     func loadAccounts() async throws -> ([Account], UsageTotals?) {
         let list = try await get("/quota/credentials?limit=200", as: QuotaList.self)
-        let overview = try? await get("/usage/overview", as: UsageOverview.self)
+        // Both default to the last 24 hours on Home.
+        let overview = try await optional("/usage/overview", as: UsageOverview.self)
+        let perCredential = try await optional(
+            "/usage/aggregates?group_by=credential&limit=200", as: UsageAggregates.self)
         var usageByID: [String: UsageEntry] = [:]
-        for u in overview?.top?.credentials ?? [] { usageByID[u.id] = u }
+        for u in perCredential?.items ?? [] { usageByID[u.id] = u }
 
         var accounts: [Account] = []
         for c in list.items {
@@ -204,7 +231,7 @@ final class HomeClient {
             var windows = c.primaryWindows ?? []
             // The list carries at most two windows; fetch the rest when there are more.
             if c.windowCount > windows.count,
-               let detail = try? await get("/quota/credentials/" + c.credentialId, as: QuotaDetail.self) {
+               let detail = try await optional("/quota/credentials/" + c.credentialId, as: QuotaDetail.self) {
                 windows = detail.windows
             }
             accounts.append(Account(credential: c, windows: windows, usage: usageByID[c.credentialId]))
@@ -231,13 +258,19 @@ enum Fmt {
         return iso.date(from: trimmed)
     }
 
-    static func when(_ d: Date) -> String {
+    private static func formatter(_ format: String) -> DateFormatter {
         let f = DateFormatter()
-        let cal = Calendar.current
-        if cal.isDateInToday(d) { f.dateFormat = "h:mm a" }
-        else if d.timeIntervalSinceNow < 6 * 86400 && d.timeIntervalSinceNow > 0 { f.dateFormat = "EEE h:mm a" }
-        else { f.dateFormat = "MMM d" }
-        return f.string(from: d)
+        f.dateFormat = format
+        return f
+    }
+    private static let timeOnly = formatter("h:mm a")
+    private static let dayAndTime = formatter("EEE h:mm a")
+    private static let dayOnly = formatter("MMM d")
+
+    static func when(_ d: Date) -> String {
+        if Calendar.current.isDateInToday(d) { return timeOnly.string(from: d) }
+        if d.timeIntervalSinceNow < 6 * 86400 && d.timeIntervalSinceNow > 0 { return dayAndTime.string(from: d) }
+        return dayOnly.string(from: d)
     }
 
     static func ago(_ d: Date) -> String {
@@ -309,16 +342,20 @@ enum Fmt {
         if w.isUnlimited {
             value = "unlimited"
         } else if w.unit == "currency" {
-            let cur = w.currency == "USD" || w.currency == nil ? "$" : (w.currency! + " ")
-            value = String(format: "%@%.2f of %@%.2f", cur, w.used ?? 0, cur, w.limit ?? 0)
-        } else if w.unit == "requests" {
-            value = "\(count(w.used ?? 0)) of \(count(w.limit ?? 0))"
+            let cur = w.currency.map { $0 == "USD" ? "$" : $0 + " " } ?? "$"
+            value = String(format: "%@%.2f", cur, w.used ?? 0)
+            if let limit = w.limit { value += String(format: " of %@%.2f", cur, limit) }
+        } else if w.unit == "requests" || w.unit == "credits" {
+            value = count(w.used ?? 0) + (w.limit.map { " of " + count($0) } ?? "") + " " + w.unit
         } else if let p = usedPercent(w) {
             value = bar(p) + String(format: " %3.0f%%", p)
         } else {
             value = "–"
         }
-        if let r = date(w.resetAt), r > Date() { value += "  resets " + when(r) }
+        if let r = date(w.resetAt) {
+            // A reset time in the past means Home has not re-measured since; the number is old.
+            value += r > Date() ? "  resets " + when(r) : "  (window reset since; old number)"
+        }
         return "   " + name + value
     }
 }
@@ -337,10 +374,13 @@ final class Controller: NSObject, NSApplicationDelegate {
     private var totals: UsageTotals?
     private var lastSuccess: Date?
     private var problem: String?
-    private var paused = false
+    private var paused = Settings.authPaused
+    private var polling = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if printMode {
+            // A manual one-shot run counts as "Retry once".
+            paused = false
             Task {
                 await poll()
                 printMenu()
@@ -351,7 +391,17 @@ final class Controller: NSObject, NSApplicationDelegate {
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.autosaveName = "home-usage"
         item = statusItem
+        // `--show-menu` (another process) asks the running app to open its menu for a few
+        // seconds, so a screenshot can be taken without moving the mouse.
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(showMenuBriefly),
+            name: Self.showMenuNotification, object: nil)
         setTitle("CPA …", color: nil)
+        if paused {
+            problem = "Paused earlier because Home rejected the key. Fix the Keychain item, then Retry."
+            render()
+            return
+        }
         rebuildMenu()
         startTimer()
         Task { await poll() }
@@ -364,8 +414,19 @@ final class Controller: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func pause(_ message: String) {
+        paused = true
+        Settings.authPaused = true
+        timer?.invalidate()
+        client.forgetKey()
+        problem = message
+    }
+
     private func poll() async {
-        if paused { return }
+        // One poll at a time: overlapping polls could each send a doomed request.
+        if paused || polling { return }
+        polling = true
+        defer { polling = false }
         do {
             let (a, t) = try await client.loadAccounts()
             accounts = a
@@ -374,14 +435,9 @@ final class Controller: NSObject, NSApplicationDelegate {
             problem = nil
         } catch FetchError.auth(let code) {
             // Never retry a rejected key on a timer: Home bans an IP after five failures.
-            paused = true
-            timer?.invalidate()
-            client.forgetKey()
-            problem = "Home rejected the key (HTTP \(code)). Paused — fix the Keychain item, then Retry."
+            pause("Home rejected the key (HTTP \(code)). Paused — fix the Keychain item, then Retry.")
         } catch FetchError.noKey {
-            paused = true
-            timer?.invalidate()
-            problem = "No Home key in the Keychain (\(Settings.keychainService)). Paused."
+            pause("No Home key in the Keychain (\(Settings.keychainService)). Paused.")
         } catch FetchError.http(let code) {
             problem = "Home answered HTTP \(code); showing last known numbers."
         } catch FetchError.transport(let msg) {
@@ -397,7 +453,9 @@ final class Controller: NSObject, NSApplicationDelegate {
     /// The bar shows the fullest Claude/Codex window that still applies right now.
     private func headline() -> (Double, Account, QuotaWindow)? {
         var best: (Double, Account, QuotaWindow)?
-        for a in accounts where ["claude", "codex"].contains(a.credential.provider) {
+        // Disabled or never-measured accounts would pin the bar to a number nobody can act on.
+        for a in accounts where ["claude", "codex"].contains(a.credential.provider)
+            && a.credential.credentialStatus == "enabled" && a.credential.freshness != "never" {
             for w in a.windows {
                 guard let p = Fmt.usedPercent(w) else { continue }
                 if let r = Fmt.date(w.resetAt), r < Date() { continue }
@@ -492,7 +550,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         if paused {
             menu.addItem(action("Retry once", #selector(retry)))
-        } else {
+        } else if !accounts.isEmpty {
             menu.addItem(action("Refresh now (asks the providers)", #selector(refreshNow), key: "r"))
         }
         menu.addItem(action("Open Home panel", #selector(openPanel)))
@@ -518,9 +576,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         let ids = accounts.map { $0.credential.credentialId }
         Task { @MainActor in
             do { try await client.collect(credentialIDs: ids) } catch FetchError.auth(let code) {
-                paused = true
-                timer?.invalidate()
-                problem = "Home rejected the key (HTTP \(code)). Paused."
+                pause("Home rejected the key (HTTP \(code)). Paused — fix the Keychain item, then Retry.")
                 render()
                 return
             } catch {}
@@ -532,6 +588,7 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     @objc private func retry() {
         paused = false
+        Settings.authPaused = false
         problem = nil
         startTimer()
         Task { await poll() }
@@ -542,9 +599,24 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    nonisolated static let showMenuNotification = Notification.Name("com.chansearrington.home-usage.show-menu")
+
+    @objc private func showMenuBriefly() {
+        guard let menu = item?.menu, let button = item?.button else { return }
+        menu.perform(#selector(NSMenu.cancelTracking), with: nil, afterDelay: 4,
+                     inModes: [.eventTracking, .default])
+        button.performClick(nil)
+    }
 }
 
 // MARK: - Entry point
+
+if CommandLine.arguments.contains("--show-menu") {
+    DistributedNotificationCenter.default().postNotificationName(
+        Controller.showMenuNotification, object: nil, userInfo: nil, deliverImmediately: true)
+    exit(0)
+}
 
 MainActor.assumeIsolated {
     let app = NSApplication.shared

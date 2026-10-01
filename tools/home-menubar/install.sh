@@ -12,6 +12,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 
+# Apple Silicon only (arm64), macOS 14+.
 swiftc -O -swift-version 5 -target arm64-apple-macos14 \
   -o "$BUILD/HomeUsage" "$HERE/HomeUsage.swift"
 
@@ -30,13 +31,25 @@ cat > "$BUILD/Home Usage.app/Contents/Info.plist" <<PLISTEOF
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSAppTransportSecurity</key>
-  <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+  <dict>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>taile4a41.ts.net</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+      </dict>
+    </dict>
+  </dict>
 </dict>
 </plist>
 PLISTEOF
-codesign --force --sign - "$BUILD/Home Usage.app" >/dev/null 2>&1
+codesign --force --sign - "$BUILD/Home Usage.app" 2>&1 | grep -v 'replacing existing signature' || true
+codesign --verify "$BUILD/Home Usage.app"
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+for _ in $(seq 1 50); do launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break; sleep 0.1; done
+pkill -x HomeUsage 2>/dev/null || true  # a copy started by hand would double the polling
 mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 rm -rf "$APP"
 cp -R "$BUILD/Home Usage.app" "$APP"
