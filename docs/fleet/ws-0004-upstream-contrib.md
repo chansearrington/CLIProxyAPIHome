@@ -126,8 +126,9 @@ uses `--tmpfs /tmp:exec,size=3g` (was 1g, which FLEET.md already says is too sma
 **What is live.** Unchanged: Home `cpa-home:1.0.73-claude-fleet-95ba2db`, plugin v0.3.6.
 
 **Follow-ups (not done here).**
-- The fleet gets the #6225 fix only by moving the nodes to CPA **v8.0.5+**, a major-version jump
-  from 7.x. Worth its own workstream (check Home's SDK pin and plugin schema compatibility first).
+- The fleet gets the #6225 fix only by moving the nodes to CPA **v8.0.5+**. (Orchestrator
+  correction 2026-10-01: the nodes already run CPA 8.0.4 `d33f63f8`, verified on the MacBook node
+  and by ws-0003 on all five, so this is a patch bump, not a jump from 7.x.) Worth its own workstream (check Home's SDK pin and plugin schema compatibility first).
 - When upstream merges #124 (and #123), drop `95ba2db` (and the plugin-login fix) from `fleet` at
   the next rebase instead of carrying them.
 - If the plugin maintainer answers issue #3, open the PRs from the `offer/*` branches on the fork
