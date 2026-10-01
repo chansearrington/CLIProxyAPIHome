@@ -1,6 +1,6 @@
 # ws-0006 — Copilot plugin polish
 
-Status: PR #3 merged, v0.3.7 released + verified; fleet rollout next
+Status: v0.3.7 released + verified; rollout ready, waiting for ws-0005 to release the fleet-locks
 
 - Repo `/Users/chansearrington/GitHub/personal/cliproxyapi-copilot-plugin` (fork, base branch
   `fleet` @ `758ada4`, release v0.3.6 live). Worktree `.claude/worktrees/ws-0006-plugin-polish`
@@ -91,3 +91,18 @@ Fix the two review SHOULDs deferred in ws-0002 and ship them fleet-wide:
 
 - **Reproducible:** the Linux library built on the Ark from `v0.3.7` (`golang:1.26-bookworm`,
   the Makefile's flags) is byte-identical to GitHub's (`a242bd29…`).
+
+### Rollout preparation (2026-10-01 UTC)
+
+- Baseline (00:3xZ): Home `cpa-home:1.0.73-claude-fleet-95ba2db`; all five nodes healthy,
+  `reported_ok`, plugin `0.3.6 loaded`. **Bug live on 0.3.6:** chat stream to
+  `copilot/gpt-5.6-sol` reported `prompt_tokens=0 completion_tokens=5`; `copilot/gpt-5-mini`
+  (11) and `copilot/claude-haiku-4.5` (12) were already correct, as expected (only the
+  Responses-only bridge was affected).
+- Config change built on the Ark from a fresh `GET /config.yaml`: exactly 7 changed lines (version,
+  two URLs, two sha256, two integer sizes); all six `api-keys` carried; the `openai-compatibility`
+  credential root omitted so Home leaves it alone. Rollback file = same with the 0.3.6 pin.
+  Working files in `/root/ws0006` on the Ark (mode 0600; deleted at close-out).
+- At lock time ws-0005 held the fleet-locks for its Home deploy; this rollout waits for all four to
+  be free for two checks two minutes apart (both workstreams use the canonical session/actor, so
+  the lock tool would treat a second acquire as a refresh, not a conflict).
