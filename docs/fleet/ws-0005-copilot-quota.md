@@ -1,6 +1,6 @@
 # ws-0005 — Copilot on Home's quota page
 
-Status: code + Ark suite green; PR #1 (fork) in local review, deploy next (2026-10-01)
+Status: done 2026-10-01 — live in cpa-home:1.0.73-claude-fleet-16f609d; Copilot on the quota page with real numbers
 
 - Branch `ws-0005/copilot-quota` off `fleet` @ `70aa888`; worktree `.claude/worktrees/ws-0005-copilot-quota`
 - herdr: `CLIProxyAPIHome | ws-0005 | Copilot quota`, alias `cpahome-ws-0005`
@@ -95,3 +95,83 @@ value), so `docs/management/api.md` only needs `copilot` added wherever the prov
 - Note: scheduled probes only run after recent usage on a credential (`latestQuotaUsageActivityAt`);
   usage rows are tagged for quota only once the provider is on the allowlist, so after deploy the
   first numbers come from a forced `POST /quota/collect` or the next Copilot request.
+
+## Review and merge
+
+- `local-pr-review` (gpt-6-astra via CPA) on PR #1 head `37dc241`: **no issues, must=0 should=0
+  nice=0**. `fleet` fast-forwarded to `315c486` (code tree identical to the tested one; only docs from
+  ws-0003/ws-0004 had landed). PR #1 shows MERGED.
+
+## Deploy (2026-10-01, all times UTC)
+
+- `origin/fleet` had moved to `16f609d` (ws-0006 docs only); built from it so the image holds
+  everything already live.
+- All four fleet-locks (`cpa-home-runtime-20260907-root` / `cpa-home-root`) taken via nested
+  `fleet-lock hold`; the Ark script ran under nohup (`cpa-home-build/logs/ws5-deploy.log`):
+  - 00:13:01 rollback gate: `cpa-home:1.0.73-claude-fleet-95ba2db` = running
+    `sha256:d1d6bb3eaed4d15d4bde3dc3af2f0c6ff0e6986439a7f5378050e25a9cd725a1`; Docker disk 99 GB free.
+  - 00:14:14 backup `data/backups/home-pre-ws0005-20261001T001301Z.db` (`VACUUM INTO`),
+    2,395,164,672 bytes, `quick_check` ok, sha256
+    `eace440cfd0988b6cbc3471ab27d35e16ca3ead6dde2c4d17e9239fa0d3758b8`.
+  - Runbook Block 1 on the shared `src`: `FULL_SHA=16f609d663afcac1457bb132c049e5183b13a48a`;
+    panel `static-full` 64 files / 3,919,143 bytes (removed again after the build).
+  - 00:14:51 **built `cpa-home:1.0.73-claude-fleet-16f609d`, ID
+    `sha256:7a92e9443088eee7a91461ad623791c8c21277c5aebec6a0de5c10897042981e`, 185,519,600 bytes.**
+    Binary markers new/running: `copilot_internal/user` 1/0, `pluginDiscoveryAuth` 2, full SHA 3.
+  - 00:14:52 swap (compose backup `docker-compose.yml.pre-ws0005-20261001T001301Z.bak`, one
+    `image:` line); 00:14:58 management port up, restarts 0.
+- **Rollback = compose back to `cpa-home:1.0.73-claude-fleet-95ba2db` (ID `sha256:d1d6bb3e…`)
+  after re-verifying its ID, then `docker compose up -d home`.**
+
+**Incident: my wait loop held the locks for ~46 min after the deploy finished.** The laptop driver
+polled the Ark with `ssh ark '…; pgrep -f ws5-deploy.sh …'`. The remote shell's own command line
+contains `ws5-deploy.sh`, so `pgrep -f` always matched itself and reported RUNNING. The deploy was
+DONE at 00:14:58; the locks stayed held until ~01:02 and blocked ws-0006. The orchestrator (pane
+w1:p1) ran the remaining proof steps while the locks were still held, then killed the driver (exit 143,
+locks released). **Lesson: never detect a remote job with `pgrep -f <name>` from inside a shell
+whose command line carries that name. Poll for a terminal marker in the log (`DONE` / `ABORT`) or a
+pid file instead, and put a time limit on any loop that holds a fleet-lock.**
+
+## Proof
+
+- Orchestrator, ~01:02 (locks held): proof script = chip, moxy, lara, hyper agent keys 200 `'ok'`
+  (`claude-sonnet-5-5` through each mini's own `cpa-gui` path); MacBook `claude-sonnet-5-5` 200 `'ok'`;
+  MacBook `copilot/gpt-5-mini` 200 with empty content; `POST /quota/collect {"providers":["copilot"]}`
+  202.
+- Re-checked by me at ~01:05: the empty gpt-5-mini answer is `finish_reason: length` with all 16
+  `max_tokens` spent as `reasoning_tokens` (the proof's cap, not a defect); with `max_tokens: 400` the
+  same request returns `'ok'`, `finish_reason: stop`.
+- `GET /v0/management/quota/credentials`: before = copilot `e3b5f1d8…` `unsupported`/`unsupported`/
+  `never`, 0 windows. **After = `healthy` / `success` / `fresh`, source `active_probe`, plan
+  `Enterprise`, 3 windows; primary `copilot-premium-interactions` limit 1,000,000 remaining
+  1,000,000 reset 2026-11-01T00:00:00Z, and `copilot-chat` unlimited** (`copilot-completions`
+  unlimited too). These match what GitHub returned for the seat. The other five credentials (canary,
+  antigravity, 2x claude, codex, xai) are unchanged in ID, status, source, plan and window count; only
+  live usage percentages moved.
+- Home since the swap (to ~01:05): 1,374 requests, 5 failed, all HTTP 499 (client closed) from
+  100.88.81.10 on Claude models: client cancels, not Home errors. 0 panics in the logs. 3 Copilot
+  usage rows already carry `quota_credential_id`, so scheduled probes keep Copilot fresh without a
+  forced collect.
+
+## Close-out
+
+- **Outcome:** the Copilot seat is on Home's quota page with GitHub's real allowance (Enterprise,
+  1,000,000 premium requests/month, chat and completions unlimited, reset date), refreshed by
+  Home's normal quota collector. Nothing changed for the other providers.
+- **Acceptance:** 1 Findings above (allowlist at `quota_snapshots.go:1814`/`collector.go:570`, source
+  = GitHub `copilot_internal/user`, plugin has no quota path, no ws-0006 request needed) ✅ ·
+  2 Home change + 4 tests, API docs (EN + CN) updated; Copilot-specific because a generic plugin path
+  does not exist ✅ · 3 Ark gofmt clean, vet only `refresh.go:172`, 33/33 packages ok ✅ · 4 deployed
+  under the guards, `cpa-home:1.0.73-claude-fleet-16f609d`, rollback ID recorded ✅ (lock-hold overrun
+  above) · 5 proof above ✅.
+- **Live:** Home `cpa-home:1.0.73-claude-fleet-16f609d` (`fleet` @ `16f609d`).
+- **Follow-ups:**
+  - Upstream: the collector is generic enough to offer upstream once Copilot becomes a supported
+    plugin there; not opened (fleet-only provider today).
+  - Shared `cpa-home-build/run-go.sh` still uses a 1 GB `/tmp`; the full suite needs 3 GB (FLEET.md
+    already says so). I did not edit the shared script; I used my own copy for this ws.
+  - Copilot overage (`overage_permitted`, `overage_count`) is not shown; add it as a window only if
+    the seat ever runs past its allowance.
+- **Cleanup:** Ark `ws-0005-src`, `ws5-go.sh`, `ws5-deploy.sh`, `ws5-quota.py` removed (deploy and
+  test logs kept in `cpa-home-build/logs/`); worktree and branch `ws-0005/copilot-quota` removed
+  (local + origin).
