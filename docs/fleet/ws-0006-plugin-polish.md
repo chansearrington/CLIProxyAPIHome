@@ -1,6 +1,6 @@
 # ws-0006 — Copilot plugin polish
 
-Status: both fixes written + tested on the Ark (commit 04c02ef); PR + review next
+Status: PR #3 merged, v0.3.7 released + verified; fleet rollout next
 
 - Repo `/Users/chansearrington/GitHub/personal/cliproxyapi-copilot-plugin` (fork, base branch
   `fleet` @ `758ada4`, release v0.3.6 live). Worktree `.claude/worktrees/ws-0006-plugin-polish`
@@ -74,3 +74,20 @@ Fix the two review SHOULDs deferred in ws-0002 and ship them fleet-wide:
   `golang:1.26-bookworm` go1.26.8, gofmt empty, vet clean, full plugin suite ok. Builds run from
   a private Ark dir `/mnt/user/appdata/cpa-home-build/plugin-ws0006` (rsync of the worktree,
   3 GB exec tmpfs), so the shared `src` dir is untouched.
+
+### PR, review, release (2026-10-01 UTC)
+
+- PR https://github.com/chansearrington/cliproxyapi-copilot-plugin/pull/3, head `04c02ef`.
+  `local-pr-review` (gpt-6-astra): **MUST 0, SHOULD 0, NICE 0**, "No issues found"; it re-ran
+  `go test ./...` and the three new tests. Fork CI (tests + both packages): all pass.
+- Merged as **`1a2925b`** on `fleet`; tag **`v0.3.7`** on it. Release run `36794568345`
+  (fork Actions, ubuntu + macos-15; the repo is public, so not billing-blocked): success.
+- Verified locally: `shasum -c checksums.txt` OK; each zip holds one library at its root.
+
+| File | Size (bytes) | sha256 of the zip (what Home pins) | sha256 of the library inside |
+|---|---|---|---|
+| `cliproxyapi-copilot_0.3.7_linux_amd64.zip` (Home) | 13271393 | `b6b0637708ddf71ddeca9eb1be0a26f10cccdceb22c581164385f6441fea8bd5` | `a242bd2942fa557c9b4c2486e1080687c6ee1ca492f72a1f321480e5adf4ea83` (ELF x86-64; = Ark build) |
+| `cliproxyapi-copilot_0.3.7_darwin_arm64.zip` (nodes) | 7152626 | `9b93458d971dc2d0cc78ded51db69f2a8f02beeaea9464ab8527d9ccf8e61ad7` | `4ad2eb09a1ae1ae62d4fe4d7598c4d0b2852487430aed99d6e1a6bfc010bb59c` (Mach-O arm64) |
+
+- **Reproducible:** the Linux library built on the Ark from `v0.3.7` (`golang:1.26-bookworm`,
+  the Makefile's flags) is byte-identical to GitHub's (`a242bd29…`).
