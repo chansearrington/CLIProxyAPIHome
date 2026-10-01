@@ -24,7 +24,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0006 | Copilot plugin polish | cliproxyapi-copilot-plugin `ws-0006/plugin-polish` | `cpaplugin-ws-0006` | **done** — plugin v0.3.7 live on Home + 5 nodes |
 
 | ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | **done** — all five nodes on CPA 8.0.7 |
-| ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | **done** — Home Usage menu bar app live on the MacBook |
+| ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | done, then **removed** at Chanse's request (app not wanted) |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -78,5 +78,6 @@ time (see below).
 - 2026-10-01 — ws-0008 done, verified by the orchestrator: `~/Applications/Home Usage.app` running under LaunchAgent `com.chansearrington.home-usage`; Keychain item `cpa-home-management`/`home-usage` present; no secrets in `tools/home-menubar/` or the proof folder; dropdown screenshot shows all six Home credentials and its compare file says 10/10 windows match the API at the same second. Note: the app holds Home's full management secret (no read-only key exists) — follow-up below. A Claude window Anthropic labels "Iguana Necktie" (0%, resets Nov 5) shows under its raw name. Space closed; no worktrees left.
 
 ### Follow-ups added in round 2
-6. Read-only management key in Home so the menu bar app (and similar tools) need not hold the root secret (ws-0008).
+6. ~~Read-only management key for the menu bar app~~ — moot, app removed.
 7. First real new-plugin add is the live proof of the #6225 fix; watch Home's log for `installed but not loaded` (ws-0007).
+- 2026-10-01 — Chanse rejected Home Usage (wants multiple accounts inside CodexBar). App, LaunchAgent, Keychain key, Bartender entries and `tools/home-menubar/` removed; researching CodexBar multi-account support.

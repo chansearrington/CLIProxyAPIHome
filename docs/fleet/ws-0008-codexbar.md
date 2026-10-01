@@ -1,6 +1,6 @@
 # ws-0008 — CodexBar and CPA: usage in the menu bar
 
-Status: done — Home Usage menu bar item live on the laptop, PR #2 merged into fleet (2026-10-01)
+Status: removed 2026-10-01 — Chanse did not want the Home Usage app; uninstalled, Keychain key deleted, Bartender entries removed, source deleted from the repo
 
 - Branch `ws-0008/codexbar` off `fleet` (for this brief); worktree `.claude/worktrees/ws-0008-codexbar`
 - herdr: `CLIProxyAPIHome | ws-0008 | CodexBar`, alias `cpahome-ws-0008`
@@ -302,3 +302,17 @@ date parsing verified. Fixed in `64fd1f0`:
   - Optional for Chanse: turn off CodexBar's Claude provider, which shows `–` on this Mac.
 - **Cleanup:** after merge, remove worktree `.claude/worktrees/ws-0008-codexbar` and branch
   `ws-0008/codexbar` (local and remote); `/tmp/ws8-*`, `/tmp/cbsrc` and `/tmp/ws8-proof` deleted.
+
+## Removed (2026-10-01)
+
+Chanse: "I don't want this app that you made. Thank you for making it, but that doesn't give me what
+I really want. Is there a way for multiple accounts to be tracked inside of CodexBar? And please
+uninstall and remove the application that you created."
+
+- `tools/home-menubar/uninstall.sh --forget-key`: LaunchAgent booted out and deleted, app, log and
+  defaults deleted, Keychain item `cpa-home-management`/`home-usage` deleted. Verified: not running,
+  files gone, key gone.
+- Bartender: 10 `home-usage` references removed (Bartender quit, prefs edited, relaunched); backup
+  `~/Library/Preferences/bartender-backup-pre-homeusage-removal-20260930T213231.plist`.
+- Source `tools/home-menubar/` deleted from `fleet` (still in git history at PR #2's merge).
+- What Chanse actually wants is multiple accounts inside CodexBar itself — researched next.
