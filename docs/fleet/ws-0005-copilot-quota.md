@@ -168,8 +168,8 @@ pid file instead, and put a time limit on any loop that holds a fleet-lock.**
 - **Follow-ups:**
   - Upstream: the collector is generic enough to offer upstream once Copilot becomes a supported
     plugin there; not opened (fleet-only provider today).
-  - Shared `cpa-home-build/run-go.sh` still uses a 1 GB `/tmp`; the full suite needs 3 GB (FLEET.md
-    already says so). I did not edit the shared script; I used my own copy for this ws.
+  - ~~Shared `run-go.sh` 1 GB `/tmp`~~ — already fixed by ws-0004 the same evening (3 GB, backup
+    `run-go.sh.bak-20260930`; orchestrator verified on the Ark 2026-10-01).
   - Copilot overage (`overage_permitted`, `overage_count`) is not shown; add it as a window only if
     the seat ever runs past its allowance.
 - **Cleanup:** Ark `ws-0005-src`, `ws5-go.sh`, `ws5-deploy.sh`, `ws5-quota.py` removed (deploy and
