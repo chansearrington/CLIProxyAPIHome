@@ -1,6 +1,6 @@
 # ws-0007 — CPA nodes 8.0.4 → 8.0.5+
 
-Status: in progress — MacBook canary on 8.0.7 proven; minis next (Moxy first)
+Status: in progress — all five nodes on 8.0.7 and proven; #6225 proof + pin bump next
 
 - Branch `ws-0007/cpa-node-upgrade` off `fleet`; worktree `.claude/worktrees/ws-0007-cpa-node-upgrade`
 - herdr: `CLIProxyAPIHome | ws-0007 | CPA node upgrade`, alias `cpahome-ws-0007`
@@ -136,3 +136,27 @@ never `pgrep` (AC5).
 - Node log since the banner: only the documented handoff noise (`certificate is already owned by
   an active membership` 20:40:49–54 CDT, a burst of 503s on the laptop's own Claude Code traffic in
   the same 5 s); after 20:40:55 no warn/error lines, steady 200s on `/v1/messages`.
+
+### Minis on 8.0.7 (each under its own `fleet-lock hold`, released after; one box at a time)
+
+| node | lock held | restart (UTC) | result | sonnet 200 | Home (connected / state / plugin) |
+|---|---|---|---|---|---|
+| Moxy | 01:42:00–01:42:35Z | 01:42:01 | `RESULT=UPGRADED` | 'ok' 1st try | 01:42:19Z, healthy, reported_ok, `0.3.7 skipped loaded` |
+| Hyper | 01:42:53–01:43:25Z | 01:42:55 | `RESULT=UPGRADED` | 'ok' 1st try | 01:43:09Z, healthy, reported_ok, `0.3.7 skipped loaded` |
+| Lara | 01:43:33–01:44:06Z | 01:43:35 | `RESULT=UPGRADED` | 'ok' 1st try | 01:43:49Z, healthy, reported_ok, `0.3.7 skipped loaded` |
+| Chip | 01:44:13–01:44:46Z | 01:44:16 | `RESULT=UPGRADED` | 'ok' 1st try | 01:44:29Z, healthy, reported_ok, `0.3.7 skipped loaded` |
+
+- Every box: `--version` → `CLIProxyAPI Version: 8.0.7, Commit: 97f244b8, BuiltAt: 2026-09-30T19:15:24Z`;
+  `.bak` = `cli-proxy-api.8.0.4.bak` (sha-verified against `5c6e3095…` by the script).
+- Proof keys: each mini's own OpenClaw `cpa-gui` key (read on the box, never printed) via
+  `127.0.0.1:18317`. Moxy's node log after the restart: no warn/error lines, only 200s.
+
+### Fleet-wide check after the last box (01:45Z)
+
+- Home `GET /nodes`: all five `healthy True reported_ok | cliproxyapi-copilot 0.3.7 skipped loaded`,
+  each `connected` after its own restart. `cpa_node_membership`: five rows `active`, each
+  `connected_at` = that node's reconnect time.
+- Ledger (`usage`, `created_at > '2026-10-01 01:38:00'`): **338 rows, 0 failed** — MacBook 334
+  (Chanse's live Claude Code traffic + proofs), Chip 3, Moxy/Hyper/Lara 1 each (the proofs; their
+  agents were idle). The ~5 s of 503s during the MacBook handoff were node-local (no membership yet)
+  and never reached Home, as the runbook says.
