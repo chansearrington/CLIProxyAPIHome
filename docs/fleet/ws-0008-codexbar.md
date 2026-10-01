@@ -204,3 +204,24 @@ everything it does get right). It is laptop-only and removable in one command. D
   Codex weekly 30 %, so the laptop's ChatGPT login is the same account Home holds.
 - Pending: a real screenshot of the open dropdown on the menu bar, taken automatically by
   `/tmp/ws8-proof/run.sh` once the screen is unlocked.
+
+## Review (2026-10-01)
+
+Independent code review (subagent) of `108ba17`: decoding matches the Go structs, no secret leaks,
+date parsing verified. Fixed in `fcd2bda`:
+- MUST: optional calls (overview, per-credential detail) swallowed 401/403 with `try?` — a rotated
+  key could have sent several failing requests in one poll. Now auth errors always propagate.
+- MUST: "Refresh now" before the first load sent `credential_ids: []`, which Home reads as "all"
+  (`quota_recollect.go:9`). Now guarded and hidden until accounts are loaded.
+- SHOULD: one poll at a time; the auth pause survives relaunch (`authPaused`); default URL is the
+  Ark's MagicDNS name `home-server-the-ark.taile4a41.ts.net` (does not resolve off the tailnet) and
+  the ATS exception is scoped to `*.taile4a41.ts.net` instead of "allow everything"; the client is
+  main-actor isolated and reads the Keychain off the main thread with a 10 s cap; per-account
+  24 h usage comes from `/usage/aggregates?group_by=credential` (the overview's top list is capped
+  at 10); the bar ignores disabled/never-measured accounts; windows whose reset time has passed say
+  "(window reset since; old number)".
+- NITs: cached date formatters, currency without a limit, `credits` unit, launchctl bootout wait,
+  `pkill` of a hand-started copy, visible codesign errors, Apple-Silicon note.
+- Auth-pause test: fake server on `localhost:18999` answering 401 → exactly **1** request, bar
+  `CPA ⚠︎`, `authPaused=1`; a relaunched instance sent **0** requests. Restored to the real Home
+  afterwards (`CPA 92%`).
