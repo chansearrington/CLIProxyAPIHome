@@ -24,6 +24,7 @@ var quotaRecollectProviders = map[string]struct{}{
 	"codex":       {},
 	"kimi":        {},
 	"xai":         {},
+	"copilot":     {},
 }
 
 func (h *Handler) SetQuotaRecollectTrigger(trigger QuotaRecollectTrigger) {

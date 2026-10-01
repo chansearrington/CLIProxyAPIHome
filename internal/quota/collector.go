@@ -35,6 +35,7 @@ const (
 	claudeProfileURL           = "https://api.anthropic.com/api/oauth/profile"
 	kimiUsageURL               = "https://api.kimi.com/coding/v1/usages"
 	xaiBillingURL              = "https://cli-chat-proxy.grok.com/v1/billing"
+	copilotUserURL             = "https://api.github.com/copilot_internal/user"
 	codexUserAgent             = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
 	antigravityUserAgent       = "antigravity/1.11.5 windows/amd64"
 	xaiTokenAuthHeader         = "X-XAI-Token-Auth"
@@ -66,6 +67,7 @@ type Options struct {
 	ClaudeProfileURL       string
 	KimiUsageURL           string
 	XAIBillingURL          string
+	CopilotUserURL         string
 	AntigravityURLs        []string
 	Now                    func() time.Time
 	HTTPClient             func(*coreauth.Auth, time.Duration) (*http.Client, error)
@@ -124,6 +126,9 @@ func NewCollector(repo *cluster.Repository, options Options) *Collector {
 	}
 	if strings.TrimSpace(options.XAIBillingURL) == "" {
 		options.XAIBillingURL = xaiBillingURL
+	}
+	if strings.TrimSpace(options.CopilotUserURL) == "" {
+		options.CopilotUserURL = copilotUserURL
 	}
 	if len(options.AntigravityURLs) == 0 {
 		options.AntigravityURLs = append([]string(nil), defaultAntigravityURLs...)
@@ -389,6 +394,9 @@ func (c *Collector) probeCredential(ctx context.Context, auth *coreauth.Auth) (p
 	case "xai":
 		windows, plan, errProbe := c.probeXAI(ctx, auth)
 		return probeResult{windows: windows, plan: plan, replaceWindows: true}, errProbe
+	case "copilot":
+		windows, plan, errProbe := c.probeCopilot(ctx, auth)
+		return probeResult{windows: windows, plan: plan, replaceWindows: true}, errProbe
 	default:
 		return probeResult{}, &probeError{code: "PROVIDER_UNSUPPORTED", message: "Credential provider does not have a quota collector.", retryable: false}
 	}
@@ -575,7 +583,7 @@ func quotaProbeEligible(auth *coreauth.Auth) bool {
 		return false
 	}
 	switch normalizedQuotaProvider(auth.Provider) {
-	case "codex", "claude", "antigravity", "kimi", "xai":
+	case "codex", "claude", "antigravity", "kimi", "xai", "copilot":
 		return true
 	default:
 		return false
@@ -665,7 +673,8 @@ func quotaAccessToken(auth *coreauth.Auth) string {
 	if auth == nil {
 		return ""
 	}
-	if value := quotaMetadataString(auth.Metadata, "access_token", "accessToken"); value != "" {
+	// Copilot credentials store the GitHub OAuth token under github_access_token.
+	if value := quotaMetadataString(auth.Metadata, "access_token", "accessToken", "github_access_token"); value != "" {
 		return value
 	}
 	for _, key := range []string{"token", "Token"} {
