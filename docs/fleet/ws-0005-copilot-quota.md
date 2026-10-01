@@ -1,6 +1,6 @@
 # ws-0005 — Copilot on Home's quota page
 
-Status: research done — implementing a Home-side Copilot quota collector (2026-09-30)
+Status: code + Ark suite green; PR #1 (fork) in local review, deploy next (2026-10-01)
 
 - Branch `ws-0005/copilot-quota` off `fleet` @ `70aa888`; worktree `.claude/worktrees/ws-0005-copilot-quota`
 - herdr: `CLIProxyAPIHome | ws-0005 | Copilot quota`, alias `cpahome-ws-0005`
@@ -78,3 +78,20 @@ plugin-provider path is not possible without a new CPA plugin-API contract, so t
 Copilot-specific by necessity. The Management API shape does not change (same fields, a new provider
 value), so `docs/management/api.md` only needs `copilot` added wherever the provider list is named.
 
+
+## Implementation and verification
+
+- Commits on `ws-0005/copilot-quota` (rebased onto `origin/fleet` @ `8c2359f`, docs-only move):
+  `e2ffbff` feature, `37dc241` test clock fix. PR: chansearrington/CLIProxyAPIHome#1 → `fleet`.
+- New `internal/quota/copilot.go` (probe + parser + plan map); `copilot` added to
+  `quotaProviderPlanned`, `quotaProbeEligible`, `probeCredential`, `quotaRecollectProviders`;
+  `quotaAccessToken` also reads `github_access_token`; `Options.CopilotUserURL` for tests.
+- Tests: `internal/quota/providers_copilot_quota_test.go` (parse, fallbacks, end-to-end collector →
+  list API with a fake token), `TestCollectQuotaAcceptsCopilotProvider`.
+- Ark, `golang:1.26-bookworm`, own clone `/mnt/user/appdata/cpa-home-build/ws-0005-src` @ `37dc241`,
+  3 GB exec tmpfs (`ws5-go.sh`, a copy of `run-go.sh` — the shared script still says 1g):
+  **gofmt clean; vet = only `internal/cluster/refresh.go:172:2: unreachable code`; full suite 33/33
+  packages ok, 0 FAIL; compile ok.** Log: `cpa-home-build/logs/ws5-full.log`.
+- Note: scheduled probes only run after recent usage on a credential (`latestQuotaUsageActivityAt`);
+  usage rows are tagged for quota only once the provider is on the allowlist, so after deploy the
+  first numbers come from a forced `POST /quota/collect` or the next Copilot request.
