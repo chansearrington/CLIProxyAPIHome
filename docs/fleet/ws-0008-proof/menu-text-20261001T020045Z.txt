@@ -1,0 +1,36 @@
+[bar] CPA 92%
+Home (CPA) accounts — updated 9:00 PM
+Bar shows the fullest limit: Claude ch***@gmail.com, 5-hour window
+-----
+Claude · ch***@gmail.com
+   5-hour                         █████████░  92%  resets 9:09 PM
+   Weekly                         █████░░░░░  52%  resets Tue 7:59 PM
+   last 24 h: 7,283 requests, 1.76B tokens · quota low
+Claude · ch***@hypesports.live
+   5-hour                         ████████░░  81%  resets 10:10 PM
+   Weekly                         █████░░░░░  54%  resets Tue 4:00 PM
+   Iguana Necktie                 ░░░░░░░░░░   0%  resets Nov 5
+   last 24 h: 7,254 requests, 1.74B tokens · quota low
+Codex · ch***@hotmail.com (Pro 20x)
+   Weekly                         ███░░░░░░░  30%  resets Sat 12:00 PM
+   last 24 h: 1,208 requests, 60.6M tokens
+Copilot · carringt_microsoft (Enterprise)
+   Premium Requests               1 of 1.0M  resets Oct 31
+   Chat                           unlimited  resets Oct 31
+   Completions                    unlimited  resets Oct 31
+   last 24 h: 88 requests, 2,763 tokens
+xAI · ch***@gmail.com
+   Monthly Spend                  $0.00 of $0.00
+   last 24 h: 44 requests, 597K tokens · not recently used — numbers from 5 h ago · quota exhausted
+Antigravity · ch***@gmail.com
+   Gemini Models, 5-hour          ░░░░░░░░░░   0%
+   Claude and GPT models, 5-hour  ░░░░░░░░░░   1%
+   Gemini Models, weekly          ░░░░░░░░░░   0%  resets Mon 1:06 AM
+   Claude and GPT models, weekly  ░░░░░░░░░░   0%  resets Oct 6
+   last 24 h: 1 request, 13K tokens · not recently used — numbers from 21 h ago · Home marks it unavailable
+-----
+Whole fleet, last 24 h: 16K requests, 3.56B tokens (3.38B from cache)
+-----
+Refresh now (asks the providers)
+Open Home panel
+Quit Home Usage

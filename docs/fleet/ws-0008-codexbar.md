@@ -1,6 +1,6 @@
 # ws-0008 — CodexBar and CPA: usage in the menu bar
 
-Status: building option (c) — native Home menu bar item (2026-10-01)
+Status: built + numbers proven (10/10 windows match); waiting on screen unlock for the dropdown screenshot + code review (2026-10-01)
 
 - Branch `ws-0008/codexbar` off `fleet` (for this brief); worktree `.claude/worktrees/ws-0008-codexbar`
 - herdr: `CLIProxyAPIHome | ws-0008 | CodexBar`, alias `cpahome-ws-0008`
@@ -168,3 +168,39 @@ everything it does get right). It is laptop-only and removable in one command. D
   5-strikes ban.
 - Source in this repo at `tools/home-menubar/`; app at `~/Applications/Home Usage.app`; started at
   login by `~/Library/LaunchAgents/com.chansearrington.home-usage.plist`.
+
+## Build (2026-10-01, laptop only)
+
+- Source `tools/home-menubar/` (`HomeUsage.swift` ~560 lines, `install.sh`, `uninstall.sh`,
+  `README.md`). Built with the laptop's `swiftc` (Swift 6.4), ad-hoc signed, installed to
+  `~/Applications/Home Usage.app`, started by LaunchAgent `com.chansearrington.home-usage`.
+- Key: copied from the Ark's `.env` straight into the login Keychain (service
+  `cpa-home-management`, account `home-usage`) by piping `add-generic-password … -w '<value>'`
+  into `security -i` — the value never touched argv, a file or the screen (length check only).
+  First call with it: `GET /quota/credentials` → 200 (remote management is on).
+- **Bartender 6** (installed on this Mac) put the new icon in its *Always Hide* list, so it sat
+  off-screen. Fixed by backing up Bartender's prefs
+  (`~/Library/Preferences/bartender-backup-pre-ws0008-20260930T205348.plist`, 189,380 bytes),
+  quitting Bartender, moving `com.chansearrington.home-usage-home-usage` to its `Show` list and
+  reopening it, then pinning the icon's position next to CodexBar
+  (`defaults write com.chansearrington.home-usage "NSStatusItem Preferred Position home-usage" 470`).
+  It now sits immediately left of CodexBar's three icons on the active display.
+- Lesson: on this Mac, whole-display `screencapture` shows only wallpaper while the screen is locked
+  (loginwindow shields at layer 2001-2004) — check for that before debugging "missing" icons.
+  Individual windows can still be captured with `screencapture -l <window id>`.
+
+## Proof
+
+- **2026-10-01 02:00:45Z — numbers (screen locked, so text + window captures):**
+  `HomeUsage --print` and `GET /v0/management/quota/credentials` taken within seconds of each other;
+  `compare.py` checked every window: **10 windows match, 0 mismatches**
+  (`docs/fleet/ws-0008-proof/compare-20261001T020045Z.txt`, menu text in
+  `menu-text-20261001T020045Z.txt`). Bar = `CPA 92%` = the Claude gmail account's 5-hour window
+  (92/100), the fullest Claude/Codex window — correct by the headline rule.
+- Menu bar at the same moment (`docs/fleet/ws-0008-proof/menubar-20261001T0200Z.png`, stitched
+  from the four status-item windows, left to right): Home Usage `CPA 92%` (orange, ≥80 %),
+  CodexBar Grok `26%`, CodexBar Codex `30%`, CodexBar Claude `–`. CodexBar shows **no Claude
+  number** (the Mac's own Claude login is not what the fleet uses). Its Codex 30 % equals Home's
+  Codex weekly 30 %, so the laptop's ChatGPT login is the same account Home holds.
+- Pending: a real screenshot of the open dropdown on the menu bar, taken automatically by
+  `/tmp/ws8-proof/run.sh` once the screen is unlocked.
