@@ -1,0 +1,18 @@
+# GET /v0/management/quota/credentials at 2026-10-01T02:08:30Z (generated_at 2026-10-01T02:08:30.325143854Z) — trimmed to the displayed fields
+xai          ch***@gmail.com          status=exhausted  freshness=stale  credential=enabled
+    xai-monthly-spend              unit=currency   used=0 limit=0 ratio=1 reset=2026-10-01T00:00:00Z
+claude       ch***@hypesports.live    status=low        freshness=fresh  credential=enabled
+    claude-five-hour               unit=percentage used=81 limit=100 ratio=0.81 reset=2026-10-01T03:10:00.475324Z
+    claude-seven-day               unit=percentage used=54 limit=100 ratio=0.54 reset=2026-10-06T21:00:00.475348Z
+claude       ch***@gmail.com          status=low        freshness=fresh  credential=enabled
+    claude-five-hour               unit=percentage used=92 limit=100 ratio=0.92 reset=2026-10-01T02:09:59.641785Z
+    claude-seven-day               unit=percentage used=52 limit=100 ratio=0.52 reset=2026-10-07T00:59:59.641802Z
+antigravity  ch***@gmail.com          status=healthy    freshness=stale  credential=unavailable
+    antigravity-gemini-5h          unit=percentage used=0 limit=100 ratio=0 reset=2026-09-30T09:47:44Z
+    antigravity-3p-5h              unit=percentage used=1.1099999999999999 limit=100 ratio=0.011099999999999999 reset=2026-09-30T09:46:48Z
+agent-os-home-canary agent-os-home-canary     status=unsupported freshness=never  credential=enabled
+codex        ch***@hotmail.com        status=healthy    freshness=fresh  credential=enabled
+    codex-1-week                   unit=percentage used=30 limit=100 ratio=0.3 reset=2026-10-03T17:00:06Z
+copilot      carringt_microsoft       status=healthy    freshness=fresh  credential=enabled
+    copilot-premium-interactions   unit=requests   used=1 limit=1000000 ratio=1e-06 reset=2026-11-01T00:00:00Z
+    copilot-chat                   unit=requests   used=None limit=None ratio=None reset=2026-11-01T00:00:00Z

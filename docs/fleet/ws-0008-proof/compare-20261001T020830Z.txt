@@ -1,0 +1,11 @@
+OK  xai ch***@gmail.com xai-monthly-spend currency api used 0 / 0 | menu: Monthly Spend                  $0.00 of $0.00  old (reset since)
+OK  claude ch***@hypesports.live claude-five-hour percentage api used 81 / 100 | menu: 5-hour                         ████████░░  81%  resets 10:10 PM
+OK  claude ch***@hypesports.live claude-seven-day percentage api used 54 / 100 | menu: Weekly                         █████░░░░░  54%  resets Tue 4:00 PM
+OK  claude ch***@gmail.com claude-five-hour percentage api used 92 / 100 | menu: 5-hour                         █████████░  92%  resets 9:09 PM
+OK  claude ch***@gmail.com claude-seven-day percentage api used 52 / 100 | menu: Weekly                         █████░░░░░  52%  resets Tue 7:59 PM
+OK  antigravity ch***@gmail.com antigravity-gemini-5h percentage api used 0 / 100 | menu: Gemini Models, 5-hour          ░░░░░░░░░░   0%  old (reset since)
+OK  antigravity ch***@gmail.com antigravity-3p-5h percentage api used 1.1099999999999999 / 100 | menu: Claude and GPT models, 5-hour  ░░░░░░░░░░   1%  old (reset since)
+OK  codex ch***@hotmail.com codex-1-week percentage api used 30 / 100 | menu: Weekly                         ███░░░░░░░  30%  resets Sat 12:00 PM
+OK  copilot carringt_microsoft copilot-premium-interactions requests api used 1 / 1000000 | menu: Premium Requests               1 of 1.0M requests  resets Oct 31
+OK  copilot carringt_microsoft copilot-chat requests api used None / None | menu: Chat                           unlimited  resets Oct 31
+10 windows match, 0 mismatches
