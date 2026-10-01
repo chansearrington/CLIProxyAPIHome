@@ -94,7 +94,9 @@ func TestParseCopilotQuotaWindowsFallbacks(t *testing.T) {
 
 func TestCollectorPersistsCopilotQuotaWithGitHubToken(t *testing.T) {
 	repo := newCollectorTestRepository(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	// The seeded usage activity is stamped with the wall clock, so the probe
+	// clock must sit before it for the activity gate to admit the credential.
+	now := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
 	seedCollectorProviderAuth(t, repo, "copilot-probe", "copilot", map[string]any{"type": "copilot", "github_access_token": "gho_fake_test_token", "github_login": "octo"})
 	requestHeaders := make(chan http.Header, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
