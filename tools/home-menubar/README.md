@@ -12,7 +12,7 @@ every account this Home manages. Built for the fleet in ws-0008
   numbers are the last ones it got.
 - **Dropdown:** each account Home holds (masked email, plan), every quota window with used %,
   bar and local reset time, the account's last-24-hour requests and tokens, and a note when the
-  numbers are old ("not recently used" — Home only re-measures accounts that are in use), quota is
+  numbers are old ("numbers from 5 h ago" — Home only re-measures accounts that are in use), quota is
   low/exhausted, or Home has the account marked unavailable. The last line is the whole fleet's
   last-24-hour totals.
 - **Refresh now** asks Home to re-measure the shown accounts with their providers (real provider

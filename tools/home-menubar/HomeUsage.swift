@@ -354,7 +354,7 @@ enum Fmt {
         }
         if let r = date(w.resetAt) {
             // A reset time in the past means Home has not re-measured since; the number is old.
-            value += r > Date() ? "  resets " + when(r) : "  (window reset since; old number)"
+            value += r > Date() ? "  resets " + when(r) : "  old (reset since)"
         }
         return "   " + name + value
     }
@@ -526,16 +526,17 @@ final class Controller: NSObject, NSApplicationDelegate {
             if let plan = c.plan { title += " (\(plan.name))" }
             menu.addItem(line(title, bold: true))
             for w in a.windows { menu.addItem(line(Fmt.windowLine(w), mono: true)) }
-            var notes: [String] = []
             if let u = a.usage {
-                notes.append("last 24 h: \(Fmt.plural(u.requestCount, "request")), \(Fmt.count(u.totalTokens)) tokens")
+                menu.addItem(line("   last 24 h: \(Fmt.plural(u.requestCount, "request")), "
+                    + "\(Fmt.count(u.totalTokens)) tokens", dim: true))
             }
+            // Status notes go on their own short line; long menu lines get clipped at screen edges.
+            var notes: [String] = []
+            if c.quotaStatus == "exhausted" || c.quotaStatus == "low" { notes.append("quota \(c.quotaStatus)") }
             if c.freshness != "fresh" {
-                let seen = Fmt.date(c.observedAt).map { "numbers from " + Fmt.ago($0) } ?? "never measured"
-                notes.append("not recently used — \(seen)")
+                notes.append(Fmt.date(c.observedAt).map { "numbers from " + Fmt.ago($0) } ?? "never measured")
             }
             if c.credentialStatus != "enabled" { notes.append("Home marks it \(c.credentialStatus)") }
-            if c.quotaStatus == "exhausted" || c.quotaStatus == "low" { notes.append("quota \(c.quotaStatus)") }
             if !notes.isEmpty { menu.addItem(line("   " + notes.joined(separator: " · "), dim: true)) }
         }
         if accounts.isEmpty && problem == nil { menu.addItem(line("Loading…", dim: true)) }

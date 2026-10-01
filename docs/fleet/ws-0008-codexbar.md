@@ -1,6 +1,6 @@
 # ws-0008 — CodexBar and CPA: usage in the menu bar
 
-Status: built + numbers proven (10/10 windows match); waiting on screen unlock for the dropdown screenshot + code review (2026-10-01)
+Status: built + proven on the real menu bar (10/10 windows match); PR #2 in local review (2026-10-01)
 
 - Branch `ws-0008/codexbar` off `fleet` (for this brief); worktree `.claude/worktrees/ws-0008-codexbar`
 - herdr: `CLIProxyAPIHome | ws-0008 | CodexBar`, alias `cpahome-ws-0008`
@@ -202,8 +202,20 @@ everything it does get right). It is laptop-only and removable in one command. D
   CodexBar Grok `26%`, CodexBar Codex `30%`, CodexBar Claude `–`. CodexBar shows **no Claude
   number** (the Mac's own Claude login is not what the fleet uses). Its Codex 30 % equals Home's
   Codex weekly 30 %, so the laptop's ChatGPT login is the same account Home holds.
-- Pending: a real screenshot of the open dropdown on the menu bar, taken automatically by
-  `/tmp/ws8-proof/run.sh` once the screen is unlocked.
+- **2026-10-01 02:08:30Z — real menu bar screenshot (screen unlocked):**
+  `docs/fleet/ws-0008-proof/menubar-dropdown-20261001T020830Z.png` shows `CPA 92%` next to
+  CodexBar's `26%` / `30%` / `–`, with the Home Usage dropdown open. API snapshot taken in the same
+  second (`api-20261001T020830Z.txt`), app text (`menu-text-20261001T020830Z.txt`), and
+  `compare-20261001T020830Z.txt`: **10 windows match, 0 mismatches.** Examples visible in the shot:
+  Claude gmail 5-hour 92 % (API used 92/100, resets 21:09 CDT = 02:09:59Z), Claude hypesports
+  5-hour 81 %, weekly 54 %; Codex weekly 30 % (Pro 20x); Copilot premium 1 of 1,000,000; xAI
+  $0.00 of $0.00 exhausted; Antigravity 0-1 %, numbers 21 h old, marked unavailable.
+- An earlier shot at 02:07:23Z showed long note lines clipped at the right edge; fixed by moving
+  status notes to their own short line (`old (reset since)`), rebuilt, re-shot above.
+- **Not covered:** accounts Home does not hold (the Grok CLI login CodexBar shows; xAI's real
+  balance needs a prepaid team — Home shows $0 of $0); Home's own staleness rule (idle accounts are
+  only re-measured when used or on "Refresh now"); the "Iguana Necktie" Claude window is a label
+  Anthropic returns, shown as-is; CodexBar's widgets (plugins/other apps cannot feed them).
 
 ## Review (2026-10-01)
 
@@ -219,7 +231,7 @@ date parsing verified. Fixed in `fcd2bda`:
   main-actor isolated and reads the Keychain off the main thread with a 10 s cap; per-account
   24 h usage comes from `/usage/aggregates?group_by=credential` (the overview's top list is capped
   at 10); the bar ignores disabled/never-measured accounts; windows whose reset time has passed say
-  "(window reset since; old number)".
+  "old (reset since)".
 - NITs: cached date formatters, currency without a limit, `credits` unit, launchctl bootout wait,
   `pkill` of a hand-started copy, visible codesign errors, Apple-Silicon note.
 - Auth-pause test: fake server on `localhost:18999` answering 401 → exactly **1** request, bar
