@@ -1,6 +1,6 @@
 # ws-0007 — CPA nodes 8.0.4 → 8.0.5+
 
-Status: in progress — release chosen (v8.0.7), canary next
+Status: in progress — MacBook canary on 8.0.7 proven; minis next (Moxy first)
 
 - Branch `ws-0007/cpa-node-upgrade` off `fleet`; worktree `.claude/worktrees/ws-0007-cpa-node-upgrade`
 - herdr: `CLIProxyAPIHome | ws-0007 | CPA node upgrade`, alias `cpahome-ws-0007`
@@ -124,3 +124,15 @@ never `pgrep` (AC5).
   **8.0.4** after its restart also reports `0.3.7 skipped loaded`. The other four show `installed`
   only because their last report dates from the 0.3.7 hot install. The check now accepts
   `(installed|skipped) loaded` and still requires `healthy True reported_ok` and `loaded`.
+
+### Canary — MacBook on 8.0.7 (01:40:38Z)
+
+- All four locks held 01:40:38Z → 01:41:15Z, released. `RESULT=UPGRADED node_version=8.0.7
+  restart_at=2026-10-01T01:40:38Z` (`.bak` = `cli-proxy-api.8.0.4.bak`, sha-verified by the script).
+- `--version`: `CLIProxyAPI Version: 8.0.7, Commit: 97f244b8, BuiltAt: 2026-09-30T19:15:24Z`.
+- Home: `connected 01:40:54Z healthy True reported_ok | cliproxyapi-copilot 0.3.7 skipped loaded`.
+- Key 6: `claude-sonnet-5-5` 200 'ok' (first try, 11 s after restart); `copilot/gpt-5-mini`
+  (max_tokens 400) 200 'ok'; `gpt-5.6-sol` (Codex path, exercises the changed uTLS/Codex code) 200 'ok'.
+- Node log since the banner: only the documented handoff noise (`certificate is already owned by
+  an active membership` 20:40:49–54 CDT, a burst of 503s on the laptop's own Claude Code traffic in
+  the same 5 s); after 20:40:55 no warn/error lines, steady 200s on `/v1/messages`.
