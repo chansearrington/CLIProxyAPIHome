@@ -24,7 +24,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0006 | Copilot plugin polish | cliproxyapi-copilot-plugin `ws-0006/plugin-polish` | `cpaplugin-ws-0006` | **done** — plugin v0.3.7 live on Home + 5 nodes |
 
 | ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | **done** — all five nodes on CPA 8.0.7 |
-| ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | done, then **removed** at Chanse's request (app not wanted) |
+| ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | **done** — app removed; both Claude accounts now inside CodexBar (cookie accounts, Stacked layout) |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -81,3 +81,4 @@ time (see below).
 6. ~~Read-only management key for the menu bar app~~ — moot, app removed.
 7. First real new-plugin add is the live proof of the #6225 fix; watch Home's log for `installed but not loaded` (ws-0007).
 - 2026-10-01 — Chanse rejected Home Usage (wants multiple accounts inside CodexBar). App, LaunchAgent, Keychain key, Bartender entries and `tools/home-menubar/` removed; researching CodexBar multi-account support.
+- 2026-10-01 — CodexBar solved inside CodexBar: two Claude `sessionKey` accounts + Stacked layout; verified via the codexbar CLI and confirmed by Chanse.
