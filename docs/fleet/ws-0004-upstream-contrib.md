@@ -1,6 +1,6 @@
 # ws-0004 — Upstream contributions
 
-Status: in progress 2026-09-30 — Home PR #124 open; plugin offer branches being built/tested; #6225 fixed upstream (CPA v8.0.5)
+Status: in progress 2026-09-30 — Home PR #124 open; plugin offer issue #3 open; #6225 fixed upstream (CPA v8.0.5); closing out
 
 - Branch `ws-0004/upstream-contrib` off `fleet` @ `70aa888` (for this brief); the upstream
   PR branch goes off **upstream `dev`**, not `fleet`. Worktree `.claude/worktrees/ws-0004-upstream-contrib`
@@ -66,6 +66,32 @@ Give back the fixes the fleet carries so we stop maintaining them alone (ws-0002
   explicitly rather than editing the shared script.
 - Criterion 4 sweep of my own open PR texts: removed "the fleet's Ark" from #123 and "the fleet's own
   nodes" from #115; #116 and #124 had none.
+
+### 2. Plugin contributions — arthur-sommer-etc/cliproxyapi-copilot-plugin#3 (opened 2026-09-30)
+
+- **Decision: one offer issue, not PRs.** Upstream is inactive: single author, last commit
+  2026-08-07 (`7f16b60`), last push 2026-09-08, and both outside PRs (#1, #2 by Goodwu, 2026-08-24)
+  have zero comments or reviews. The brief's rule for that case is one issue with links.
+- https://github.com/arthur-sommer-etc/cliproxyapi-copilot-plugin/issues/3 links three clean
+  branches on the (public) fork, each off upstream `main` `7f16b60`, neutral commit messages (no
+  ws/fleet/Home-internal wording, no version bumps):
+  - `offer/quota-402-as-429` `cdab327` = fork `01a885e` (402 → 429).
+  - `offer/claude-messages-endpoint` `ee0587c` = fork `1ffe0ac` (`/v1/messages` first for Claude).
+  - `offer/openai-chat-format` `35a45ba` = `ee0587c` + fork `132baf9`, `d8f766a`, `d43d514`
+    (native OpenAI chat format, Responses `max_output_tokens` clamp to 16, chat-stream fixes,
+    Responses string-input / Claude-JSON fixes). Conflicts were version lines only (kept
+    upstream's 0.3.3) and `dispatch_test.go`, which on the fork was created by the schema-1 commit:
+    recreated with only the OpenAI-format test.
+- Left out on purpose: `f888311` schema 1 (exists only for Home's older embedded host; comment names
+  Home), `e48c953` `copilot/` prefix (renames everyone's models; upstream already solved collisions
+  differently in `3a8246f` and open PR #1 edits the same code), `1d51c02` darwin build (duplicates
+  upstream PR #2 and carries FORK.md + fork URL); the issue only offers its `dlopen` load test.
+- Ark evidence (`golang:1.26-bookworm`, 3g exec tmpfs, dirs
+  `/mnt/user/appdata/cpa-home-build/ws-0004-plugin-<branch>`): each branch `gofmt -l` 0 files,
+  `go vet` silent, `go test -count=1 ./...` all packages ok, `-buildmode=c-shared` build OK.
+  Compare API for each link: ahead 1 / 1 / 4, behind 0; link HTTP 200.
+- Audit of the fork commits (subagent, spot-checked): no secrets in any diff; fixtures use
+  `gho_fake_test_token`.
 
 ### 3. Upstream replies (checked 2026-09-30)
 
