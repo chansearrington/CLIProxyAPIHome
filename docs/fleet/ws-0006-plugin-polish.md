@@ -1,6 +1,6 @@
 # ws-0006 — Copilot plugin polish
 
-Status: started 2026-09-30
+Status: both fixes written + tested on the Ark (commit 04c02ef); PR + review next
 
 - Repo `/Users/chansearrington/GitHub/personal/cliproxyapi-copilot-plugin` (fork, base branch
   `fleet` @ `758ada4`, release v0.3.6 live). Worktree `.claude/worktrees/ws-0006-plugin-polish`
@@ -47,3 +47,30 @@ Fix the two review SHOULDs deferred in ws-0002 and ship them fleet-wide:
 - Keep the `Status:` line below current, and commit brief updates to your branch as you go.
 - Close-out: outcome, evidence per acceptance criterion, what is live, follow-ups. Then remove your
   worktree/branch once merged, and set Status to `done`.
+
+## Record
+
+### Findings (2026-09-30)
+
+- **Fix 1 — chat-stream usage.** Chat streams to Responses-only models go Responses SSE →
+  `responsesStreamToClaude` → CPA's official Claude → chat converter, which takes its usage from
+  `message_start` + `message_delta` (CPA v7.2.118
+  `internal/translator/claude/openai/chat-completions/claude_openai_response.go:233-251`).
+  `message_start` goes out at `response.created`, before Copilot reports input tokens, and the
+  plugin's `message_delta` carried only `output_tokens`
+  (`internal/translate/claude_responses_stream.go` `finish`), so the terminal chat chunk said
+  `prompt_tokens: 0`. Also found: Responses `input_tokens` include cached tokens while Claude's
+  exclude cache reads; the non-stream path set both, so a Claude-semantics reader counted cached
+  tokens twice. Fix: one mapping `claudeUsageFromResponses` used by `message_start`,
+  `message_delta` and the non-stream answer.
+- **Fix 2 — citations.** `claudeMessageToSSE` (`internal/translate/claude_events.go`) rendered a
+  text block as start + `text_delta` only. CPA's Claude → Responses converter turns
+  `citations_delta` into `annotations` (`claude_openai-responses_response.go:817-825`), so Responses
+  clients lost them. Fix: cited blocks open with `citations: []` and stream one `citations_delta`
+  per citation ahead of the text, as Claude does.
+- Tests (failing first, on the Ark): `TestResponsesSSEToOpenAIChatStreamCarriesTerminalUsage`
+  (was `prompt_tokens 0`), `TestResponsesUsageMapsToClaudeCacheSemantics` (was input 9 + cache 4),
+  `TestClaudeJSONCitationsReachResponsesAnnotations` (no `citations_delta`). After the fix:
+  `golang:1.26-bookworm` go1.26.8, gofmt empty, vet clean, full plugin suite ok. Builds run from
+  a private Ark dir `/mnt/user/appdata/cpa-home-build/plugin-ws0006` (rsync of the worktree,
+  3 GB exec tmpfs), so the shared `src` dir is untouched.
