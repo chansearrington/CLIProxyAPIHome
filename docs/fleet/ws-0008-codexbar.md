@@ -77,3 +77,31 @@ Chanse's macOS menu bar.
 - Menu bar mode `percent`, refresh every two minutes, launch at login on, a WidgetKit extension
   running (`CodexBarWidget.appex`).
 - Xcode + Swift 6.4 are installed on the laptop; SwiftBar/xbar are not.
+
+### Home's read paths for quota and usage (code read, spot-checked 2026-10-01)
+
+- Quota: `GET /v0/management/quota/credentials` (`internal/managementhttp/server.go:221`), detail
+  `GET .../quota/credentials/:credential_id` (`:222`), force-probe `POST .../quota/collect`
+  (`:223`). Item shape = `QuotaCredentialSnapshot` / `QuotaWindow`
+  (`internal/cluster/quota_snapshots.go:129-219`): `provider`, masked `label`/`account`,
+  `quota_status`, `freshness`, `observed_at`, `primary_windows[]` (≤2 per credential; full set only
+  in the detail) with `used`/`limit`/`remaining`/`used_ratio`/`reset_at`/`unit`.
+  Units differ: Claude/Codex/Antigravity `percentage` (0-100), Copilot `requests`, xAI `currency`.
+  Codex's primary pair is the weekly window + Spark, not the 5-hour one.
+- GET is a pure database read; Home's collector (`internal/quota/collector.go:24-28`) probes every
+  minute but only credentials used in the last 30 min, and a snapshot is "fresh" for 30 min. Idle
+  accounts show `stale` with their last-known numbers. `POST /quota/collect` makes real provider
+  calls — never on a timer, only on a manual refresh.
+- Usage/tokens: `GET /usage/overview`, `/usage/aggregates?group_by=…`, `/billing/*` — all
+  Management-only. Avoid `/usage-queue` (it pops records) and `/api-key-usage` (embeds raw keys).
+- **No less-privileged path.** One management secret, all-or-nothing (it can also read client keys
+  and `config.yaml`) — treat it as root. Nodes expose no usage/quota route to API-key clients, and
+  their own management returns 404 under Home. The `/user/*` portal (username+password → 24 h JWT)
+  only shows credits/billing, not provider quota.
+- Lockout: 5 bad/missing keys from one client IP → 30-min ban (CPA SDK v7.2.83
+  `handler.go:300-397`). Home runs on a Docker bridge with the port published on the Ark's Tailscale
+  IP, and its logs record real client addresses (e.g. ws-0005's `100.88.81.10`), so a bad key from
+  the laptop bans only the laptop. A poller must stop on the first 401.
+- The secret lives on the Ark as `MANAGEMENT_PASSWORD` in `/mnt/user/appdata/cpa-home/.env`
+  (value never printed). The laptop already holds the Ark's root SSH key, which is strictly more
+  powerful, so a copy in the laptop's login Keychain does not widen who can control the fleet.
