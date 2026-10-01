@@ -23,7 +23,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0005 | Copilot on the quota page | CLIProxyAPIHome `ws-0005/copilot-quota` | `cpahome-ws-0005` | **done** — live `cpa-home:1.0.73-claude-fleet-16f609d` |
 | ws-0006 | Copilot plugin polish | cliproxyapi-copilot-plugin `ws-0006/plugin-polish` | `cpaplugin-ws-0006` | **done** — plugin v0.3.7 live on Home + 5 nodes |
 
-| ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | started |
+| ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | **done** — all five nodes on CPA 8.0.7 |
 | ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | started |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
@@ -68,9 +68,10 @@ time (see below).
 
 ## Open follow-ups from this round
 
-1. Nodes CPA 8.0.4 → 8.0.5+ for the plugin-install-loop fix (#6225). Patch bump; own workstream.
+1. ~~Nodes CPA 8.0.4 → 8.0.5+~~ — done in ws-0007 (8.0.7).
 2. Non-streamed `/v1/responses` on Copilot is recorded in Home's usage with 0 tokens (client gets the real counts) — likely the node's usage extraction for plugin Responses JSON (ws-0006).
 3. Claude Code on the minis only updates when run; consider a scheduled update (ws-0003).
 4. `gpt-6.1-sol` missing from the minis' OpenClaw pickers — WS-547's picker-drift card (ws-0003).
 5. When upstream merges #124 / #123, drop those commits from `fleet` at the next rebase (ws-0004).
 - 2026-10-01 — round 2: Chanse asked for the 8.0.5 node upgrade (follow-up 1) and a CodexBar/CPA menu-bar integration; ws-0007 and ws-0008 briefs written and launched. Same full-autonomy decision applies.
+- 2026-10-01 — ws-0007 done, verified by the orchestrator: `--version` 8.0.7 `97f244b8` on all five nodes; each mini's agent key 200 on `claude-sonnet-5-5`; MacBook key 200 'ok' on `claude-sonnet-5-5` and `copilot/gpt-5-mini`; agent-os #772 merged; worktree/branch gone; space closed. Rollback per node = `cli-proxy-api.8.0.4.bak`.
