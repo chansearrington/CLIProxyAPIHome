@@ -1,6 +1,6 @@
 # ws-0004 — Upstream contributions
 
-Status: in progress 2026-09-30 — Home PR #124 open; plugin offer issue #3 open; #6225 fixed upstream (CPA v8.0.5); closing out
+Status: done 2026-09-30 — Home PR #124 + plugin offer issue #3 open upstream (awaiting maintainers); #6225 fixed upstream in CPA v8.0.5; nothing live changed
 
 - Branch `ws-0004/upstream-contrib` off `fleet` @ `70aa888` (for this brief); the upstream
   PR branch goes off **upstream `dev`**, not `fleet`. Worktree `.claude/worktrees/ws-0004-upstream-contrib`
@@ -101,3 +101,35 @@ Give back the fixes the fleet carries so we stop maintaining them alone (ws-0002
   behind). No questions to answer. Our nodes run CPA 7.x, so the fleet only gets the fix by
   upgrading nodes to v8.0.5+ (a major-version jump) — follow-up, not done here.
 - Home PR #123: open, mergeable, no comments or reviews. #115 and #116: no comments or reviews.
+- Re-checked at close-out (2026-09-30): #115, #116, #123, #124 all open with 0 comments / 0
+  reviews; plugin issue #3 0 comments.
+
+## Close-out (2026-09-30)
+
+**Outcome.** Both fleet carry-overs are now offered upstream, and the CPA plugin-install loop we
+reported is fixed upstream. No live system was touched (criterion 5: no review asked for a change).
+
+| # | Criterion | Evidence |
+|---|---|---|
+| 1 | Home PR, clean branch off upstream `dev`, suite green, linked | router-for-me/CLIProxyAPIHome#124, branch `fix/plugin-model-discovery` = upstream `dev` `e16d6f1` + `de84951`; Ark: gofmt clean, vet only the known `refresh.go:172`, 33 pkgs ok, build OK, new tests PASS with `-count=1`. Independent of #123 (stated). Linked here and in FLEET.md. |
+| 2 | Plugin contributions | Upstream inactive → one offer issue arthur-sommer-etc/cliproxyapi-copilot-plugin#3 linking three tested branches (402→429; `/v1/messages`; OpenAI chat + Responses fixes, stacked). Fleet-only patches left out, with reasons above. |
+| 3 | #6225 and #123 replies | #6225 closed by the maintainer with fix `bfa5aed`, released in CPA v8.0.5; nothing to answer. #123: no replies. |
+| 4 | PR texts plain, no secrets/hostnames/internals | New texts scanned for fleet/Ark/Tailscale/agent-os/ws-/IPs: none. Also scrubbed fleet wording from my older PRs #123 and #115. |
+| 5 | No self-merge; live systems untouched | No upstream merges by us. Only Ark change: build-infra script below (not the live Home or nodes). |
+
+**What changed outside git.** The Ark's shared `/mnt/user/appdata/cpa-home-build/run-go.sh` now
+uses `--tmpfs /tmp:exec,size=3g` (was 1g, which FLEET.md already says is too small). Backup
+`run-go.sh.bak-20260930`; verified `df /tmp` = 3.0G and `sh -n` OK. Temp source dirs
+`ws-0004-src` and `ws-0004-plugin-*` removed after the runs; the test log
+`logs/ws0004-pr-d5ded00.log` is kept as evidence.
+
+**What is live.** Unchanged: Home `cpa-home:1.0.73-claude-fleet-95ba2db`, plugin v0.3.6.
+
+**Follow-ups (not done here).**
+- The fleet gets the #6225 fix only by moving the nodes to CPA **v8.0.5+**, a major-version jump
+  from 7.x. Worth its own workstream (check Home's SDK pin and plugin schema compatibility first).
+- When upstream merges #124 (and #123), drop `95ba2db` (and the plugin-login fix) from `fleet` at
+  the next rebase instead of carrying them.
+- If the plugin maintainer answers issue #3, open the PRs from the `offer/*` branches on the fork
+  (they must stay on the fork until then). Worth adding a link to issue #3 in the plugin fork's
+  `FORK.md` (left alone here because ws-0006 is working on that repo's `fleet`).
