@@ -238,6 +238,10 @@ date parsing verified. Fixed in `fcd2bda`:
 - Auth-pause test: fake server on `localhost:18999` answering 401 → exactly **1** request, bar
   `CPA ⚠︎`, `authPaused=1`; a relaunched instance sent **0** requests. Restored to the real Home
   afterwards (`CPA 92%`).
+- Fleet local review (`local-pr-review`, gpt-6-astra) of PR #2 at `dd3376b`: **MUST 0 · SHOULD 2**.
+  Both fixed rather than left open: a failed per-credential detail read now flags the account
+  ("some limits didn't load") and puts `?` on the bar instead of a quietly low headline (issue #3);
+  "Refresh now" shares the one-request-at-a-time guard with polling (issue #4).
 
 ## Close-out
 

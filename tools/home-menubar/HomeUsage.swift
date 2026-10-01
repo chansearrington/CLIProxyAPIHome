@@ -116,6 +116,8 @@ struct Account {
     let credential: QuotaCredential
     let windows: [QuotaWindow]
     let usage: UsageEntry?
+    /// True when Home has more windows than we could load; the headline may be understated.
+    let incomplete: Bool
 }
 
 enum FetchError: Error {
@@ -234,7 +236,8 @@ final class HomeClient {
                let detail = try await optional("/quota/credentials/" + c.credentialId, as: QuotaDetail.self) {
                 windows = detail.windows
             }
-            accounts.append(Account(credential: c, windows: windows, usage: usageByID[c.credentialId]))
+            accounts.append(Account(credential: c, windows: windows, usage: usageByID[c.credentialId],
+                                    incomplete: c.windowCount > windows.count))
         }
         return (accounts, overview?.totals)
     }
@@ -432,7 +435,9 @@ final class Controller: NSObject, NSApplicationDelegate {
             accounts = a
             totals = t
             lastSuccess = Date()
-            problem = nil
+            let missing = a.filter(\.incomplete).count
+            problem = missing == 0 ? nil
+                : "Some limits didn't load for \(missing) account(s); the bar may be too low."
         } catch FetchError.auth(let code) {
             // Never retry a rejected key on a timer: Home bans an IP after five failures.
             pause("Home rejected the key (HTTP \(code)). Paused — fix the Keychain item, then Retry.")
@@ -537,6 +542,7 @@ final class Controller: NSObject, NSApplicationDelegate {
                 notes.append(Fmt.date(c.observedAt).map { "numbers from " + Fmt.ago($0) } ?? "never measured")
             }
             if c.credentialStatus != "enabled" { notes.append("Home marks it \(c.credentialStatus)") }
+            if a.incomplete { notes.append("some limits didn't load") }
             if !notes.isEmpty { menu.addItem(line("   " + notes.joined(separator: " · "), dim: true)) }
         }
         if accounts.isEmpty && problem == nil { menu.addItem(line("Loading…", dim: true)) }
@@ -574,13 +580,19 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshNow() {
+        // Shares the poll's one-request-at-a-time guard, so repeated clicks cannot pile up
+        // requests with a rejected key before the first 401 pauses the app.
+        if paused || polling { return }
         let ids = accounts.map { $0.credential.credentialId }
+        polling = true
         Task { @MainActor in
             do { try await client.collect(credentialIDs: ids) } catch FetchError.auth(let code) {
+                polling = false
                 pause("Home rejected the key (HTTP \(code)). Paused — fix the Keychain item, then Retry.")
                 render()
                 return
             } catch {}
+            polling = false
             // Probes run in the background on Home; give them a moment before re-reading.
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             await poll()
