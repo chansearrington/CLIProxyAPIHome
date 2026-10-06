@@ -25,6 +25,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 
 | ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | **done** — all five nodes on CPA 8.0.7 |
 | ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | **done** — app removed; both Claude accounts now inside CodexBar (cookie accounts, Stacked layout) |
+| ws-0009 | Microsoft Claude account = Chanse-only backup | config only (brief `ws-0009-claude-backup-account.md`) | — | **applied** 2026-10-06 15:44Z; switch-back proof due 21:07Z |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -82,3 +83,4 @@ time (see below).
 7. First real new-plugin add is the live proof of the #6225 fix; watch Home's log for `installed but not loaded` (ws-0007).
 - 2026-10-01 — Chanse rejected Home Usage (wants multiple accounts inside CodexBar). App, LaunchAgent, Keychain key, Bartender entries and `tools/home-menubar/` removed; researching CodexBar multi-account support.
 - 2026-10-01 — CodexBar solved inside CodexBar: two Claude `sessionKey` accounts + Stacked layout; verified via the codexbar CLI and confirmed by Chanse.
+- 2026-10-06 — ws-0009: `carringt@microsoft.com` Claude moved from group 1 to group 2 ("Chanse only — Copilot + Microsoft Claude", key 6 only) with priority -1, so it serves only the MacBook and only while Hype + Gmail are exhausted. Config-only, under all four locks; agents verified fenced (Chip 429 cooldown on Claude, 200 on GPT).
