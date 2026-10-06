@@ -1,6 +1,6 @@
 # ws-0009 — Microsoft Claude account as Chanse-only backup
 
-Status: applied + proven 15:45Z (AC1–3); PAUSED for laptop restart — AC4 switch-back proof left (see "Resume")
+Status: applied + proven 15:45Z (AC1–3); Hype priority 1 added 20:07Z (sequential order); AC4 check 21:07Z, AC5 check 01:07Z
 
 ## Ask (Chanse, 2026-10-06)
 
@@ -9,6 +9,9 @@ Three Claude accounts in Home: (1) `chanse@hypesports.live`, (2) `chanse.arringt
 it to just my user"), and only while #1 and #2 are both exhausted; once either resets, traffic goes
 back to it and #3 is idle again.
 
+Follow-up ask (20:05Z): use the accounts in order instead of alternating — Hype until it hits
+a 5-hour or weekly limit, then Gmail, then Microsoft only if both are out.
+
 ## Acceptance criteria
 
 1. #3 is not in channel group 1 (fleet shared); it is in a group bound only to key 6
@@ -16,6 +19,8 @@ back to it and #3 is idle again.
 2. #3 has a lower priority than #1 and #2 (`priority: -1`; #1/#2 stay at the default 0).
 3. MacBook request succeeds on #3 while #1/#2 are exhausted.
 4. After #1's reset (2026-10-06 21:00Z), a MacBook request lands on #1, not #3.
+5. With Hype (`priority: 1`) and Gmail (0) both available, Claude traffic goes to Hype only — no
+   round-robin to Gmail — and moves to Gmail only while Hype is benched.
 
 ## Findings (fleet `a7a270d`, live image `cpa-home:1.0.73-claude-fleet-16f609d`)
 
@@ -56,6 +61,12 @@ detail, `PATCH /auth-files/fields {priority: 0}`, rename group 2 back.
 Expected side effect: while #1 and #2 are both exhausted, agent keys 1–5 have no Claude credential
 (until Hype resets 2026-10-06 21:00Z / 4:00 PM CDT). That is the requested behaviour.
 
+Step 4 (20:07Z): `PATCH /auth-files/fields` Hype `priority: 1` (before-state in the Ark's
+`/tmp/ws0009/before2-auths.json`). Rollback: same PATCH with `priority: 0`. Why it works: equal
+priorities share one bucket and the default round-robin alternates inside it; distinct
+priorities make each account its own bucket, so the highest ready one always wins and a reset
+account is promoted back on the next pick.
+
 ## Evidence
 
 - **Applied 2026-10-06 15:44:04Z** under all four fleet-locks (canonical identity, released after;
@@ -73,6 +84,10 @@ Expected side effect: while #1 and #2 are both exhausted, agent keys 1–5 have 
   cooling down` (only the exhausted #1/#2 are visible to it); same key → `gpt-5.6-sol` HTTP 200.
 - **AC2:** priority `-1` confirmed in the listing; behavioural proof is AC4.
 - **AC4 (switch-back):** pending — scheduled check at 21:07Z (Hype resets 21:00Z).
+- **Step 4 applied 20:07Z** under all four fleet-locks (released, all UNLOCKED): PATCH `ok`;
+  listing → Hype 1, Gmail unset, Microsoft -1. MacBook `claude-sonnet-5-5` HTTP 200 after it (still
+  on Microsoft, as both others are benched).
+- **AC5 (sequential):** pending — scheduled check at 01:07Z (Gmail resets 01:00Z).
 
 ## Resume after a laptop restart (paused 2026-10-06 19:44Z)
 
