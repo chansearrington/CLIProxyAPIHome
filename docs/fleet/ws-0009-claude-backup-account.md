@@ -1,6 +1,6 @@
 # ws-0009 — Microsoft Claude account as Chanse-only backup
 
-Status: applied + proven 15:45Z (AC1–3); Hype priority 1 added 20:07Z (sequential order); AC4 check 21:07Z, AC5 check 01:07Z
+Status: AC1–4 proven (switch-back at Hype's reset 21:00Z, verified 21:07Z); AC5 (sequential order) check 01:07Z
 
 ## Ask (Chanse, 2026-10-06)
 
@@ -83,11 +83,18 @@ account is promoted back on the next pick.
   `claude-sonnet-5-5` HTTP 429 `model_cooldown: All credentials for model claude-sonnet-5-5 are
   cooling down` (only the exhausted #1/#2 are visible to it); same key → `gpt-5.6-sol` HTTP 200.
 - **AC2:** priority `-1` confirmed in the listing; behavioural proof is AC4.
-- **AC4 (switch-back):** pending — scheduled check at 21:07Z (Hype resets 21:00Z).
+- **AC4 (switch-back) — PASS, 21:07Z.** Ledger (read-only SQL on the Ark): 20:30:05–20:59:58Z the
+  MacBook's Claude traffic was 606 rows on `carringt@microsoft.com`; the first Hype row is
+  21:00:04Z, 4 s after its reset, and every Claude row since (21:00:04–21:07:10Z, 205 rows incl. a
+  proof request, HTTP 200) is `chanse@hypesports.live`, 0 failed, **0 on Microsoft**. No restart or
+  config change was involved. `auth` at 21:07Z: Hype `active`, no retry time; Gmail `error`,
+  unavailable until `2026-10-07 01:00Z`; Microsoft `active` (idle).
 - **Step 4 applied 20:07Z** under all four fleet-locks (released, all UNLOCKED): PATCH `ok`;
   listing → Hype 1, Gmail unset, Microsoft -1. MacBook `claude-sonnet-5-5` HTTP 200 after it (still
   on Microsoft, as both others are benched).
-- **AC5 (sequential):** pending — scheduled check at 01:07Z (Gmail resets 01:00Z).
+- **AC5 (sequential):** pending — scheduled check at 01:07Z (Gmail resets 01:00Z). Resume: same
+  helper as below; SQL `select source, count(*) from usage where provider='claude' and timestamp >
+  '2026-10-07 01:00:30' group by 1;` Pass = only Hype (unless Hype is benched, then only Gmail).
 
 ## Resume after a laptop restart (paused 2026-10-06 19:44Z)
 
