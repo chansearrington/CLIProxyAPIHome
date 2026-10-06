@@ -25,7 +25,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 
 | ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | **done** — all five nodes on CPA 8.0.7 |
 | ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | **done** — app removed; both Claude accounts now inside CodexBar (cookie accounts, Stacked layout) |
-| ws-0009 | Microsoft Claude account = Chanse-only backup | config only (brief `ws-0009-claude-backup-account.md`) | — | **applied** 2026-10-06 15:44Z; switch-back proof due 21:07Z |
+| ws-0009 | Microsoft Claude account = Chanse-only backup | config only (brief `ws-0009-claude-backup-account.md`) | — | **applied** 2026-10-06 15:44Z; Hype priority 1 (sequential) 20:07Z; proofs due 21:07Z + 01:07Z |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
