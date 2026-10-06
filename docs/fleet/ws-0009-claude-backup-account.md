@@ -1,6 +1,6 @@
 # ws-0009 — Microsoft Claude account as Chanse-only backup
 
-Status: applied + proven 15:45Z (AC1–3); switch-back proof (AC4) due 2026-10-06 21:07Z
+Status: applied + proven 15:45Z (AC1–3); PAUSED for laptop restart — AC4 switch-back proof left (see "Resume")
 
 ## Ask (Chanse, 2026-10-06)
 
@@ -73,3 +73,20 @@ Expected side effect: while #1 and #2 are both exhausted, agent keys 1–5 have 
   cooling down` (only the exhausted #1/#2 are visible to it); same key → `gpt-5.6-sol` HTTP 200.
 - **AC2:** priority `-1` confirmed in the listing; behavioural proof is AC4.
 - **AC4 (switch-back):** pending — scheduled check at 21:07Z (Hype resets 21:00Z).
+
+## Resume after a laptop restart (paused 2026-10-06 19:44Z)
+
+The change is live on the Ark and needs nothing from the laptop; no locks are held. Only the AC4
+proof is left. The session-only check (cron) and the laptop's `/tmp/ws0009/ark` helper do not
+survive a reboot. The Ark's `/tmp/ws0009/` (mgmt.sh, before-*.json) does.
+
+1. Recreate the helper: a script `exec ssh -o IdentitiesOnly=yes -o IdentityAgent=none
+   -i ~/.ssh/cronos_ark root@100.110.133.6 "$@"` (see memory `ark-access-and-build-facts`).
+2. If it is after 21:00Z: send one MacBook request (apiKeyHelper key →
+   `http://127.0.0.1:18317/v1/messages`, `claude-sonnet-5-5`), then on the Ark run (SQL from a
+   file, read-only): `select source, count(*) from usage where
+   cpa_node_id='1e3ea42b-169e-474c-9c4e-4527c72654fe' and provider='claude' and timestamp >
+   '2026-10-06 21:00:30' group by 1;` Pass = `chanse@hypesports.live`, zero
+   `carringt@microsoft.com`. Also read `auth.next_retry_after` for the three Claude auths.
+   Before 21:00Z: schedule the same check for 21:07Z.
+3. Record the result here, flip the Status line, update the ORCHESTRATION row, commit to `fleet`.
