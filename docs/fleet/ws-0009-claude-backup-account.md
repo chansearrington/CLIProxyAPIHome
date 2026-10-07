@@ -1,6 +1,6 @@
 # ws-0009 — Microsoft Claude account as Chanse-only backup
 
-Status: AC1–4 proven (switch-back at Hype's reset 21:00Z, verified 21:07Z); AC5 (sequential order) check 01:07Z
+Status: **done** — AC1–5 proven (switch-back 2026-10-06 21:07Z, sequential order 2026-10-07 01:07Z)
 
 ## Ask (Chanse, 2026-10-06)
 
@@ -92,9 +92,13 @@ account is promoted back on the next pick.
 - **Step 4 applied 20:07Z** under all four fleet-locks (released, all UNLOCKED): PATCH `ok`;
   listing → Hype 1, Gmail unset, Microsoft -1. MacBook `claude-sonnet-5-5` HTTP 200 after it (still
   on Microsoft, as both others are benched).
-- **AC5 (sequential):** pending — scheduled check at 01:07Z (Gmail resets 01:00Z). Resume: same
-  helper as below; SQL `select source, count(*) from usage where provider='claude' and timestamp >
-  '2026-10-07 01:00:30' group by 1;` Pass = only Hype (unless Hype is benched, then only Gmail).
+- **AC5 (sequential) — PASS, 2026-10-07 01:07Z.** Gmail's retry time (`01:00Z`) had passed, so
+  Hype (1) and Gmail (0) were both eligible. Three MacBook requests HTTP 200; every Claude row since
+  01:00:30Z (6, 01:01:53–01:07:16Z, all MacBook, 0 failed) is `chanse@hypesports.live` — none on
+  Gmail, none on Microsoft. Under the old equal-priority round-robin about half would have gone to
+  Gmail. Note: Gmail's DB row still reads `error`/unavailable with the past retry time; the
+  scheduler re-admits it in memory, and the DB row only refreshes once Gmail serves a request
+  (i.e. the next time Hype is benched). Cosmetic, not a routing problem.
 
 ## Resume after a laptop restart (paused 2026-10-06 19:44Z)
 
