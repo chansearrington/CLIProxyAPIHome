@@ -624,7 +624,7 @@ type usageObservabilityHealthNextRetryRow struct {
 }
 
 func (r *Repository) ListUsageObservabilityRecords(ctx context.Context, query UsageObservabilityRecordQuery) (UsageObservabilityRecordListResult, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityRecordListResult{}, errDB
 	}
@@ -658,7 +658,7 @@ func (r *Repository) ListUsageObservabilityRecords(ctx context.Context, query Us
 }
 
 func (r *Repository) GetUsageObservabilityRecord(ctx context.Context, id string) (*UsageObservabilityRecord, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -683,7 +683,7 @@ func (r *Repository) GetUsageObservabilityRecord(ctx context.Context, id string)
 }
 
 func (r *Repository) UsageObservabilityFilterOptions(ctx context.Context, query UsageObservabilityRecordQuery) (UsageObservabilityFilterOptions, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityFilterOptions{}, errDB
 	}
@@ -712,7 +712,7 @@ func (r *Repository) UsageObservabilityFilterOptions(ctx context.Context, query 
 }
 
 func (r *Repository) GetUsageObservabilityPayloadSummary(ctx context.Context, id string) (*UsageObservabilityPayloadSummary, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -734,7 +734,7 @@ func (r *Repository) GetUsageObservabilityPayloadSummary(ctx context.Context, id
 }
 
 func (r *Repository) ListUsageObservabilityAggregates(ctx context.Context, query UsageObservabilityAggregateQuery) (UsageObservabilityAggregateResult, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityAggregateResult{}, errDB
 	}
@@ -801,7 +801,7 @@ func (r *Repository) ListUsageObservabilityAggregates(ctx context.Context, query
 }
 
 func (r *Repository) UsageObservabilityOverview(ctx context.Context, query UsageObservabilityOverviewQuery) (UsageObservabilityOverview, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityOverview{}, errDB
 	}
@@ -856,7 +856,7 @@ func (r *Repository) UsageObservabilityOverview(ctx context.Context, query Usage
 }
 
 func (r *Repository) UsageObservabilityRealtime(ctx context.Context, query UsageObservabilityRealtimeQuery) (UsageObservabilityRealtimeSnapshot, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityRealtimeSnapshot{}, errDB
 	}
@@ -886,7 +886,7 @@ func (r *Repository) UsageObservabilityRealtime(ctx context.Context, query Usage
 }
 
 func (r *Repository) UsageObservabilityHealthDetails(ctx context.Context, query UsageObservabilityRecordQuery, subject string) (map[string]UsageObservabilityHealthDetail, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -4083,7 +4083,7 @@ func (r *Repository) GetSessionTree(ctx context.Context, identifier string) (*Se
 	if identifier == "" {
 		return nil, errors.New("session identifier is required")
 	}
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}

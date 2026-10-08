@@ -22,6 +22,7 @@ import (
 
 type Repository struct {
 	db                 *gorm.DB
+	observabilityDB    *gorm.DB
 	cpaSnapshotMu      sync.Mutex
 	sessionRootCacheMu sync.RWMutex
 	sessionRootCache   map[string]string
