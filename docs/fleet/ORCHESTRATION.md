@@ -28,6 +28,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0009 | Microsoft Claude account = Chanse-only backup | config only (brief `ws-0009-claude-backup-account.md`) | — | **applied** 2026-10-06 15:44Z; Hype priority 1 (sequential) 20:07Z; **done** — switch-back proven 21:07Z, sequential order proven 01:07Z |
 | ws-0010 | Claude OAuth recovery and Codex routing | fleet documentation | — | **done** — independent Home OAuth restored; Codex default CPA and daemon warning fixed |
 | ws-0011 | Home 1.1.0 and CPA 8.0.20 fleet upgrade | `ws-0011/upstream-fleet-upgrade` | — | **deployed and verified** — Home 1.1.0 fork + all five CPA 8.0.20 nodes; native routing and protected scopes pass |
+| ws-0012 | Home access tokens into CodexBar Claude accounts | `fix/codexbar-claude-access-sync` | — | **installed and verified** — Hype/Gmail OAuth in CodexBar, access-token-only sync every 120 seconds |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
