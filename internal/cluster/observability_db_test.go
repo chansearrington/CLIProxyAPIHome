@@ -72,7 +72,7 @@ func TestObservabilityReadDBDoesNotBlockLivenessOrConfigWrite(t *testing.T) {
 	if errHeartbeat := repo.RefreshCPALiveness(guardCtx, ConnectionLifetime{
 		Fingerprint: member.CertificateFingerprint,
 		ConnectedAt: member.ConnectedAt,
-		Home: home,
+		Home:        home,
 	}); errHeartbeat != nil {
 		t.Fatalf("heartbeat blocked by dashboard read: %v", errHeartbeat)
 	}
