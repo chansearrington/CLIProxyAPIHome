@@ -1,0 +1,15 @@
+{
+  "ssh_host": "home-server",
+  "env_file": "/mnt/user/appdata/cpa-home/.env",
+  "management_url": "http://100.0.0.1:8327/v8/management",
+  "codexbar_config": "/Users/example/.config/codexbar/config.json",
+  "state_dir": "/Users/example/.local/state/cpa-codexbar-sync",
+  "accounts": [
+    {
+      "label": "Example",
+      "home_id": "home-credential-uuid",
+      "email": "user@example.com",
+      "codexbar_id": "codexbar-account-uuid"
+    }
+  ]
+}
