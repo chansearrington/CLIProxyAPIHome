@@ -109,8 +109,12 @@ func TestPluginAuthIdentityAtomicOAuthCompletion(t *testing.T) {
 				}
 				return
 			}
-			if len(stored) != 1 || stored[0].ID != auth.ID || stored[0].FileName != "copilot-octo-user.json" {
-				t.Fatalf("stored plugin identities = %#v, want normalized UUID and preserved file name", stored)
+			if len(stored) != 1 {
+				t.Fatalf("stored plugin credentials = %d, want one", len(stored))
+			}
+			if stored[0].ID != auth.ID || stored[0].Index != auth.ID || stored[0].Provider != "copilot" || stored[0].Status != coreauth.StatusActive {
+				t.Fatalf("stored plugin identity = %q/%q provider = %q status = %q, want normalized UUID and active Copilot credential",
+					stored[0].ID, stored[0].Index, stored[0].Provider, stored[0].Status)
 			}
 			completed, errGet := repo.GetOAuthSession(ctx, session.State)
 			if errGet != nil {
