@@ -186,3 +186,9 @@ Integration, rollback rehearsal, canary and final deployment evidence follows. T
 - Post-verification cleanup removed disposable database copies and credential-bearing rehearsal
   exports; retained the verified production backup and secret-free fingerprints. All four fleet
   locks were independently confirmed **UNLOCKED** after orderly renewal shutdown.
+
+- Enrollment pins updated through [agent-os PR #779](https://github.com/chansearrington/agent-os/pull/779),
+  merged as `1d44948d703ebd9ec572caa9d9e09c8f850aa4e3` after Hyper's verified upgrade.
+  Final head `0a8bc7df` passed full local CI, GitHub Node/Python checks and exact-head local
+  review (MUST 0 / SHOULD 0 / NICE 0). Future enrollment now pins the same verified 8.0.20
+  executable. The clean local agent-os main checkout was fast-forwarded to this merge.
