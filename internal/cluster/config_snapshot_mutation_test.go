@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 func TestMutateConfigSnapshotConcurrentRepositories(t *testing.T) {
@@ -157,5 +160,73 @@ func TestOAuthConfigUpsertsPreserveConcurrentScopes(t *testing.T) {
 	if !cfg.Codex.DisableCodexCloaking || !cfg.XAI.InjectXSearch ||
 		!reflect.DeepEqual(cfg.Antigravity.SensitiveWords, []string{"new"}) || !reflect.DeepEqual(cfg.Devin.SensitiveWords, []string{"new"}) {
 		t.Fatal("a concurrent edit replaced another provider's OAuth settings")
+	}
+}
+
+func TestConfigUpsertReservesSQLiteWriterBeforeReading(t *testing.T) {
+	repo := newCredentialFoundationTestRepository(t)
+	ctx, cancelCtx := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelCtx()
+	if errSeed := repo.ReplaceConfigSnapshot(ctx, map[string]any{"debug": false}); errSeed != nil {
+		t.Fatal(errSeed)
+	}
+	var database struct{ File string }
+	if errFile := repo.db.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&database).Error; errFile != nil {
+		t.Fatal(errFile)
+	}
+	otherDB, errOpen := OpenSQLite(ctx, database.File)
+	if errOpen != nil {
+		t.Fatal(errOpen)
+	}
+	otherSQLDB, errDB := otherDB.DB()
+	if errDB != nil {
+		t.Fatal(errDB)
+	}
+	t.Cleanup(func() {
+		if errClose := otherSQLDB.Close(); errClose != nil {
+			t.Error(errClose)
+		}
+	})
+	// The competing write must return immediately while the upsert is paused.
+	if errTimeout := otherDB.Exec("PRAGMA busy_timeout=0").Error; errTimeout != nil {
+		t.Fatal(errTimeout)
+	}
+	readStarted := make(chan struct{})
+	resumeWriter := make(chan struct{})
+	var resumeOnce sync.Once
+	resume := func() { resumeOnce.Do(func() { close(resumeWriter) }) }
+	defer resume()
+	if errCallback := repo.db.Callback().Query().After("gorm:query").Register("test:pause_config_upsert_read", func(tx *gorm.DB) {
+		record, ok := tx.Statement.Dest.(*ConfigRecord)
+		if !ok || record.Key != "debug" {
+			return
+		}
+		close(readStarted)
+		select {
+		case <-resumeWriter:
+		case <-ctx.Done():
+		}
+	}); errCallback != nil {
+		t.Fatal(errCallback)
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- repo.UpsertConfigValue(ctx, "debug", true)
+	}()
+	select {
+	case <-readStarted:
+	case <-ctx.Done():
+		t.Fatal("upsert did not reach the config read")
+	}
+	errCompetingWrite := otherDB.Exec("UPDATE config SET version = version + 1 WHERE key = ?", "debug").Error
+	resume()
+	if errUpsert := <-result; errUpsert != nil {
+		t.Errorf("upsert failed after reserving its writer: %v", errUpsert)
+	}
+	if errCompetingWrite == nil || !strings.Contains(errCompetingWrite.Error(), "SQLITE_BUSY") {
+		t.Fatalf("competing write returned %v, want SQLITE_BUSY while the config read is paused", errCompetingWrite)
+	}
+	if errAfterCommit := otherDB.Exec("UPDATE config SET version = version + 1 WHERE key = ?", "debug").Error; errAfterCommit != nil {
+		t.Fatalf("writer reservation was not released after commit: %v", errAfterCommit)
 	}
 }
