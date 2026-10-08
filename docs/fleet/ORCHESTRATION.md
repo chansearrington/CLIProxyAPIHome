@@ -27,7 +27,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | **done** — app removed; both Claude accounts now inside CodexBar (cookie accounts, Stacked layout) |
 | ws-0009 | Microsoft Claude account = Chanse-only backup | config only (brief `ws-0009-claude-backup-account.md`) | — | **applied** 2026-10-06 15:44Z; Hype priority 1 (sequential) 20:07Z; **done** — switch-back proven 21:07Z, sequential order proven 01:07Z |
 | ws-0010 | Claude OAuth recovery and Codex routing | fleet documentation | — | **done** — independent Home OAuth restored; Codex default CPA and daemon warning fixed |
-| ws-0011 | Home 1.1.0 and CPA 8.0.20 fleet upgrade | `ws-0011/upstream-fleet-upgrade` | — | **in progress** — Chanse authorized testing and fleet deployment on 2026-10-08 UTC |
+| ws-0011 | Home 1.1.0 and CPA 8.0.20 fleet upgrade | `ws-0011/upstream-fleet-upgrade` | — | **deployed and verified** — Home 1.1.0 fork + all five CPA 8.0.20 nodes; native routing and protected scopes pass |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -124,3 +124,14 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
 - Follow-up: add the index or an equivalent efficient existence query to the application
   migration path for fresh databases. The earlier orphaned-socket liveness issue also remains
   a separate code-hardening opportunity.
+
+- 2026-10-08 — ws-0011 deployed and verified at 04:45:45Z: Home fork image
+  `cpa-home:1.1.0-claude-fleet-9821c83`, all five CPA nodes 8.0.20 `0f96f568`.
+  Reviewed source PRs #6/#10, full Ark Go suite/CGO build, exact 52-table offline migration and
+  old-image rollback rehearsal, 64 preserved panel assets, all-six-key provider/usage proof,
+  Copilot channel fences and five healthy plugin reports. Fresh native Codex shell-tool session
+  uses CPA without daemon warning; native Claude Code selects Gmail. Four concurrent 24-hour
+  dashboard panels pass while all nodes remain healthy. Seven-day overview timeout also
+  reproduced on the old build and remains documented. See
+  [upgrade record](ws-0011-upstream-fleet-upgrade.md) and
+  [plain-language HTML guide](ws-0011-updates.artifact.html).
