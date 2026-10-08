@@ -57,7 +57,8 @@ func OpenObservabilityReadDB(ctx context.Context, writer *gorm.DB, configuredSlo
 	if filepath.VolumeName(path) != "" && !strings.HasPrefix(uriPath, "/") {
 		uriPath = "/" + uriPath
 	}
-	uri := url.URL{Scheme: "file", Path: uriPath, RawQuery: "mode=ro"}
+	query := url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(30000)"}}
+	uri := url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}
 	reader, errOpen := gorm.Open(sqlite.Open(uri.String()), databaseGORMConfig(threshold))
 	if errOpen != nil {
 		return nil, fmt.Errorf("open SQLite observability reader: %w", errOpen)
@@ -66,14 +67,11 @@ func OpenObservabilityReadDB(ctx context.Context, writer *gorm.DB, configuredSlo
 	if errDB != nil {
 		return nil, errDB
 	}
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	if errPragma := reader.WithContext(ctx).Exec("PRAGMA busy_timeout=30000").Error; errPragma != nil {
-		if errClose := sqlDB.Close(); errClose != nil {
-			return nil, fmt.Errorf("configure SQLite observability reader: %w; close pool: %v", errPragma, errClose)
-		}
-		return nil, fmt.Errorf("configure SQLite observability reader: %w", errPragma)
-	}
+	// Allow independent dashboard panels to aggregate concurrently instead of
+	// queueing behind every other panel query. Bound reader concurrency without
+	// changing SQLite's single writer connection.
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
 	if errPing := sqlDB.PingContext(ctx); errPing != nil {
 		if errClose := sqlDB.Close(); errClose != nil {
 			return nil, fmt.Errorf("ping SQLite observability reader: %w; close pool: %v", errPing, errClose)
