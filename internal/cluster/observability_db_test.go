@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,20 @@ import (
 )
 
 func TestObservabilityReadDBDoesNotBlockLivenessOrConfigWrite(t *testing.T) {
+	testObservabilityReadDBWithConcurrentDashboards(t, 1)
+}
+
+func TestObservabilityReadDBConcurrentDashboardsKeepLivenessFree(t *testing.T) {
+	t.Run("two panels", func(t *testing.T) {
+		testObservabilityReadDBWithConcurrentDashboards(t, 2)
+	})
+	t.Run("four panels", func(t *testing.T) {
+		testObservabilityReadDBWithConcurrentDashboards(t, 4)
+	})
+}
+
+func testObservabilityReadDBWithConcurrentDashboards(t *testing.T, dashboardCount int) {
+	t.Helper()
 	ctx := context.Background()
 	repo, home, member := newQuiescenceMembership(t, ctx, "observability-reader")
 	reader, errReader := OpenObservabilityReadDB(ctx, repo.db)
@@ -36,38 +51,45 @@ func TestObservabilityReadDBDoesNotBlockLivenessOrConfigWrite(t *testing.T) {
 
 	// Pause the real dashboard query after it has acquired the reader connection.
 	// Channels, rather than a long query or sleeps, make the contention deterministic.
-	readStarted := make(chan struct{})
+	readStarted := make(chan struct{}, dashboardCount)
 	releaseRead := make(chan struct{})
-	var once sync.Once
+	var startedCount atomic.Int32
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseRead) }) }
 	t.Cleanup(release)
 	if errCallback := reader.Callback().Row().After("gorm:row").Register("test:hold_observability_read", func(tx *gorm.DB) {
-		once.Do(func() {
-			close(readStarted)
+		if int(startedCount.Add(1)) <= dashboardCount {
+			readStarted <- struct{}{}
 			<-releaseRead
-		})
+		}
 	}); errCallback != nil {
 		t.Fatal(errCallback)
 	}
-	readDone := make(chan error, 1)
+	readDone := make(chan error, dashboardCount)
 	readCtx, cancelRead := context.WithCancel(ctx)
 	defer cancelRead()
-	go func() {
-		_, errOverview := repo.UsageObservabilityOverview(readCtx, UsageObservabilityOverviewQuery{Interval: "day"})
-		readDone <- errOverview
-	}()
+	for range dashboardCount {
+		go func() {
+			_, errOverview := repo.UsageObservabilityOverview(readCtx, UsageObservabilityOverviewQuery{Interval: "day"})
+			readDone <- errOverview
+		}()
+	}
 	guardCtx, cancelGuard := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelGuard()
-	select {
-	case <-readStarted:
-	case errRead := <-readDone:
-		t.Fatalf("dashboard exited before holding reader: %v", errRead)
-	case <-guardCtx.Done():
-		t.Fatal("dashboard did not acquire observability connection")
+	for range dashboardCount {
+		select {
+		case <-readStarted:
+		case errRead := <-readDone:
+			t.Fatalf("dashboard exited before holding reader: %v", errRead)
+		case <-guardCtx.Done():
+			t.Fatal("concurrent dashboards did not acquire separate observability connections")
+		}
 	}
-	if inUse := sqlReader.Stats().InUse; inUse != 1 {
-		t.Fatalf("reader connections in use = %d, want 1", inUse)
+	if inUse := sqlReader.Stats().InUse; inUse != dashboardCount {
+		t.Fatalf("reader connections in use = %d, want %d", inUse, dashboardCount)
+	}
+	if maximum := sqlReader.Stats().MaxOpenConnections; maximum != 4 {
+		t.Fatalf("maximum reader connections = %d, want bounded pool of 4", maximum)
 	}
 	if errHeartbeat := repo.RefreshCPALiveness(guardCtx, ConnectionLifetime{
 		Fingerprint: member.CertificateFingerprint,
@@ -80,13 +102,15 @@ func TestObservabilityReadDBDoesNotBlockLivenessOrConfigWrite(t *testing.T) {
 		t.Fatalf("config write blocked by dashboard read: %v", errWrite)
 	}
 	release()
-	select {
-	case errRead := <-readDone:
-		if errRead != nil {
-			t.Fatalf("dashboard query: %v", errRead)
+	for range dashboardCount {
+		select {
+		case errRead := <-readDone:
+			if errRead != nil {
+				t.Fatalf("dashboard query: %v", errRead)
+			}
+		case <-guardCtx.Done():
+			t.Fatal("dashboard did not complete after release")
 		}
-	case <-guardCtx.Done():
-		t.Fatal("dashboard did not complete after release")
 	}
 	if errMutation := reader.Exec("UPDATE config SET version = version + 1").Error; errMutation == nil {
 		t.Fatal("observability connection unexpectedly accepted a write")
@@ -183,6 +207,13 @@ func TestObservabilityReadDBEscapedFilename(t *testing.T) {
 	// Closing the idle connection forces the next operation to open a new one;
 	// read-only enforcement must live in the URI rather than a one-time PRAGMA.
 	sqlReader.SetMaxIdleConns(0)
+	var busyTimeout int
+	if errTimeout := reader.Raw("PRAGMA busy_timeout").Scan(&busyTimeout).Error; errTimeout != nil {
+		t.Fatal(errTimeout)
+	}
+	if busyTimeout != 30000 {
+		t.Fatalf("replacement reader busy timeout = %d, want 30000", busyTimeout)
+	}
 	if errWrite := reader.Exec("UPDATE reader_fixture SET value = ?", "changed").Error; errWrite == nil {
 		t.Fatal("replacement reader connection unexpectedly accepted a write")
 	}
