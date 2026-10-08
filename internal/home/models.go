@@ -9,6 +9,7 @@ import (
 
 	coreauth "github.com/router-for-me/CLIProxyAPIHome/internal/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/config"
+	"github.com/router-for-me/CLIProxyAPIHome/internal/modelconfig"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/registry"
 )
 
@@ -155,15 +156,16 @@ func dispatchModelInfoForAuth(authID, upstreamModel, routeModel string) *Dispatc
 		modelID = coreauth.CanonicalModelID(selected.ID)
 	}
 	return &DispatchModelInfo{
-		ID:                  modelID,
-		Type:                selected.Type,
-		InputTokenLimit:     selected.InputTokenLimit,
-		OutputTokenLimit:    selected.OutputTokenLimit,
-		ContextLength:       selected.ContextLength,
-		MaxCompletionTokens: selected.MaxCompletionTokens,
-		Thinking:            selected.Thinking,
-		NativeCapabilities:  selected.NativeCapabilities,
-		UserDefined:         selected.UserDefined,
+		ID:                         modelID,
+		Type:                       selected.Type,
+		InputTokenLimit:            selected.InputTokenLimit,
+		OutputTokenLimit:           selected.OutputTokenLimit,
+		ContextLength:              selected.ContextLength,
+		MaxCompletionTokens:        selected.MaxCompletionTokens,
+		Thinking:                   selected.Thinking,
+		NativeCapabilities:         selected.NativeCapabilities,
+		SupportConfigurationUpdate: selected.SupportConfigurationUpdate,
+		UserDefined:                selected.UserDefined,
 	}
 }
 
@@ -289,18 +291,25 @@ func (r *Runtime) registerModelsForAuth(a *coreauth.Auth) {
 		default:
 			models = registry.GetCodexProModels()
 		}
-		if len(configModels) > 0 {
+		configuredModels := len(configModels) > 0
+		if configuredModels {
 			models = configModels
 		} else if entry := r.resolveConfigCodexKey(cfg, a); entry != nil {
 			if len(entry.Models) > 0 {
 				models = buildCodexConfigModels(entry)
+				configuredModels = true
 			}
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
 			}
 		}
+		if authKind == "apikey" && !configuredModels {
+			for _, model := range models {
+				model.SupportConfigurationUpdate = false
+			}
+		}
 		models = applyExcludedModels(models, excluded)
-	case "kimi":
+	case "kimi", "kimi-ai":
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)
 	case "xai":
@@ -403,11 +412,11 @@ func (r *Runtime) registerModelsForAuth(a *coreauth.Auth) {
 						if modelID == "" {
 							modelID = m.Name
 						}
-						thinking := m.Thinking
-						if thinking == nil {
+						thinking := modelconfig.NormalizeThinkingSupport(m.Thinking)
+						if thinking == nil && !m.Image {
 							thinking = &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}}
 						}
-						ms = append(ms, &ModelInfo{
+						info := &ModelInfo{
 							ID:          modelID,
 							Object:      "model",
 							Created:     time.Now().Unix(),
@@ -416,7 +425,20 @@ func (r *Runtime) registerModelsForAuth(a *coreauth.Auth) {
 							DisplayName: modelID,
 							UserDefined: false,
 							Thinking:    thinking,
-						})
+						}
+						modelconfig.ApplyConfiguredCapabilities(info, m)
+						info.ConfigDisplayName = strings.TrimSpace(m.DisplayName)
+						if info.ConfigDisplayName != "" {
+							info.DisplayName = info.ConfigDisplayName
+						}
+						info.ForceMapping = m.ForceMapping
+						info.Name = strings.TrimSpace(m.Name)
+						info.SupportedInputModalities = append([]string(nil), m.InputModalities...)
+						info.SupportedOutputModalities = append([]string(nil), m.OutputModalities...)
+						if m.Image {
+							info.Type = "openai-image"
+						}
+						ms = append(ms, info)
 					}
 					if len(ms) > 0 {
 						if providerKey == "" {
@@ -841,6 +863,7 @@ func buildConfigModels[T modelEntry](models []T, ownedBy, modelType string) []*M
 				info.Thinking = upstream.Thinking
 			}
 		}
+		modelconfig.ApplyConfiguredCapabilities(info, model)
 		out = append(out, info)
 	}
 	return out
@@ -891,7 +914,20 @@ func buildCodexConfigModels(entry *config.CodexKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return registry.WithCodexBuiltins(buildConfigModels(entry.Models, "openai", "openai"))
+	models := buildConfigModels(entry.Models, "openai", "openai")
+	for i := range entry.Models {
+		alias := strings.TrimSpace(entry.Models[i].Alias)
+		if alias == "" {
+			alias = strings.TrimSpace(entry.Models[i].Name)
+		}
+		for _, model := range models {
+			if strings.EqualFold(model.ID, alias) {
+				model.SupportConfigurationUpdate = entry.Models[i].SupportConfigurationUpdate
+				break
+			}
+		}
+	}
+	return registry.WithCodexBuiltins(models)
 }
 
 // rewriteModelInfoName rewrites a model info name.
@@ -938,8 +974,9 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 	}
 
 	type aliasEntry struct {
-		alias string
-		fork  bool
+		alias       string
+		displayName string
+		fork        bool
 	}
 
 	forward := make(map[string][]aliasEntry, len(aliases))
@@ -953,7 +990,11 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			continue
 		}
 		key := strings.ToLower(name)
-		forward[key] = append(forward[key], aliasEntry{alias: alias, fork: aliases[i].Fork})
+		forward[key] = append(forward[key], aliasEntry{
+			alias:       alias,
+			displayName: strings.TrimSpace(aliases[i].DisplayName),
+			fork:        aliases[i].Fork,
+		})
 	}
 	if len(forward) == 0 {
 		return models
@@ -1010,6 +1051,9 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			seen[aliasKey] = struct{}{}
 			clone := *model
 			clone.ID = mappedID
+			if entry.displayName != "" {
+				clone.DisplayName = entry.displayName
+			}
 			if clone.Name != "" {
 				clone.Name = rewriteModelInfoName(clone.Name, id, mappedID)
 			}

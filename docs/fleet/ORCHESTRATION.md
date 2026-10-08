@@ -26,6 +26,8 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0007 | CPA nodes 8.0.4 → 8.0.5+ | CLIProxyAPIHome `ws-0007/cpa-node-upgrade` | `cpahome-ws-0007` | **done** — all five nodes on CPA 8.0.7 |
 | ws-0008 | CodexBar ↔ CPA menu bar usage | CLIProxyAPIHome `ws-0008/codexbar` | `cpahome-ws-0008` | **done** — app removed; both Claude accounts now inside CodexBar (cookie accounts, Stacked layout) |
 | ws-0009 | Microsoft Claude account = Chanse-only backup | config only (brief `ws-0009-claude-backup-account.md`) | — | **applied** 2026-10-06 15:44Z; Hype priority 1 (sequential) 20:07Z; **done** — switch-back proven 21:07Z, sequential order proven 01:07Z |
+| ws-0010 | Claude OAuth recovery and Codex routing | fleet documentation | — | **done** — independent Home OAuth restored; Codex default CPA and daemon warning fixed |
+| ws-0011 | Home 1.1.0 and CPA 8.0.20 fleet upgrade | `ws-0011/upstream-fleet-upgrade` | — | **in progress** — Chanse authorized testing and fleet deployment on 2026-10-08 UTC |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -86,3 +88,39 @@ time (see below).
 - 2026-10-06 — ws-0009: `carringt@microsoft.com` Claude moved from group 1 to group 2 ("Chanse only — Copilot + Microsoft Claude", key 6 only) with priority -1, so it serves only the MacBook and only while Hype + Gmail are exhausted. Config-only, under all four locks; agents verified fenced (Chip 429 cooldown on Claude, 200 on GPT).
 - 2026-10-06 — ws-0009 AC4 proven: at Hype's 21:00Z reset the MacBook moved off the Microsoft account within 4 s (606 Microsoft rows 20:30–21:00Z, then 205 Hype rows, 0 Microsoft, 0 failed). Hype set to priority 1 at 20:07Z so accounts are used in order; that proof waits for Gmail's 01:00Z reset.
 - 2026-10-07 — ws-0009 done: after Gmail's 01:00Z reset all MacBook Claude traffic stayed on Hype (6/6 rows, none on Gmail or Microsoft), so the order Hype → Gmail → Microsoft holds.
+
+## 2026-10-07 — Claude Code 503 incident follow-up
+
+Status: mitigated and verified at 02:19Z — index applied, all six active API keys passed
+streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenance cycles.
+
+- Earlier remote incident: an orphaned MacBook subscription socket retained an active Home
+  membership and rejected replacement subscriptions with `CPA certificate is already owned
+  by an active membership`. Clearing that exact stale socket restored service at 00:32:38Z.
+- At-home recheck: Sonnet and Opus streaming requests passed, but a fresh outage occurred at
+  02:09:59Z and recovered at 02:10:03Z. All five memberships reconnected together. Home logged
+  a 4.29 s usage-accounting maintenance scan and delayed heartbeat SQL at that same time;
+  its lifecycle heartbeat timeout is 3 s. This is an additional failure cause, not evidence
+  that the earlier orphaned socket returned.
+- `firstPendingUsageTokenAccountingRecord` in `internal/cluster/token_accounting_backfill.go`
+  orders pending records by ID. SQLite chose `SCAN usage` despite the version index. The
+  maintenance loop in `cmd/home/main.go` repeats this check every minute even after migration
+  is complete, holding Home's sole SQLite connection (`internal/cluster/db.go`). A read-only
+  reproduction took 3.06 s; all 150,354 rows were already version 2.
+- Under all four canonical fleet-locks, created a `VACUUM INTO` backup with nohup, verified its
+  full integrity and SHA-256, then added `idx_usage_pending_token_accounting_v2` at 02:15:26Z.
+  Backup, SQL and rollback are recorded in `FLEET.md`. Before/after query results were both
+  empty; the plan changed to the new partial index and latency fell from 3.18 s to 0.027 ms
+  (first execution). Creation took 1.58 s. A synthetic legacy-row check passed before applying.
+- At 02:15:49–53Z, every active API key (IDs 1–6) completed a streaming
+  `claude-sonnet-5-5` request through the MacBook node with HTTP 200 and reply `ok`. No secrets
+  were printed or saved in the repository. All locks were released. Home remains on
+  `cpa-home:1.0.73-claude-fleet-16f609d`, with its original container start time and zero restarts.
+- Monitoring from 02:15:59Z to 02:19:03Z: 61/61 authenticated catalog probes returned HTTP 200,
+  maximum response time 55.38 ms. Home had no further slow-query, heartbeat-liveness or
+  fingerprint-fencing warnings across the subsequent minute maintenance cycles; all five
+  membership lifetimes remained stable. A post-index Opus streaming proof also returned 200
+  and completed with `ok`.
+- Follow-up: add the index or an equivalent efficient existence query to the application
+  migration path for fresh databases. The earlier orphaned-socket liveness issue also remains
+  a separate code-hardening opportunity.

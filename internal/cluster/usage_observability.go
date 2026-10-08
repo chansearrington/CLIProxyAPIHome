@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
 
@@ -623,7 +624,7 @@ type usageObservabilityHealthNextRetryRow struct {
 }
 
 func (r *Repository) ListUsageObservabilityRecords(ctx context.Context, query UsageObservabilityRecordQuery) (UsageObservabilityRecordListResult, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityRecordListResult{}, errDB
 	}
@@ -657,7 +658,7 @@ func (r *Repository) ListUsageObservabilityRecords(ctx context.Context, query Us
 }
 
 func (r *Repository) GetUsageObservabilityRecord(ctx context.Context, id string) (*UsageObservabilityRecord, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -682,7 +683,7 @@ func (r *Repository) GetUsageObservabilityRecord(ctx context.Context, id string)
 }
 
 func (r *Repository) UsageObservabilityFilterOptions(ctx context.Context, query UsageObservabilityRecordQuery) (UsageObservabilityFilterOptions, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityFilterOptions{}, errDB
 	}
@@ -711,7 +712,7 @@ func (r *Repository) UsageObservabilityFilterOptions(ctx context.Context, query 
 }
 
 func (r *Repository) GetUsageObservabilityPayloadSummary(ctx context.Context, id string) (*UsageObservabilityPayloadSummary, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -733,7 +734,7 @@ func (r *Repository) GetUsageObservabilityPayloadSummary(ctx context.Context, id
 }
 
 func (r *Repository) ListUsageObservabilityAggregates(ctx context.Context, query UsageObservabilityAggregateQuery) (UsageObservabilityAggregateResult, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityAggregateResult{}, errDB
 	}
@@ -800,7 +801,7 @@ func (r *Repository) ListUsageObservabilityAggregates(ctx context.Context, query
 }
 
 func (r *Repository) UsageObservabilityOverview(ctx context.Context, query UsageObservabilityOverviewQuery) (UsageObservabilityOverview, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityOverview{}, errDB
 	}
@@ -855,7 +856,7 @@ func (r *Repository) UsageObservabilityOverview(ctx context.Context, query Usage
 }
 
 func (r *Repository) UsageObservabilityRealtime(ctx context.Context, query UsageObservabilityRealtimeQuery) (UsageObservabilityRealtimeSnapshot, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return UsageObservabilityRealtimeSnapshot{}, errDB
 	}
@@ -885,7 +886,7 @@ func (r *Repository) UsageObservabilityRealtime(ctx context.Context, query Usage
 }
 
 func (r *Repository) UsageObservabilityHealthDetails(ctx context.Context, query UsageObservabilityRecordQuery, subject string) (map[string]UsageObservabilityHealthDetail, error) {
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -2333,7 +2334,12 @@ func usageObservabilityApplyRecordFilters(scope *gorm.DB, query UsageObservabili
 	scope = usageObservabilityStatusScope(scope, query.Status)
 	scope = usageObservabilityStatusCodeScope(scope, query.StatusCode)
 	if requestID := strings.TrimSpace(query.RequestID); requestID != "" {
-		scope = scope.Where(`"usage"."request_id" = ?`, requestID)
+		if len(requestID) == 8 {
+			pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(requestID)
+			scope = scope.Where(`"usage"."request_id" LIKE ? ESCAPE '!'`, pattern)
+		} else {
+			scope = scope.Where(`"usage"."request_id" = ?`, requestID)
+		}
 	}
 	// Legacy compatibility: match against both raw identifiers and canonical UUIDv8 projections.
 	// TODO(session-cleanup): Revert to strict single-key matching once legacy raw session rows are phased out.
@@ -2456,7 +2462,12 @@ func usageObservabilityApplyUsageFilters(scope *gorm.DB, query UsageObservabilit
 	scope = usageObservabilityStatusScope(scope, query.Status)
 	scope = usageObservabilityStatusCodeScope(scope, query.StatusCode)
 	if requestID := strings.TrimSpace(query.RequestID); requestID != "" {
-		scope = scope.Where(`"usage"."request_id" = ?`, requestID)
+		if len(requestID) == 8 {
+			pattern := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(requestID)
+			scope = scope.Where(`"usage"."request_id" LIKE ? ESCAPE '!'`, pattern)
+		} else {
+			scope = scope.Where(`"usage"."request_id" = ?`, requestID)
+		}
 	}
 	// Legacy compatibility: match against both raw identifiers and canonical UUIDv8 projections.
 	// TODO(session-cleanup): Revert to strict single-key matching once legacy raw session rows are phased out.
@@ -4022,6 +4033,9 @@ type SessionTreeNode struct {
 	SessionID       string                   `json:"session_id"`
 	ParentSessionID string                   `json:"parent_session_id,omitempty"`
 	RootSessionID   string                   `json:"root_session_id"`
+	NodeKind        string                   `json:"node_kind,omitempty"`
+	IsFork          bool                     `json:"is_fork,omitempty"`
+	IsCompaction    bool                     `json:"is_compaction,omitempty"`
 	FirstSeenAt     time.Time                `json:"first_seen_at"`
 	LastSeenAt      time.Time                `json:"last_seen_at"`
 	RequestCount    int64                    `json:"request_count"`
@@ -4069,7 +4083,7 @@ func (r *Repository) GetSessionTree(ctx context.Context, identifier string) (*Se
 	if identifier == "" {
 		return nil, errors.New("session identifier is required")
 	}
-	db, errDB := r.database()
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return nil, errDB
 	}
@@ -4142,7 +4156,7 @@ func (r *Repository) GetSessionTree(ctx context.Context, identifier string) (*Se
 	}
 
 	// Step 2: Query all records belonging to this family tree (bounded to prevent runaway memory usage).
-	const sessionTreeColumns = "id, timestamp, request_id, session_id, parent_session_id, root_session_id, model, provider, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, fail_status_code, upstream_status_code"
+	const sessionTreeColumns = "id, timestamp, request_id, session_id, parent_session_id, root_session_id, model, provider, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, fail_status_code, upstream_status_code, payload"
 	var truncated bool
 
 	var records []UsageRecord
@@ -4331,11 +4345,17 @@ func (r *Repository) GetSessionTree(ctx context.Context, identifier string) (*Se
 			sessID = trueRootID
 		}
 		node, exists := nodesMap[sessID]
+		nodeKind := strings.TrimSpace(gjson.GetBytes([]byte(rec.PayloadJSON), "node_kind").String())
+		isFork := gjson.GetBytes([]byte(rec.PayloadJSON), "is_fork").Bool()
+		isCompaction := gjson.GetBytes([]byte(rec.PayloadJSON), "is_compaction").Bool()
 		if !exists {
 			node = &SessionTreeNode{
 				SessionID:       sessID,
 				ParentSessionID: rec.ParentSessionID,
 				RootSessionID:   trueRootID,
+				NodeKind:        nodeKind,
+				IsFork:          isFork,
+				IsCompaction:    isCompaction,
 				FirstSeenAt:     rec.Timestamp.UTC(),
 				LastSeenAt:      rec.Timestamp.UTC(),
 				Children:        make([]*SessionTreeNode, 0),
@@ -4343,8 +4363,19 @@ func (r *Repository) GetSessionTree(ctx context.Context, identifier string) (*Se
 			}
 			nodesMap[sessID] = node
 			orderedKeys = append(orderedKeys, sessID)
-		} else if node.ParentSessionID == "" && rec.ParentSessionID != "" {
-			node.ParentSessionID = rec.ParentSessionID
+		} else {
+			if node.ParentSessionID == "" && rec.ParentSessionID != "" {
+				node.ParentSessionID = rec.ParentSessionID
+			}
+			if node.NodeKind == "" && nodeKind != "" {
+				node.NodeKind = nodeKind
+			}
+			if !node.IsCompaction && isCompaction {
+				node.IsCompaction = true
+			}
+			if !node.IsFork && isFork {
+				node.IsFork = true
+			}
 		}
 		turnCounters[sessID]++
 		node.RequestCount++

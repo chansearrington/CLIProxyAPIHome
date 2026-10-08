@@ -502,6 +502,9 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 
 	now := time.Now()
 	auths = filterConcurrencyExcludedAuths(auths, model, opts)
+	if isWeightedSelector(s.fallback) {
+		auths = positiveWeightAuths(auths)
+	}
 	available, err := getAvailableAuths(auths, provider, model, now)
 	if err != nil {
 		return nil, err

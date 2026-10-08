@@ -15,8 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	sdkpluginhost "github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginhost"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginstore"
+	sdkpluginhost "github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginstore"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/access"
 	configaccess "github.com/router-for-me/CLIProxyAPIHome/internal/access/config_access"
 	coreauth "github.com/router-for-me/CLIProxyAPIHome/internal/cliproxy/auth"
@@ -860,15 +860,16 @@ type DispatchResult struct {
 
 // DispatchModelInfo carries the selected model capabilities needed by CPA at execution time.
 type DispatchModelInfo struct {
-	ID                  string                       `json:"id"`
-	Type                string                       `json:"type,omitempty"`
-	InputTokenLimit     int                          `json:"inputTokenLimit,omitempty"`
-	OutputTokenLimit    int                          `json:"outputTokenLimit,omitempty"`
-	ContextLength       int                          `json:"context_length,omitempty"`
-	MaxCompletionTokens int                          `json:"max_completion_tokens,omitempty"`
-	Thinking            *registry.ThinkingSupport    `json:"thinking,omitempty"`
-	NativeCapabilities  *registry.NativeCapabilities `json:"native_capabilities,omitempty"`
-	UserDefined         bool                         `json:"user_defined"`
+	ID                         string                       `json:"id"`
+	Type                       string                       `json:"type,omitempty"`
+	InputTokenLimit            int                          `json:"inputTokenLimit,omitempty"`
+	OutputTokenLimit           int                          `json:"outputTokenLimit,omitempty"`
+	ContextLength              int                          `json:"context_length,omitempty"`
+	MaxCompletionTokens        int                          `json:"max_completion_tokens,omitempty"`
+	Thinking                   *registry.ThinkingSupport    `json:"thinking,omitempty"`
+	NativeCapabilities         *registry.NativeCapabilities `json:"native_capabilities,omitempty"`
+	SupportConfigurationUpdate bool                         `json:"support_configuration_update"`
+	UserDefined                bool                         `json:"user_defined"`
 }
 
 // DispatchForAPIKey processes dispatch with API-key channel restrictions.

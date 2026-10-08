@@ -63,6 +63,31 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - After a node restart, Home's `GET /nodes` shows a plugin as `skipped loaded` (library on disk
   already identical); that is healthy. Check for `loaded` + `reported_ok`, not `installed`.
 
+## Live SQLite maintenance index
+
+- On 2026-10-07, the usage-token-accounting maintenance query was measured at **3.18 s** on
+  the Ark's approximately 150,000 usage rows, all already at accounting version 2. It scanned
+  the full table every minute despite the existing version index. Home uses one SQLite
+  connection; the scan delayed subscription heartbeats beyond the 3 s lifecycle timeout,
+  disconnecting nodes and causing Claude Code 503s.
+- The live database now has this additional index, applied under all four fleet-locks without
+  restarting Home or changing its image:
+
+  ```sql
+  CREATE INDEX idx_usage_pending_token_accounting_v2
+    ON usage(id) WHERE token_accounting_version <> 2;
+  ```
+
+  The parameterized maintenance query uses it, returns the same result, and took **0.027 ms**
+  on the first check after creation. A synthetic check also verified that a late legacy row is
+  still found. This is a persistent database tuning change, not yet an application migration;
+  retain it when restoring or replacing the database, and reassess it when the accounting
+  schema version changes. Rollback is `DROP INDEX idx_usage_pending_token_accounting_v2`.
+- Pre-change backup on the Ark:
+  `/mnt/user/appdata/cpa-home/data/backups/home-pre-pending-token-index-20261007T021207Z.db`,
+  3,461,537,792 bytes, full integrity check `ok`, SHA-256
+  `595c33ef8bb1baec302286c5719d035120f2a7d3da5a48e9cff4572c4987fc97`.
+
 ## Secrets
 
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API

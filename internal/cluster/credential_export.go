@@ -37,11 +37,12 @@ func ApplyCredentialConfigToRoot(root map[string]any, auths []*coreauth.Auth) Cr
 }
 
 type credentialModelPair struct {
-	Name         string
-	Alias        string
-	DisplayName  string
-	ForceMapping bool
-	Thinking     *registry.ThinkingSupport
+	Name                       string
+	Alias                      string
+	DisplayName                string
+	ForceMapping               bool
+	SupportConfigurationUpdate bool
+	Thinking                   *registry.ThinkingSupport
 }
 
 type credentialOpenAICompatGroup struct {
@@ -174,7 +175,7 @@ func isOpenAICompatConfigAuth(auth *coreauth.Auth) bool {
 
 // credentialGeminiKey builds a Gemini key config from an auth record.
 func credentialGeminiKey(auth *coreauth.Auth) appconfig.GeminiKey {
-	return appconfig.GeminiKey{
+	return applyCredentialConfigOptions(auth, appconfig.GeminiKey{
 		ID:             strings.TrimSpace(auth.ID),
 		APIKey:         authAttribute(auth, "api_key"),
 		Priority:       credentialPriority(auth),
@@ -186,12 +187,12 @@ func credentialGeminiKey(auth *coreauth.Auth) appconfig.GeminiKey {
 		ExcludedModels: credentialExcludedModels(auth),
 		DisableCooling: credentialDisableCooling(auth),
 		RequestRetry:   credentialRequestRetry(auth),
-	}
+	})
 }
 
 // credentialVertexKey builds a Vertex key config from an auth record.
 func credentialVertexKey(auth *coreauth.Auth) appconfig.VertexCompatKey {
-	return appconfig.VertexCompatKey{
+	return applyCredentialConfigOptions(auth, appconfig.VertexCompatKey{
 		ID:             strings.TrimSpace(auth.ID),
 		APIKey:         authAttribute(auth, "api_key"),
 		Priority:       credentialPriority(auth),
@@ -203,12 +204,12 @@ func credentialVertexKey(auth *coreauth.Auth) appconfig.VertexCompatKey {
 		ExcludedModels: credentialExcludedModels(auth),
 		DisableCooling: credentialDisableCooling(auth),
 		RequestRetry:   credentialRequestRetry(auth),
-	}
+	})
 }
 
 // credentialCodexKey builds a Codex key config from an auth record.
 func credentialCodexKey(auth *coreauth.Auth) appconfig.CodexKey {
-	return appconfig.CodexKey{
+	return applyCredentialConfigOptions(auth, appconfig.CodexKey{
 		ID:             strings.TrimSpace(auth.ID),
 		APIKey:         authAttribute(auth, "api_key"),
 		Priority:       credentialPriority(auth),
@@ -222,12 +223,12 @@ func credentialCodexKey(auth *coreauth.Auth) appconfig.CodexKey {
 		ExcludedModels: credentialExcludedModels(auth),
 		DisableCooling: credentialDisableCooling(auth),
 		RequestRetry:   credentialRequestRetry(auth),
-	}
+	})
 }
 
 // credentialXAIKey builds an xAI key config from an auth record.
 func credentialXAIKey(auth *coreauth.Auth) appconfig.XAIKey {
-	return appconfig.XAIKey{
+	return applyCredentialConfigOptions(auth, appconfig.XAIKey{
 		ID:             strings.TrimSpace(auth.ID),
 		APIKey:         authAttribute(auth, "api_key"),
 		Priority:       credentialPriority(auth),
@@ -240,12 +241,12 @@ func credentialXAIKey(auth *coreauth.Auth) appconfig.XAIKey {
 		ExcludedModels: credentialExcludedModels(auth),
 		DisableCooling: credentialDisableCooling(auth),
 		RequestRetry:   credentialRequestRetry(auth),
-	}
+	})
 }
 
 // credentialMetaKey builds a Meta key config from an auth record.
 func credentialMetaKey(auth *coreauth.Auth) appconfig.MetaKey {
-	return appconfig.MetaKey{
+	return applyCredentialConfigOptions(auth, appconfig.MetaKey{
 		ID:             strings.TrimSpace(auth.ID),
 		APIKey:         authAttribute(auth, "api_key"),
 		Priority:       credentialPriority(auth),
@@ -258,12 +259,12 @@ func credentialMetaKey(auth *coreauth.Auth) appconfig.MetaKey {
 		ExcludedModels: credentialExcludedModels(auth),
 		DisableCooling: credentialDisableCooling(auth),
 		RequestRetry:   credentialRequestRetry(auth),
-	}
+	})
 }
 
 // credentialClaudeKey builds a Claude key config from an auth record.
 func credentialClaudeKey(auth *coreauth.Auth) appconfig.ClaudeKey {
-	return appconfig.ClaudeKey{
+	return applyCredentialConfigOptions(auth, appconfig.ClaudeKey{
 		ID:             strings.TrimSpace(auth.ID),
 		APIKey:         authAttribute(auth, "api_key"),
 		Priority:       credentialPriority(auth),
@@ -275,7 +276,7 @@ func credentialClaudeKey(auth *coreauth.Auth) appconfig.ClaudeKey {
 		ExcludedModels: credentialExcludedModels(auth),
 		DisableCooling: credentialDisableCooling(auth),
 		RequestRetry:   credentialRequestRetry(auth),
-	}
+	})
 }
 
 // addOpenAICompatCredential adds an OpenAI-compatible auth record to grouped config.
@@ -303,6 +304,7 @@ func addOpenAICompatCredential(groups map[string]*credentialOpenAICompatGroup, a
 	if apiKey == "" && proxyURL == "" {
 		representation = "fallback:" + strings.TrimSpace(auth.ID)
 	}
+	options, _ := json.Marshal(auth.Metadata["credential_options"])
 	groupKey := strings.Join([]string{
 		strings.ToLower(name),
 		baseURL,
@@ -312,6 +314,7 @@ func addOpenAICompatCredential(groups map[string]*credentialOpenAICompatGroup, a
 		optionalBoolKey(disableCooling),
 		optionalIntKey(requestRetry),
 		representation,
+		string(options),
 	}, "\x00")
 
 	group := groups[groupKey]
@@ -332,6 +335,7 @@ func addOpenAICompatCredential(groups map[string]*credentialOpenAICompatGroup, a
 			SortKey:     groupKey,
 			FirstAuthID: strings.TrimSpace(auth.ID),
 		}
+		group.Config = applyCredentialConfigOptions(auth, group.Config)
 		groups[groupKey] = group
 	}
 
@@ -343,11 +347,11 @@ func addOpenAICompatCredential(groups map[string]*credentialOpenAICompatGroup, a
 		return
 	}
 	group.SeenEntry[entryKey] = struct{}{}
-	group.Config.APIKeyEntries = append(group.Config.APIKeyEntries, appconfig.OpenAICompatibilityAPIKey{
+	group.Config.APIKeyEntries = append(group.Config.APIKeyEntries, applyCredentialConfigOptions(auth, appconfig.OpenAICompatibilityAPIKey{
 		ID:       strings.TrimSpace(auth.ID),
 		APIKey:   apiKey,
 		ProxyURL: proxyURL,
-	})
+	}))
 }
 
 func openAICompatFallbackID(auth *coreauth.Auth) string {
@@ -388,10 +392,11 @@ func credentialCodexModels(auth *coreauth.Auth) []appconfig.CodexModel {
 	out := make([]appconfig.CodexModel, 0, len(pairs))
 	for _, pair := range pairs {
 		out = append(out, appconfig.CodexModel{
-			Name:         pair.Name,
-			Alias:        pair.Alias,
-			DisplayName:  pair.DisplayName,
-			ForceMapping: pair.ForceMapping,
+			Name:                       pair.Name,
+			Alias:                      pair.Alias,
+			DisplayName:                pair.DisplayName,
+			ForceMapping:               pair.ForceMapping,
+			SupportConfigurationUpdate: pair.SupportConfigurationUpdate,
 		})
 	}
 	return out
@@ -486,12 +491,14 @@ func credentialModelPairs(auth *coreauth.Auth) []credentialModelPair {
 		}
 		seen[key] = struct{}{}
 		forceMapping, _ := boolFromAny(modelMap["force_mapping"])
+		supportConfigurationUpdate, _ := boolFromAny(modelMap["support_configuration_update"])
 		out = append(out, credentialModelPair{
-			Name:         name,
-			Alias:        alias,
-			DisplayName:  strings.TrimSpace(stringFromAny(modelMap["config_display_name"])),
-			ForceMapping: forceMapping,
-			Thinking:     credentialThinking(modelMap["thinking"]),
+			Name:                       name,
+			Alias:                      alias,
+			DisplayName:                strings.TrimSpace(stringFromAny(modelMap["config_display_name"])),
+			ForceMapping:               forceMapping,
+			SupportConfigurationUpdate: supportConfigurationUpdate,
+			Thinking:                   credentialThinking(modelMap["thinking"]),
 		})
 	}
 	return out
@@ -820,4 +827,17 @@ func boolFromAny(value any) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+// applyCredentialConfigOptions restores options retained with the authoritative
+// credential rather than reconstructing them from lossy scheduling projections.
+func applyCredentialConfigOptions[T any](auth *coreauth.Auth, value T) T {
+	if auth == nil || auth.Metadata == nil {
+		return value
+	}
+	data, errMarshal := json.Marshal(auth.Metadata["credential_options"])
+	if errMarshal == nil {
+		_ = json.Unmarshal(data, &value)
+	}
+	return value
 }

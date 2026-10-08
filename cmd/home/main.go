@@ -229,7 +229,28 @@ func run() int {
 		log.Infof("database snapshot export completed source_backend=%s tables=%d path=%s", manifest.SourceBackend, len(manifest.Tables), databaseExportPath)
 		return 0
 	}
-	repo := cluster.NewRepository(clusterDB)
+	var observabilitySlowQueryThreshold []time.Duration
+	if clusterExists && clusterCfg != nil && dbBackend == cluster.DatabaseBackendSQLite {
+		observabilitySlowQueryThreshold = append(observabilitySlowQueryThreshold, clusterCfg.SQLite.SlowQueryThreshold)
+	}
+	observabilityDB, errObservabilityDB := cluster.OpenObservabilityReadDB(runCtx, clusterDB, observabilitySlowQueryThreshold...)
+	if errObservabilityDB != nil {
+		log.Errorf("failed to open observability database: %v", errObservabilityDB)
+		return 1
+	}
+	if observabilityDB != nil {
+		observabilitySQLDB, errObservabilitySQLDB := observabilityDB.DB()
+		if errObservabilitySQLDB != nil {
+			log.Errorf("failed to get observability sql db: %v", errObservabilitySQLDB)
+			return 1
+		}
+		defer func() {
+			if errCloseObservability := observabilitySQLDB.Close(); errCloseObservability != nil {
+				log.Warnf("failed to close observability sql db: %v", errCloseObservability)
+			}
+		}()
+	}
+	repo := cluster.NewRepositoryWithObservabilityReadDB(clusterDB, observabilityDB)
 	clusterRepo = repo
 	nodeCfg := resolveDatabaseNodeConfig(clusterCfg, clusterExists)
 	if _, errEnsureLifecycle := repo.EnsureLifecycleConfig(runCtx, nodeCfg.HeartbeatTimeout); errEnsureLifecycle != nil {

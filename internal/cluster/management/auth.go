@@ -603,6 +603,11 @@ func apiKeyAuthToMap(auth *coreauth.Auth, key string) map[string]any {
 	if auth == nil {
 		return item
 	}
+	if options, ok := auth.Metadata["credential_options"].(map[string]any); ok {
+		for field, value := range options {
+			item[field] = value
+		}
+	}
 	attrs := auth.Attributes
 	if attrs == nil {
 		attrs = map[string]string{}
@@ -641,6 +646,10 @@ func apiKeyAuthToMap(auth *coreauth.Auth, key string) map[string]any {
 				"api-key":   attrs["api_key"],
 				"proxy-url": auth.ProxyURL,
 			}}
+			if weight, exists := item["weight"]; exists {
+				item["api-key-entries"].([]map[string]any)[0]["weight"] = weight
+				delete(item, "weight")
+			}
 		}
 	}
 	if (key == "codex-api-key" || key == "xai-api-key" || key == "meta-api-key") && strings.EqualFold(attrs["websockets"], "true") {
@@ -661,7 +670,7 @@ func apiKeyAuthToMap(auth *coreauth.Auth, key string) map[string]any {
 	switch key {
 	case "codex-api-key", "xai-api-key", "meta-api-key", "gemini-api-key", "interactions-api-key", "vertex-api-key", "claude-api-key":
 		models := credentialAPIKeyModels(auth)
-		if len(models) > 0 {
+		if len(models) > 0 && item["models"] == nil {
 			item["models"] = models
 		}
 	}
@@ -691,16 +700,20 @@ func credentialAPIKeyModels(auth *coreauth.Auth) []map[string]any {
 		if pair.ForceMapping {
 			item["force-mapping"] = true
 		}
+		if strings.EqualFold(auth.Provider, "codex") && pair.SupportConfigurationUpdate {
+			item["support-configuration-update"] = true
+		}
 		out = append(out, item)
 	}
 	return out
 }
 
 type credentialAPIKeyModelPair struct {
-	Name         string
-	Alias        string
-	DisplayName  string
-	ForceMapping bool
+	Name                       string
+	Alias                      string
+	DisplayName                string
+	ForceMapping               bool
+	SupportConfigurationUpdate bool
 }
 
 // credentialModelPairs returns unique model name/alias pairs from auth metadata.
@@ -742,11 +755,13 @@ func credentialModelPairs(auth *coreauth.Auth) []credentialAPIKeyModelPair {
 		}
 		seen[key] = struct{}{}
 		forceMapping, _ := parseBoolAny(modelMap["force_mapping"])
+		supportConfigurationUpdate, _ := parseBoolAny(modelMap["support_configuration_update"])
 		out = append(out, credentialAPIKeyModelPair{
-			Name:         name,
-			Alias:        alias,
-			DisplayName:  strings.TrimSpace(stringFromAny(modelMap["config_display_name"])),
-			ForceMapping: forceMapping,
+			Name:                       name,
+			Alias:                      alias,
+			DisplayName:                strings.TrimSpace(stringFromAny(modelMap["config_display_name"])),
+			ForceMapping:               forceMapping,
+			SupportConfigurationUpdate: supportConfigurationUpdate,
 		})
 	}
 	return out
