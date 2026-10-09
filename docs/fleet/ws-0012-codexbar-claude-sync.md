@@ -2,6 +2,10 @@
 
 Status: installed and verified on the MacBook Pro, 2026-10-08 UTC.
 
+2026-10-09: the sync was extended to a third Claude account, Lara. See
+[the third-subscription record](ws-0013-lara-claude-shared.md#codexbar-addition) for current
+bindings, live app verification, and rollback scope.
+
 Chanse authorized trying Home-supplied tokens for CodexBar's Hype and Gmail Claude accounts.
 The Codex account is outside this change. This replaces the two Claude web cookies with
 OAuth access tokens; it does not share refresh-token ownership.

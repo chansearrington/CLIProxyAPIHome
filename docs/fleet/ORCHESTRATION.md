@@ -29,7 +29,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0010 | Claude OAuth recovery and Codex routing | fleet documentation | — | **done** — independent Home OAuth restored; Codex default CPA and daemon warning fixed |
 | ws-0011 | Home 1.1.0 and CPA 8.0.20 fleet upgrade | `ws-0011/upstream-fleet-upgrade` | — | **deployed and verified** — Home 1.1.0 fork + all five CPA 8.0.20 nodes; native routing and protected scopes pass |
 | ws-0012 | Home access tokens into CodexBar Claude accounts | `fix/codexbar-claude-access-sync` | — | **installed and verified** — Hype/Gmail OAuth in CodexBar, access-token-only sync every 120 seconds |
-| ws-0013 | Third shared Claude subscription | configuration + fleet record | — | **done** — Lara Claude available to all users, priority after Gmail and before Microsoft; all six keys verified |
+| ws-0013 | Third shared Claude subscription | configuration + fleet record | — | **done** — Lara shared with all users, before Microsoft; all six keys verified; added to CodexBar and automatic token sync |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
