@@ -171,7 +171,7 @@ func appendClaudeWindow(windows []cluster.QuotaWindow, id string, label *string,
 	if input == nil || input.Utilization == nil || math.IsNaN(*input.Utilization) || math.IsInf(*input.Utilization, 0) || *input.Utilization < 0 {
 		return windows
 	}
-	usedRatio := normalizedProviderRatio(*input.Utilization)
+	usedRatio := normalizedClaudePercentageRatio(*input.Utilization)
 	remainingRatio := 1 - usedRatio
 	used, remaining, limit := usedRatio*100, remainingRatio*100, float64(100)
 	window := cluster.QuotaWindow{ID: id, Label: label, Scope: scope, ScopeID: scopeID, Mode: "rolling", Status: quotaProbeStatus(remainingRatio), Unit: "percentage", Used: &used, Remaining: &remaining, Limit: &limit, UsedRatio: &usedRatio, RemainingRatio: &remainingRatio, PeriodUnit: periodUnit, Source: "active_probe", ObservedAt: observedAt, Priority: priority}
@@ -198,7 +198,7 @@ func claudeExtraUsageWindow(input *claudeExtraUsage, observedAt time.Time) (clus
 		window.UsedRatio, window.RemainingRatio = &usedRatio, &remainingRatio
 		window.Status = quotaProbeStatus(remainingRatio)
 	} else if input.Utilization != nil {
-		usedRatio := normalizedProviderRatio(*input.Utilization)
+		usedRatio := normalizedClaudePercentageRatio(*input.Utilization)
 		remainingRatio := 1 - usedRatio
 		window.UsedRatio, window.RemainingRatio = &usedRatio, &remainingRatio
 		window.Status = quotaProbeStatus(remainingRatio)
@@ -634,11 +634,9 @@ func parseXAIUsageWindows(body []byte, observedAt time.Time) ([]cluster.QuotaWin
 	return windows, xaiPlanFromMonthlyLimit(monthlyLimitCents), nil
 }
 
-func normalizedProviderRatio(value float64) float64 {
-	if value > 1 {
-		value /= 100
-	}
-	return math.Max(0, math.Min(1, value))
+func normalizedClaudePercentageRatio(value float64) float64 {
+	// Claude utilization is a percentage, including values at or below 1.
+	return math.Max(0, math.Min(1, value/100))
 }
 
 func normalizeWindowValues(window *cluster.QuotaWindow) {
