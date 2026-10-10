@@ -93,25 +93,33 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0011, 2026-10-08 UTC)
+## Current verified runtime (ws-0011 upgrade; ws-0014 quota correction, 2026-10-10 UTC)
 
-- Home is `cpa-home:1.1.0-claude-fleet-9821c83`, immutable image
-  `sha256:dad5e5d84bd9931dfacb1927bb35990f37bbe7487f5252e69f411ddc83b94809`.
+- Home is `cpa-home:1.1.0-claude-fleet-de715bd`, immutable image
+  `sha256:19143382b131c59add5e65ba2e83831a66c4bc127b0262b88a21c6024c833874`.
   Source integrates upstream 1.1.0 and all 81 fleet patches, plus Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
+  The ws-0014 quota correction treats Claude utilization consistently as percentages, so
+  1% used no longer appears 100% used and exhausted.
 - All five nodes have verified CPA 8.0.20 binaries, manifests and healthy membership;
   Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
   Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
-- Gmail is enabled and eligible; HypeSports remains first priority but weekly-exhausted.
-  Microsoft remains Chanse-only emergency fallback. Fresh native Claude Code selects Gmail;
-  fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
+- Shared Claude order is HypeSports (5), Gmail (4), Lara (3), Developer (2); Microsoft (1)
+  remains Chanse-only emergency fallback. All six keys successfully selected Developer while
+  higher-priority accounts were quota-exhausted. Four Claude accounts are in CodexBar with
+  Home access-token sync every 120 seconds; Home alone owns refresh tokens.
+  Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
 - SQLite's writer remains single-connection. Dashboard reads use a separate bounded read-only
   pool so they cannot queue scheduler/heartbeat operations behind analytics. Four-panel 24-hour
   load passes. Seven-day overview can exceed the unchanged 10-second budget on the large database;
   this was reproduced with the old image too and remains a separate optimization follow-up.
 - Retain the verified fresh production backup and each node's `cli-proxy-api.8.0.7.bak`.
-  Image-only Home rollback targets immutable ID
-  `sha256:7a92e9443088eee7a91461ad623791c8c21277c5aebec6a0de5c10897042981e`.
+  Current image-only Home rollback targets immutable ID
+  `sha256:dad5e5d84bd9931dfacb1927bb35990f37bbe7487f5252e69f411ddc83b94809`.
+  The earlier major-upgrade rollback is recorded in ws-0011.
   Do not restore a stale database over newer rotating OAuth authorizations.
 - Evidence: [upgrade record](docs/fleet/ws-0011-upstream-fleet-upgrade.md).
   Plain-language offline guide: [what changed](docs/fleet/ws-0011-updates.artifact.html).
+
+- Latest account sharing, quota correction, backup, rollback, and UI instructions:
+  [Developer Claude record](docs/fleet/ws-0014-developer-claude-shared.md).
