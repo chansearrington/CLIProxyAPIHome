@@ -625,6 +625,20 @@ func (s *Server) HandleConn(ctx context.Context, conn net.Conn) {
 			continue
 		}
 		if reply.SubscriptionLifetime != nil {
+			if cfg := s.runtime.Config(); cfg != nil {
+				timeout := cfg.CredentialConcurrency.CPAHeartbeatTimeout
+				if timeout <= 0 {
+					timeout = config.DefaultCredentialConcurrencyConfig().CPAHeartbeatTimeout
+				}
+				if errTransport := boundSubscriptionTransport(conn, timeout); errTransport != nil {
+					if pendingConfigSubscriptionReady != nil {
+						close(pendingConfigSubscriptionAborted)
+						close(pendingConfigSubscriptionReady)
+					}
+					log.Warnf("failed to bound subscription TCP acknowledgement timeout: %v", errTransport)
+					return
+				}
+			}
 			if errAttach := connEnv.AttachSubscriptionLifetime(*reply.SubscriptionLifetime); errAttach != nil {
 				if pendingConfigSubscriptionReady != nil {
 					close(pendingConfigSubscriptionAborted)

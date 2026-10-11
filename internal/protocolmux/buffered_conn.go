@@ -11,6 +11,14 @@ type BufferedConn struct {
 	reader *bufio.Reader
 }
 
+// NetConn returns the transport without discarding buffered reads.
+func (c *BufferedConn) NetConn() net.Conn {
+	if c == nil {
+		return nil
+	}
+	return c.Conn
+}
+
 // Read loads read.
 func (c *BufferedConn) Read(p []byte) (int, error) {
 	if c == nil {
