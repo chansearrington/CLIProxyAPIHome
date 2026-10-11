@@ -93,20 +93,23 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0011 upgrade; ws-0014 quota correction, 2026-10-10 UTC)
+## Current verified runtime (ws-0011 upgrade; ws-0014 quota correction; ws-0015 reconnect fix, 2026-10-11 UTC)
 
-- Home is `cpa-home:1.1.0-claude-fleet-de715bd`, immutable image
-  `sha256:19143382b131c59add5e65ba2e83831a66c4bc127b0262b88a21c6024c833874`.
+- Home is `cpa-home:1.1.0-claude-fleet-16e6971`, immutable image
+  `sha256:a0622434ac0107c827f756a16a4bc0824c69673ba13e0057075d5a1589d20fc0`.
   Source integrates upstream 1.1.0 and all 81 fleet patches, plus Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
   The ws-0014 quota correction treats Claude utilization consistently as percentages, so
   1% used no longer appears 100% used and exhausted.
+  The ws-0015 Linux subscription transport bound prevents unacknowledged heartbeat data
+  from keeping a dead node's membership alive through the kernel's long retry window.
 - All five nodes have verified CPA 8.0.20 binaries, manifests and healthy membership;
   Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
   Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
 - Shared Claude order is HypeSports (5), Gmail (4), Lara (3), Developer (2); Microsoft (1)
-  remains Chanse-only emergency fallback. All six keys successfully selected Developer while
-  higher-priority accounts were quota-exhausted. Four Claude accounts are in CodexBar with
+  remains Chanse-only emergency fallback. All six keys selected Lara in the latest ws-0015
+  routing proof; the earlier ws-0014 proof selected Developer while higher accounts were
+  exhausted. Four Claude accounts are in CodexBar with
   Home access-token sync every 120 seconds; Home alone owns refresh tokens.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
 - SQLite's writer remains single-connection. Dashboard reads use a separate bounded read-only
@@ -115,7 +118,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   this was reproduced with the old image too and remains a separate optimization follow-up.
 - Retain the verified fresh production backup and each node's `cli-proxy-api.8.0.7.bak`.
   Current image-only Home rollback targets immutable ID
-  `sha256:dad5e5d84bd9931dfacb1927bb35990f37bbe7487f5252e69f411ddc83b94809`.
+  `sha256:19143382b131c59add5e65ba2e83831a66c4bc127b0262b88a21c6024c833874`.
   The earlier major-upgrade rollback is recorded in ws-0011.
   Do not restore a stale database over newer rotating OAuth authorizations.
 - Evidence: [upgrade record](docs/fleet/ws-0011-upstream-fleet-upgrade.md).
@@ -123,3 +126,5 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - Latest account sharing, quota correction, backup, rollback, and UI instructions:
   [Developer Claude record](docs/fleet/ws-0014-developer-claude-shared.md).
+- Reboot-related empty 503 diagnosis, reconnect fix, latest backup/rollback, and system key:
+  [reconnect record](docs/fleet/ws-0015-claude-reboot-reconnect.md).

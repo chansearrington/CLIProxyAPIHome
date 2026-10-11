@@ -31,6 +31,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0012 | Home access tokens into CodexBar Claude accounts | `fix/codexbar-claude-access-sync` | — | **installed and verified** — Hype/Gmail OAuth in CodexBar, access-token-only sync every 120 seconds |
 | ws-0013 | Third shared Claude subscription | configuration + fleet record | — | **done** — Lara shared with all users, before Microsoft; all six keys verified; added to CodexBar and automatic token sync |
 | ws-0014 | Developer Claude subscription | configuration + fleet record | — | **done** — Developer shared and in CodexBar token sync; all six keys used it; reviewed quota percentage fix deployed and verified |
+| ws-0015 | Claude Code 503 after MacBook reboot | `fix/resp-subscription-tcp-timeout` | — | **deployed and verified** — bounded Linux subscription TCP acknowledgements, all-six-key and five-node native proofs; system key traced |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -125,8 +126,8 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
   membership lifetimes remained stable. A post-index Opus streaming proof also returned 200
   and completed with `ok`.
 - Follow-up: add the index or an equivalent efficient existence query to the application
-  migration path for fresh databases. The earlier orphaned-socket liveness issue also remains
-  a separate code-hardening opportunity.
+  migration path for fresh databases. The earlier orphaned-socket liveness issue was subsequently addressed by ws-0015
+  after its reboot-triggered recurrence on October 11.
 
 - 2026-10-08 — ws-0011 deployed and verified at 04:45:45Z: Home fork image
   `cpa-home:1.1.0-claude-fleet-9821c83`, all five CPA nodes 8.0.20 `0f96f568`.
@@ -145,3 +146,5 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
   deployed 03:22:35 UTC. Full Ark tests/build, 64 matching panel assets, fresh verified backup,
   six post-restart native requests with Home attribution, five healthy nodes/reported_ok,
   and released locks. HTML guide includes the verified UI sharing steps.
+
+- 2026-10-11 — ws-0015 deployed at 05:49:04Z: Home `cpa-home:1.1.0-claude-fleet-16e6971` bounds Linux subscription TCP acknowledgements using the existing heartbeat timeout. MacBook reboot left an old membership blocking reconnects until 05:30Z; CPA heartbeat middleware explains the empty 503. PR #14 reviewed clean, merged-tree full tests and compile pass, isolated blackhole closes in 3.213 s. Fresh 4.4 GB backup integrity/SHA verified, all four locks renewed/released, six Claude keys + Codex/Copilot scopes + five native nodes + fresh Claude Code pass; 50/50 follow-up checks and stable memberships. Unassigned key 1 is Ark/Hyper’s pilot readiness key. Backup, image rollback, exact evidence, and guide update: [ws-0015](ws-0015-claude-reboot-reconnect.md).
