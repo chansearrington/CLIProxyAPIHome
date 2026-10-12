@@ -50,18 +50,57 @@ except Exception:
     sys.exit(1)
 '''
 
+REMOTE_USAGE_READER = r'''
+import datetime, json, pathlib, sys, urllib.error, urllib.parse, urllib.request
+settings = json.loads(SETTINGS_JSON)
+try:
+    values = {}
+    for line in pathlib.Path(settings['env_file']).read_text().splitlines():
+        if '=' in line and not line.lstrip().startswith('#'):
+            key, value = line.split('=', 1)
+            values[key.strip()] = value.strip().strip("\"'")
+    follow = settings['follow_usage']
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=follow.get('max_age_hours', 24))
+    query = urllib.parse.urlencode({'provider': 'claude', 'status': 'success', 'limit': 1,
+                                   'sort': 'timestamp_desc', 'from': since.isoformat(),
+                                   'client_key_id': follow['client_key_id'],
+                                   'cpa_node': follow['cpa_node_id']})
+    request = urllib.request.Request(settings['management_url'] + '/usage/records?' + query,
+                                    headers={'Authorization': 'Bearer ' + values['MANAGEMENT_PASSWORD']})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=12) as response:
+        items = json.load(response)['items']
+    selection = {'status': 'idle'}
+    if items:
+        row = items[0]
+        # Project identity only; no masked keys, prompts, payloads, or tokens.
+        selection = {'status': 'observed', 'credential_id': row['credential']['credential_id'],
+                     'usage_id': row['id'], 'timestamp': row['timestamp'],
+                     'client_key_id': row['client']['api_key_id'],
+                     'cpa_node_id': row['runtime']['cpa_node_id'], 'provider': row['provider'],
+                     'success': row.get('failed') is False and row.get('status') == 'success'}
+    print(json.dumps({'selection': selection}))
+except urllib.error.HTTPError as error:
+    if error.code in (401, 403):
+        print(json.dumps({'error': 'management_http_' + str(error.code)}))
+        sys.exit(1)
+    print(json.dumps({'selection': {'status': 'unavailable'}}))
+except Exception:
+    print(json.dumps({'selection': {'status': 'unavailable'}}))
+'''
+
 
 def remote_program(settings):
     remote = {key: settings[key] for key in ('env_file', 'management_url', 'accounts')}
     return REMOTE_READER.replace('SETTINGS_JSON', repr(json.dumps(remote)), 1)
 
 
-def fetch_accounts(settings):
+def remote_read(settings, program):
     result = subprocess.run(
         ['/usr/bin/ssh', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
          '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10',
          '-o', 'ServerAliveCountMax=2', settings['ssh_host'], '/usr/bin/python3', '-'],
-        input=remote_program(settings), text=True, capture_output=True, timeout=45)
+        input=program, text=True, capture_output=True, timeout=45)
     try:
         payload = json.loads(result.stdout)
     except (ValueError, TypeError):
@@ -73,6 +112,64 @@ def fetch_accounts(settings):
             error = 'remote credential read failed'
         raise SyncError(error)
     return payload
+
+
+def fetch_accounts(settings):
+    return remote_read(settings, remote_program(settings))
+
+
+def validate_follow_settings(settings):
+    follow = settings.get('follow_usage')
+    if follow is None:
+        return None
+    if (not isinstance(follow, dict) or type(follow.get('client_key_id')) is not int
+            or follow['client_key_id'] <= 0
+            or not isinstance(follow.get('cpa_node_id'), str) or not follow['cpa_node_id'].strip()
+            or type(follow.get('max_age_hours', 24)) is not int
+            or not 1 <= follow.get('max_age_hours', 24) <= 168):
+        raise SyncError('invalid follow_usage settings')
+    return follow
+
+
+def fetch_selection(settings):
+    remote = {key: settings[key] for key in ('env_file', 'management_url', 'follow_usage')}
+    program = REMOTE_USAGE_READER.replace('SETTINGS_JSON', repr(json.dumps(remote)), 1)
+    return remote_read(settings, program)
+
+
+def follow_selection(config, settings, payload, now=None):
+    follow = validate_follow_settings(settings)
+    if follow is None:
+        return {'mode': 'disabled'}, False
+    row = payload.get('selection') if isinstance(payload, dict) else None
+    if not isinstance(row, dict):
+        return {'mode': 'unavailable'}, False
+    if row.get('status') in ('idle', 'unavailable'):
+        return {'mode': row['status']}, False
+    if (row.get('status') != 'observed' or row.get('provider') != 'claude'
+            or row.get('success') is not True or type(row.get('client_key_id')) is not int
+            or row['client_key_id'] != follow['client_key_id']
+            or row.get('cpa_node_id') != follow['cpa_node_id']):
+        return {'mode': 'ignored', 'reason': 'scope_or_status_mismatch'}, False
+    try:
+        timestamp = dt.datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00'))
+        now = now or dt.datetime.now(dt.timezone.utc)
+        if timestamp.tzinfo is None or timestamp > now + dt.timedelta(seconds=60):
+            raise ValueError()
+        if timestamp < now - dt.timedelta(hours=follow.get('max_age_hours', 24)):
+            return {'mode': 'stale'}, False
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return {'mode': 'ignored', 'reason': 'invalid_timestamp'}, False
+    mapping = next((a for a in settings['accounts'] if a['home_id'] == row.get('credential_id')), None)
+    if mapping is None:
+        return {'mode': 'unmapped'}, False
+    claude = next(p for p in config['providers'] if p['id'] == 'claude')
+    stored = claude['tokenAccounts']
+    index = next(i for i, a in enumerate(stored['accounts']) if a['id'] == mapping['codexbar_id'])
+    changed = stored.get('activeIndex') != index
+    stored['activeIndex'] = index
+    return {'mode': 'following', 'label': mapping['label'], 'email': mapping['email'],
+            'observed_at': row['timestamp'], 'selection_changed': changed}, changed
 
 
 def validate_accounts(settings, payload, now=None):
@@ -160,6 +257,7 @@ def encoded(value):
 
 
 def sync(settings, state, stage=None, check=False):
+    follow = validate_follow_settings(settings)
     payload = fetch_accounts(settings)
     accounts = validate_accounts(settings, payload)
     path = Path(settings['codexbar_config']).expanduser()
@@ -168,13 +266,23 @@ def sync(settings, state, stage=None, check=False):
     original = path.read_bytes()
     config = json.loads(original)
     updated, changed = patched_config(config, settings, accounts)
+    selection_payload = None
+    if follow is not None:
+        try:
+            selection_payload = fetch_selection(settings)
+        except SyncError as error:
+            if str(error) in ('management_http_401', 'management_http_403'):
+                raise
+        except (OSError, subprocess.SubprocessError):
+            pass
+    selection, selection_changed = follow_selection(updated, settings, selection_payload)
     for mapping in changed:
         verify_profile(accounts[mapping['home_id']]['access_token'], mapping['email'])
     if stage:
         atomic_write(stage, encoded(updated))
-    elif not check and changed:
+    elif not check and (changed or selection_changed):
         backup = state / 'original-tokens.json'
-        if not backup.exists():
+        if changed and not backup.exists():
             claude = next(p for p in config['providers'] if p['id'] == 'claude')
             managed = {a['codexbar_id'] for a in settings['accounts']}
             originals = {a['id']: a['token'] for a in claude['tokenAccounts']['accounts'] if a['id'] in managed}
@@ -184,6 +292,7 @@ def sync(settings, state, stage=None, check=False):
     report = {'ok': True, 'mode': 'stage' if stage else 'check' if check else 'sync',
               'checked_at': dt.datetime.now(dt.timezone.utc).isoformat(),
               'changed_accounts': [a['label'] for a in changed],
+              'selection': selection,
               'accounts': [{'label': a['label'], 'email': a['email'],
                             'expires_at': accounts[a['home_id']]['expires_at']} for a in settings['accounts']]}
     atomic_write(state / 'status.json', encoded(report))
