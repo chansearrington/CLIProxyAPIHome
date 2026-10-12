@@ -32,6 +32,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0013 | Third shared Claude subscription | configuration + fleet record | — | **done** — Lara shared with all users, before Microsoft; all six keys verified; added to CodexBar and automatic token sync |
 | ws-0014 | Developer Claude subscription | configuration + fleet record | — | **done** — Developer shared and in CodexBar token sync; all six keys used it; reviewed quota percentage fix deployed and verified |
 | ws-0015 | Claude Code 503 after MacBook reboot | `fix/resp-subscription-tcp-timeout` | — | **deployed and verified** — bounded Linux subscription TCP acknowledgements, all-six-key and five-node native proofs; system key traced |
+| ws-0016 | Chip Claude subscription | configuration + fleet record | — | **done** — Chip shared with all users ahead of Microsoft; fifth CodexBar account with token sync; all-six-key and five-node proofs |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -148,3 +149,5 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
   and released locks. HTML guide includes the verified UI sharing steps.
 
 - 2026-10-11 — ws-0015 deployed at 05:49:04Z: Home `cpa-home:1.1.0-claude-fleet-16e6971` bounds Linux subscription TCP acknowledgements using the existing heartbeat timeout. MacBook reboot left an old membership blocking reconnects until 05:30Z; CPA heartbeat middleware explains the empty 503. PR #14 reviewed clean, merged-tree full tests and compile pass, isolated blackhole closes in 3.213 s. Fresh 4.4 GB backup integrity/SHA verified, all four locks renewed/released, six Claude keys + Codex/Copilot scopes + five native nodes + fresh Claude Code pass; 50/50 follow-up checks and stable memberships. Unassigned key 1 is Ark/Hyper’s pilot readiness key. Backup, image rollback, exact evidence, and guide update: [ws-0015](ws-0015-claude-reboot-reconnect.md).
+
+- 2026-10-12 — ws-0016 verified at 13:13 UTC: Chip (`chip@byfca.org`) bound to shared scope 1, priority 2 preserved ahead of private Microsoft. Added fifth CodexBar account and exact token-sync mapping; all five OAuth usage reads and scheduled sync pass. Fresh integrity-checked backup, all six client keys and five nodes verified, all locks released.

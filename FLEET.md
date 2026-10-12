@@ -106,10 +106,10 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - All five nodes have verified CPA 8.0.20 binaries, manifests and healthy membership;
   Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
   Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
-- Shared Claude order is HypeSports (5), Gmail (4), Lara (3), Developer (2); Microsoft (1)
-  remains Chanse-only emergency fallback. All six keys selected Lara in the latest ws-0015
-  routing proof; the earlier ws-0014 proof selected Developer while higher accounts were
-  exhausted. Four Claude accounts are in CodexBar with
+- Shared Claude order is HypeSports (6), Gmail (5), Lara (4), Developer (3), Chip (2); Microsoft (1)
+  remains Chanse-only emergency fallback. All six keys selected Developer in the latest ws-0016
+  routing proof while higher accounts were weekly-exhausted; the earlier ws-0015 proof
+  selected Lara. Five Claude accounts are in CodexBar with
   Home access-token sync every 120 seconds; Home alone owns refresh tokens.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
 - SQLite's writer remains single-connection. Dashboard reads use a separate bounded read-only
@@ -128,3 +128,6 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   [Developer Claude record](docs/fleet/ws-0014-developer-claude-shared.md).
 - Reboot-related empty 503 diagnosis, reconnect fix, latest backup/rollback, and system key:
   [reconnect record](docs/fleet/ws-0015-claude-reboot-reconnect.md).
+
+- Latest shared account, five-account CodexBar sync, backup and UI instructions:
+  [Chip Claude record](docs/fleet/ws-0016-chip-claude-shared.md).
