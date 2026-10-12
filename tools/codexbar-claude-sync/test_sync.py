@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 import sync
@@ -141,6 +142,133 @@ class SyncTests(unittest.TestCase):
             fetch.assert_called_once()
         self.assertTrue((self.root / 'auth-blocked').exists())
         self.assertEqual(json.loads(self.path.read_bytes()), self.config)
+
+    def enable_follow(self):
+        self.settings['follow_usage'] = {'client_key_id': 6, 'cpa_node_id': 'mac-node'}
+        self.config['providers'][1]['tokenAccounts']['accounts'][0]['token'] = 'sk-ant-oat-fake-token'
+        self.path.write_bytes(sync.encoded(self.config))
+        return {'selection': {'status': 'observed', 'credential_id': 'home-1',
+                              'usage_id': '123', 'timestamp': self.now.isoformat(),
+                              'client_key_id': 6, 'cpa_node_id': 'mac-node',
+                              'provider': 'claude', 'success': True}}
+
+    def test_follow_changes_selection_without_token_rotation(self):
+        selection = self.enable_follow()
+        selection['selection']['timestamp'] = dt.datetime.now(dt.timezone.utc).isoformat()
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'fetch_selection', return_value=selection), \
+             patch.object(sync, 'verify_profile') as profile:
+            report = sync.sync(self.settings, self.root)
+        expected = json.loads(json.dumps(self.config))
+        expected['providers'][1]['tokenAccounts']['activeIndex'] = 0
+        self.assertEqual(json.loads(self.path.read_bytes()), expected)
+        self.assertEqual(report['changed_accounts'], [])
+        self.assertEqual(report['selection']['label'], 'Test')
+        self.assertTrue(report['selection']['selection_changed'])
+        self.assertFalse((self.root / 'original-tokens.json').exists())
+        profile.assert_not_called()
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'fetch_selection', return_value=selection):
+            before = self.path.stat().st_mtime_ns
+            report = sync.sync(self.settings, self.root)
+        self.assertEqual(before, self.path.stat().st_mtime_ns)
+        self.assertFalse(report['selection']['selection_changed'])
+
+    def test_follow_rejects_wrong_scope_failure_stale_future_and_unknown_account(self):
+        selection = self.enable_follow()
+        for change in [{'client_key_id': 5}, {'client_key_id': True}, {'cpa_node_id': 'other-node'},
+                       {'provider': 'codex'}, {'success': False}, {'credential_id': 'unmapped'},
+                       {'timestamp': (self.now - dt.timedelta(days=2)).isoformat()},
+                       {'timestamp': (self.now + dt.timedelta(minutes=2)).isoformat()},
+                       {'timestamp': '2026-10-08T00:00:00'}, {'timestamp': 'malformed'}]:
+            with self.subTest(change=change):
+                payload = json.loads(json.dumps(selection))
+                payload['selection'].update(change)
+                config = json.loads(json.dumps(self.config))
+                _, changed = sync.follow_selection(config, self.settings, payload, self.now)
+                self.assertFalse(changed)
+                self.assertEqual(config, self.config)
+
+    def test_follow_uses_account_id_after_reordering(self):
+        selection = self.enable_follow()
+        stored = self.config['providers'][1]['tokenAccounts']
+        stored['accounts'].reverse()
+        stored['activeIndex'] = 0
+        report, changed = sync.follow_selection(self.config, self.settings, selection, self.now)
+        self.assertTrue(changed)
+        self.assertEqual(stored['activeIndex'], 1)
+        self.assertEqual(report['label'], 'Test')
+
+    def test_follow_unavailable_keeps_selection_and_still_rotates_tokens(self):
+        self.enable_follow()
+        self.payload['accounts'][0]['access_token'] = 'sk-ant-oat-new-fake'
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'fetch_selection', side_effect=sync.SyncError('remote credential read failed')), \
+             patch.object(sync, 'verify_profile'):
+            report = sync.sync(self.settings, self.root)
+        stored = json.loads(self.path.read_bytes())['providers'][1]['tokenAccounts']
+        self.assertEqual(stored['activeIndex'], 1)
+        self.assertEqual(stored['accounts'][0]['token'], 'sk-ant-oat-new-fake')
+        self.assertEqual(report['selection']['mode'], 'unavailable')
+
+    def test_follow_stage_and_check_leave_live_selection_untouched(self):
+        selection = self.enable_follow()
+        selection['selection']['timestamp'] = dt.datetime.now(dt.timezone.utc).isoformat()
+        original = self.path.read_bytes()
+        stage = self.root / 'stage.json'
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'fetch_selection', return_value=selection):
+            sync.sync(self.settings, self.root, check=True)
+            sync.sync(self.settings, self.root, stage=stage)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(json.loads(stage.read_bytes())['providers'][1]['tokenAccounts']['activeIndex'], 0)
+
+    def test_idle_and_malformed_follow_payload_preserve_selection(self):
+        self.enable_follow()
+        for payload in [None, {}, {'selection': None}, {'selection': {'status': 'idle'}}]:
+            report, changed = sync.follow_selection(self.config, self.settings, payload, self.now)
+            self.assertFalse(changed)
+            self.assertEqual(self.config['providers'][1]['tokenAccounts']['activeIndex'], 1)
+
+    def test_remote_usage_query_is_scoped_and_projects_identity_only(self):
+        self.enable_follow()
+        requests = []
+        row = {'id': '123', 'timestamp': self.now.isoformat(), 'failed': False, 'status': 'success',
+               'provider': 'claude', 'credential': {'credential_id': 'home-1'},
+               'client': {'api_key_id': 6, 'api_key_masked': 'never-export-masked-key'},
+               'runtime': {'cpa_node_id': 'mac-node'}, 'payload': 'never-export-prompt'}
+
+        class Opener:
+            def open(inner, request, timeout):
+                requests.append(request)
+                return io.StringIO(json.dumps({'items': [row]}))
+
+        with patch('pathlib.Path.read_text', return_value='MANAGEMENT_PASSWORD=never-export-secret'), \
+             patch('urllib.request.build_opener', return_value=Opener()), \
+             patch('subprocess.run') as run:
+            # Execute the same program passed over SSH while capturing only its stdout.
+            def execute(args, **kwargs):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    exec(kwargs['input'], {})
+                return subprocess.CompletedProcess(args, 0, output.getvalue(), '')
+            run.side_effect = execute
+            payload = sync.fetch_selection(self.settings)
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(requests[0].full_url).query)
+        self.assertEqual(query['client_key_id'], ['6'])
+        self.assertEqual(query['cpa_node'], ['mac-node'])
+        self.assertEqual(query['status'], ['success'])
+        self.assertEqual(query['provider'], ['claude'])
+        self.assertEqual(query['limit'], ['1'])
+        self.assertNotIn('never-export', json.dumps(payload))
+
+    def test_invalid_follow_settings_are_rejected(self):
+        for follow in [True, {}, {'client_key_id': True, 'cpa_node_id': 'mac'},
+                       {'client_key_id': 6, 'cpa_node_id': ''},
+                       {'client_key_id': 6, 'cpa_node_id': 'mac', 'max_age_hours': 0}]:
+            self.settings['follow_usage'] = follow
+            with self.assertRaises(sync.SyncError):
+                sync.validate_follow_settings(self.settings)
 
 
 if __name__ == '__main__':

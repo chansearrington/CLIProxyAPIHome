@@ -18,8 +18,9 @@ and [config persistence](https://github.com/steipete/CodexBar/blob/v0.60.3/Sourc
    Refresh tokens and the management password never enter the SSH response.
 3. Reject missing accounts, unexpected fields, identity mismatches, and tokens with less than
    60 seconds remaining. Verify every changed token's email against Anthropic's OAuth profile.
-4. Replace only the mapped CodexBar accounts' `token` fields using a mode-0600 atomic write.
-   Preserve other providers, account IDs, labels, selected accounts, and settings.
+4. Replace mapped CodexBar accounts' `token` fields using a mode-0600 atomic write.
+   Preserve other providers, account IDs, labels, and settings. Account selection is preserved
+   unless the optional usage-following setting below is enabled.
 5. Keep a private copy of the original managed tokens for rollback. Unchanged tokens cause
    no profile request or config write. Home/SSH/provider failures leave the config alone.
 
@@ -53,6 +54,30 @@ within two minutes of an online scheduled run. No service on Home needs installi
 `state_dir/status.json` contains non-secret status and expiry information. Keep the state
 directory private: `original-tokens.json` is the rollback copy of the old cookies/tokens.
 Avoid logging SSH responses or dumping CodexBar's config.
+
+## Follow CPA's selected Claude account
+
+The optional `follow_usage` settings object pins a numeric Home `client_key_id` and an exact
+`cpa_node_id`. The helper reads the latest successful Claude request through
+`GET /usage/records`, using those filters and `limit=1`. It independently checks the returned
+provider, success flag, exact key/node identity, and timestamp. It selects the mapped CodexBar
+account by UUID, resolving its current list index rather than storing a fixed index.
+
+This changes the account whose percentage CodexBar displays. It follows actual completed
+requests; it does not predict the next dispatch from quota or priority. Simultaneous sessions
+can use different credentials, so the most recent successful request wins. Only the pinned
+Mac/key affects selection; another user's fleet traffic cannot switch it.
+
+An idle lookup, unavailable API, stale observation (default 24 hours), or unmapped credential
+keeps the current selection. Token sync can still proceed when the usage lookup is unavailable.
+Authentication errors retain the existing failure latch. Status includes `selection.mode`,
+the followed label/email, observed timestamp, and whether selection changed, with no secrets.
+
+Automatic following runs at the LaunchAgent's polling interval, normally every 120 seconds,
+after Home ingests the request. Manual account choices are replaced on the next successful
+poll. To return to manual selection, remove `follow_usage` from the helper's settings or set
+it to `null`, then choose an account normally. Include every possible routing account,
+including a private fallback, in the local CodexBar list and exact helper mappings to follow it.
 
 ## Rollback
 

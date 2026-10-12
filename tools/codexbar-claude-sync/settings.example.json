@@ -4,6 +4,11 @@
   "management_url": "http://100.0.0.1:8327/v8/management",
   "codexbar_config": "/Users/example/.config/codexbar/config.json",
   "state_dir": "/Users/example/.local/state/cpa-codexbar-sync",
+  "follow_usage": {
+    "client_key_id": 6,
+    "cpa_node_id": "macbook-node-uuid",
+    "max_age_hours": 24
+  },
   "accounts": [
     {
       "label": "Example",
