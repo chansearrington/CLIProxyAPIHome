@@ -109,8 +109,9 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Shared Claude order is HypeSports (6), Gmail (5), Lara (4), Developer (3), Chip and Moxy (both 2); Microsoft (1)
   remains Chanse-only emergency fallback. All six keys and five nodes selected Moxy in the latest ws-0017
   routing proof while the other shared accounts were unavailable; earlier proofs selected
-  Developer (ws-0016) and Lara (ws-0015). Six Claude accounts are in CodexBar with
-  Home access-token sync every 120 seconds; Home alone owns refresh tokens.
+  Developer (ws-0016) and Lara (ws-0015). Six shared Claude accounts and the private Microsoft fallback are in CodexBar with
+  Home access-token sync every 120 seconds; selection now follows the MacBook/key-6 latest
+  successful Claude request. Home alone owns refresh tokens.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
 - SQLite's writer remains single-connection. Dashboard reads use a separate bounded read-only
   pool so they cannot queue scheduler/heartbeat operations behind analytics. Four-panel 24-hour
@@ -134,3 +135,6 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - Sixth shared account, immediate scope activation and actual Moxy routing proofs:
   [Moxy Claude record](docs/fleet/ws-0017-moxy-claude-shared.md).
+
+- Automatic menu-bar account selection, private fallback mapping, and manual-mode instructions:
+  [CodexBar routing follow record](docs/fleet/ws-0018-codexbar-follow-claude.md).

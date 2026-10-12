@@ -34,6 +34,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0015 | Claude Code 503 after MacBook reboot | `fix/resp-subscription-tcp-timeout` | — | **deployed and verified** — bounded Linux subscription TCP acknowledgements, all-six-key and five-node native proofs; system key traced |
 | ws-0016 | Chip Claude subscription | configuration + fleet record | — | **done** — Chip shared with all users ahead of Microsoft; fifth CodexBar account with token sync; all-six-key and five-node proofs |
 | ws-0017 | Moxy Claude subscription | configuration + fleet record | — | **done** — immediate shared scope activation, sixth CodexBar account and sync; actual Moxy selection for all six keys across five nodes |
+| ws-0018 | CodexBar follows CPA Claude routing | `fix/codexbar-claude-routing-follow` | — | **installed and verified** — reviewed PR #15, 17 Ark tests; Mac/key-scoped successful usage selects menu account; Microsoft fallback added locally |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -154,3 +155,5 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
 - 2026-10-12 — ws-0016 verified at 13:13 UTC: Chip (`chip@byfca.org`) bound to shared scope 1, priority 2 preserved ahead of private Microsoft. Added fifth CodexBar account and exact token-sync mapping; all five OAuth usage reads and scheduled sync pass. Fresh integrity-checked backup, all six client keys and five nodes verified, all locks released.
 
 - 2026-10-12 — ws-0017: Moxy (`moxy.kit@outlook.com`) immediately bound to shared scope 1 at priority 2 alongside Chip, ahead of Microsoft. Six-account CodexBar OAuth reads and automatic sync pass. Real inference attribution confirms Moxy for every key and all five nodes. Targeted pre-change snapshot and inverse API rollback used to prioritize immediate restoration; existing full verified backup retained. All locks released.
+
+- 2026-10-12 — ws-0018 installed and verified at 16:21 UTC: reviewed PR #15 merged, new local helper follows latest successful MacBook/key-6 Claude request and selects CodexBar by UUID without waiting for token rotation. Seven OAuth accounts including private Microsoft pass; default CodexBar usage and automatic sync follow Moxy. No Home/node configuration changes.
