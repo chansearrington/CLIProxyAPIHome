@@ -106,10 +106,10 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - All five nodes have verified CPA 8.0.20 binaries, manifests and healthy membership;
   Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
   Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
-- Shared Claude order is HypeSports (6), Gmail (5), Lara (4), Developer (3), Chip and Moxy (both 2); Microsoft (1)
+- Shared Claude order is Gmail (10), HypeSports (9), 82 (8), Chip (7), Developer (6), Moxy (5), Lara (4); Microsoft (1)
   remains Chanse-only emergency fallback. All six keys and five nodes selected Moxy in the latest ws-0017
   routing proof while the other shared accounts were unavailable; earlier proofs selected
-  Developer (ws-0016) and Lara (ws-0015). Six shared Claude accounts and the private Microsoft fallback are in CodexBar with
+  Developer (ws-0016) and Lara (ws-0015). Seven shared Claude accounts and the private Microsoft fallback are in CodexBar with
   Home access-token sync every 120 seconds; selection now follows the MacBook/key-6 latest
   successful Claude request. Home alone owns refresh tokens.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
@@ -138,3 +138,6 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - Automatic menu-bar account selection, private fallback mapping, and manual-mode instructions:
   [CodexBar routing follow record](docs/fleet/ws-0018-codexbar-follow-claude.md).
+
+- Account 82, eight-account CodexBar setup, visible menu order, and timestamp runtime fix:
+  [82 Claude record](docs/fleet/ws-0019-82-claude-shared.md).

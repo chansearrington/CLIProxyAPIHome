@@ -30,7 +30,8 @@ marker to resume. Other failures retry on the next scheduled run.
 
 ## Setup
 
-Requires Python 3.9+, SSH with a noninteractive working key and trusted host entry, and existing
+Requires Python 3.9+ for token-only sync, Python 3.11+ when usage following is enabled, SSH
+with a noninteractive working key and trusted host entry, and existing
 Claude token accounts in CodexBar. Create a private settings file using `settings.example.json`.
 Pin the exact Home credential UUID, CodexBar account UUID, and provider email for each account;
 do not infer identity from the label. `management_url` must be the host's local Home address.
@@ -56,6 +57,10 @@ directory private: `original-tokens.json` is the rollback copy of the old cookie
 Avoid logging SSH responses or dumping CodexBar's config.
 
 ## Follow CPA's selected Claude account
+
+Usage following requires Python 3.11+ because Home emits variable-precision RFC3339 timestamps
+that older `datetime.fromisoformat` implementations can reject. Point the LaunchAgent at an
+existing newer Python interpreter, such as `/opt/homebrew/bin/python3`, when appropriate.
 
 The optional `follow_usage` settings object pins a numeric Home `client_key_id` and an exact
 `cpa_node_id`. The helper reads the latest successful Claude request through
