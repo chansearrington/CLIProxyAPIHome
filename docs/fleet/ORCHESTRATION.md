@@ -36,6 +36,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0017 | Moxy Claude subscription | configuration + fleet record | — | **done** — immediate shared scope activation, sixth CodexBar account and sync; actual Moxy selection for all six keys across five nodes |
 | ws-0018 | CodexBar follows CPA Claude routing | `fix/codexbar-claude-routing-follow` | — | **installed and verified** — reviewed PR #15, 17 Ark tests; Mac/key-scoped successful usage selects menu account; Microsoft fallback added locally |
 | ws-0019 | Shared Claude account 82 | configuration + fleet record | — | **done** — shared scope and latest user priorities preserved; eight CodexBar accounts; visible menu reordered; timestamp-compatible sync runtime; actual 82 inference across all five nodes |
+| ws-0020 | Claude priority and node availability | official CPA 8.0.27 + agent-os enrollment pins | — | **deployed and verified** — captured cancellation regression fails on 8.0.20 and passes on 8.0.27; all five nodes updated, all six keys checked; priorities and genuine quota/private-provider fences preserved |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).

@@ -55,7 +55,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.20** (`0f96f568`, since 2026-10-08 UTC, ws-0011). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.27** (`bf934162`, since 2026-10-13 UTC, ws-0020). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -93,7 +93,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0011 upgrade; ws-0014 quota correction; ws-0015 reconnect fix, 2026-10-11 UTC)
+## Current verified runtime (ws-0011 upgrade; ws-0014 quota; ws-0015 reconnect; ws-0020 node availability, 2026-10-13 UTC)
 
 - Home is `cpa-home:1.1.0-claude-fleet-16e6971`, immutable image
   `sha256:a0622434ac0107c827f756a16a4bc0824c69673ba13e0057075d5a1589d20fc0`.
@@ -103,7 +103,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   1% used no longer appears 100% used and exhausted.
   The ws-0015 Linux subscription transport bound prevents unacknowledged heartbeat data
   from keeping a dead node's membership alive through the kernel's long retry window.
-- All five nodes have verified CPA 8.0.20 binaries, manifests and healthy membership;
+- All five nodes have verified CPA 8.0.27 binaries, manifests and healthy membership;
   Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
   Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
 - Shared Claude order is Gmail (10), HypeSports (9), 82 (8), Chip (7), Developer (6), Moxy (5), Lara (4); Microsoft (1)
@@ -113,6 +113,13 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   Home access-token sync every 120 seconds; selection now follows the MacBook/key-6 latest
   successful Claude request. Home alone owns refresh tokens.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
+- CPA 8.0.27 corrects the node's second availability check after Home dispatch. A canceled
+  Claude request with no retry deadline no longer makes the node skip Home's eligible
+  higher-priority credential. Higher numeric priorities run first; Microsoft at 1 remains last
+  among eligible accounts. At the ws-0020 daytime acceptance all seven shared accounts were
+  genuinely quota-blocked: all six keys passed native Codex; Chanse's Claude/Copilot backup
+  requests passed and the other five keys preserved their quota/private-provider fences.
+  [Verified correction and rollback record](docs/fleet/ws-0020-claude-priority-node-filter.md).
 - SQLite's writer remains single-connection. Dashboard reads use a separate bounded read-only
   pool so they cannot queue scheduler/heartbeat operations behind analytics. Four-panel 24-hour
   load passes. Seven-day overview can exceed the unchanged 10-second budget on the large database;

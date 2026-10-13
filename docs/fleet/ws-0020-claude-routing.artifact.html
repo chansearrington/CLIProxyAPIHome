@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude routing correction — October 13, 2026</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.6;background:#07131e;color:#ecf4f8}body{max-width:860px;margin:auto;padding:36px 24px 64px}h1{font-size:clamp(28px,5vw,42px);line-height:1.15}h2{font-size:23px;margin-top:32px}p{max-width:75ch}.date{color:#a6bbc9}.card{background:#112534;padding:22px;border-radius:14px;margin:24px 0}.accent{color:#74e3d1}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid #304859}a{color:#8be3ef}small{color:#a6bbc9}code{font-size:.9em}ul{padding-left:24px}
+</style>
+<body>
+<p class="date">CPA fleet · October 13, 2026 · Central time</p>
+<h1>Claude uses your account order correctly again</h1>
+<div class="card"><strong class="accent">Higher priority numbers run first.</strong>
+<p>Microsoft at priority <strong>1</strong> is the last available backup for Chanse. Your regular subscriptions have higher numbers and are shared with all users.</p></div>
+<h2>What went wrong</h2>
+<p>A canceled Opus request left a harmless error flag on Chip's account. CPA Home correctly considered it ready to try again. The older CPA node checked it a second time and incorrectly rejected it. That sent your requests to Microsoft, or gave shared users a 503 error. Sonnet could still use Chip, so different sessions showed different accounts.</p>
+<h2>What the update improves</h2>
+<p>CPA 8.0.27 includes the upstream correction: nodes trust Home's account selection. A cancellation without a waiting period no longer causes an otherwise eligible account to be skipped. Home still enforces real quota limits, account permissions and your priority order.</p>
+<p>The exact cancellation case failed on the old version and passed on the updated version, including normal requests, token counting, streaming and WebSocket requests. Each fleet node is restarted in place and checked individually.</p>
+<h2>Your account order</h2>
+<table aria-label="Claude account priority"><thead><tr><th>Account</th><th>Priority</th></tr></thead><tbody>
+<tr><td>Gmail</td><td>10 · first choice when available</td></tr>
+<tr><td>HypeSports</td><td>9</td></tr><tr><td>82</td><td>8</td></tr>
+<tr><td>Chip</td><td>7</td></tr><tr><td>Developer</td><td>6</td></tr>
+<tr><td>Moxy</td><td>5</td></tr><tr><td>Lara</td><td>4</td></tr>
+<tr><td>Microsoft</td><td>1 · Chanse's emergency backup</td></tr>
+</tbody></table>
+<h2>The next recorded resets</h2>
+<p>As of late morning October 13, all regular Claude subscriptions are blocked by real limits. Microsoft is the valid fallback at that time. The update restores routing behavior; it does not add quota.</p>
+<table aria-label="Upcoming Claude resets"><thead><tr><th>Account</th><th>October 13, Central time</th><th>Limit resetting</th></tr></thead><tbody>
+<tr><td>82</td><td>2:20 PM</td><td>Five-hour session; latest weekly reading had 59% left</td></tr>
+<tr><td>HypeSports and Chip</td><td>4:00 PM</td><td>Weekly</td></tr>
+<tr><td>Gmail</td><td>8:00 PM</td><td>Weekly</td></tr>
+</tbody></table>
+<p>These limits belong to accounts and are shared across Claude Code models. Once an account is eligible again, Home chooses the highest-priority eligible account for the next request.</p>
+<h2>Why CodexBar can show Microsoft</h2>
+<p>CodexBar follows the account used by the latest successful Claude request on your MacBook. It reports routing; it does not control it. It can switch between accounts when different models or sessions finish requests on different accounts. Its automatic token sync and all eight saved accounts are retained.</p>
+<p><a href="ws-0020-claude-priority-node-filter.md">Detailed verification and rollout record</a> · <a href="https://github.com/router-for-me/CLIProxyAPI/pull/6490">Upstream correction</a></p>
+<small>Reset times reflect provider/CPA readings taken during this investigation. Continued use can exhaust newly available quota.</small>
+</body>
+</html>
