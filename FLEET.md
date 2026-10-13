@@ -148,3 +148,6 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - Account 82, eight-account CodexBar setup, visible menu order, and timestamp runtime fix:
   [82 Claude record](docs/fleet/ws-0019-82-claude-shared.md).
+
+- Codex renewal without losing settings, permissions or history:
+  [identity-preserving reauthorization record](docs/fleet/ws-0021-codex-authorization-preserve-identity.md).
