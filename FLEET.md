@@ -93,10 +93,10 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0011 upgrade; ws-0014 quota; ws-0015 reconnect; ws-0020 node availability, 2026-10-13 UTC)
+## Current verified runtime (ws-0011 upgrade; ws-0014 quota; ws-0015 reconnect; ws-0020 node availability; ws-0022 plan badges, 2026-10-14 UTC)
 
-- Home is `cpa-home:1.1.0-claude-fleet-16e6971`, immutable image
-  `sha256:a0622434ac0107c827f756a16a4bc0824c69673ba13e0057075d5a1589d20fc0`.
+- Home is `cpa-home:1.1.0-claude-fleet-4e35cd4`, immutable image
+  `sha256:6c082596440ce369d22004b8cbbfb24dfa45500671adc12feacd8c382a1fb817`.
   Source integrates upstream 1.1.0 and all 81 fleet patches, plus Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
   The ws-0014 quota correction treats Claude utilization consistently as percentages, so
@@ -126,7 +126,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   this was reproduced with the old image too and remains a separate optimization follow-up.
 - Retain the verified fresh production backup and each node's `cli-proxy-api.8.0.7.bak`.
   Current image-only Home rollback targets immutable ID
-  `sha256:19143382b131c59add5e65ba2e83831a66c4bc127b0262b88a21c6024c833874`.
+  `sha256:a0622434ac0107c827f756a16a4bc0824c69673ba13e0057075d5a1589d20fc0`.
   The earlier major-upgrade rollback is recorded in ws-0011.
   Do not restore a stale database over newer rotating OAuth authorizations.
 - Evidence: [upgrade record](docs/fleet/ws-0011-upstream-fleet-upgrade.md).
@@ -151,3 +151,6 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - Codex renewal without losing settings, permissions or history:
   [identity-preserving reauthorization record](docs/fleet/ws-0021-codex-authorization-preserve-identity.md).
+
+- Automatic Claude subscription badges, source mapping, validation and image rollback:
+  [plan badge record](docs/fleet/ws-0022-claude-plan-badges.md).
