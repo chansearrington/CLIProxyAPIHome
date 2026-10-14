@@ -118,3 +118,8 @@ The fresh usage snapshot reported 0% session and weekly usage. Separately, the c
 still carried an earlier Anthropic HTTP-429 routing cooldown through `2026-10-14T15:20:00Z`.
 Plan verification does not establish successful inference, and no cooldown was cleared as
 part of this read-only plan check.
+
+Follow-up: the earlier routing cooldown was cleared at 11:00:54 UTC during the subsequent
+investigation. Real Sonnet/Opus requests then verified 82 is selected ahead of Microsoft;
+all six ordinary keys correctly selected higher-priority Gmail after its reset. See the
+[routing verification record](ws-0023-82-upgrade-routing-cooldown.md).
