@@ -1,12 +1,12 @@
 # Automatic Claude subscription badges
 
-Status: deployed and verified — all eight Claude plan badges populated; 2026-10-14 00:10 UTC. All locks released.
+Status: deployed and verified — all eight Claude plan badges populated; account 82's Max 20x upgrade verified 2026-10-14 10:55 UTC. All locks released.
 
 The user requested plan badges like the existing Codex badge on Home's Upstream credential
 list. The existing plan JSON shape and installed panel already support provider-independent
 badges; no panel, database schema or CPA node contract change is required.
 
-## Verified source of truth
+## Verified source of truth at deployment
 
 All eight live Anthropic OAuth profiles returned HTTP 200. Only plan fields were projected;
 account IDs, organization names and tokens were not printed or saved in this repository.
@@ -99,3 +99,22 @@ release all locks. On failed acceptance, roll the image back before investigatin
 
 Refresh **Upstream → Account Credentials** to load the plan badges. They are automatic,
 independent of quota exhaustion, and updated by Home's regular quota/profile collection.
+
+## Account 82 upgrade — 2026-10-14
+
+After the user upgraded `character82@gmail.com`, Home's automatic collection at
+`2026-10-14T10:51:27.700888622Z` persisted **Max 20x**, premium true. An independent live
+Anthropic profile read returned HTTP 200, organization `claude_max`, rate-limit tier
+`default_claude_max_20x`, and subscription status `active`. No manual plan override, new
+credential, configuration write or restart was needed.
+
+The original UUID `1f648cbe-96b5-4401-8062-1d7a462e483e` remains enabled at priority **8**;
+binding **15** still connects it to shared group **1**, included by all six current client
+keys. Independent current profile reads returned HTTP 200 and active subscriptions for
+all eight accounts. The current plan list is seven **Max 20x** accounts and Microsoft's **Enterprise**.
+The earlier Max 5x deployment observation above is retained as history.
+
+The fresh usage snapshot reported 0% session and weekly usage. Separately, the credential
+still carried an earlier Anthropic HTTP-429 routing cooldown through `2026-10-14T15:20:00Z`.
+Plan verification does not establish successful inference, and no cooldown was cleared as
+part of this read-only plan check.

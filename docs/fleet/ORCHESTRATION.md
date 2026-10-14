@@ -38,7 +38,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0019 | Shared Claude account 82 | configuration + fleet record | — | **done** — shared scope and latest user priorities preserved; eight CodexBar accounts; visible menu reordered; timestamp-compatible sync runtime; actual 82 inference across all five nodes |
 | ws-0020 | Claude priority and node availability | official CPA 8.0.27 + agent-os enrollment pins | — | **deployed and verified** — captured cancellation regression fails on 8.0.20 and passes on 8.0.27; all five nodes updated, all six keys checked; priorities and genuine quota/private-provider fences preserved |
 | ws-0021 | Codex reauthorization on original credential | configuration + fleet record | — | **done** — fresh OAuth fields transferred onto original UUID; duplicate removed; settings/access and 98,290 historical rows preserved; all six keys and four models pass; active entry and fresh quota verified |
-| ws-0022 | Automatic Claude plan badges | `fix/claude-plan-badges`, PR #16 | — | **deployed and verified** — six Max 20x, one Max 5x and one Enterprise; full Ark tests/build and reviewed merge; all six keys and five nodes pass; settings and 64 panel assets preserved |
+| ws-0022 | Automatic Claude plan badges | `fix/claude-plan-badges`, PR #16 | — | **deployed and verified** — seven Max 20x and one Enterprise after 82's automatic upgrade detection on 14 October; full Ark tests/build and reviewed merge; all six keys and five nodes passed deployment; settings and 64 panel assets preserved |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
