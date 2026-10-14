@@ -174,7 +174,11 @@ func TestCollectorSupportsClaudeAntigravityKimiAndXAI(t *testing.T) {
 		windows  int
 		assert   func(*testing.T, *cluster.QuotaCredentialSnapshot)
 	}{
-		{id: "claude-probe", provider: "claude", status: "healthy", windows: 3},
+		{id: "claude-probe", provider: "claude", status: "healthy", windows: 3, assert: func(t *testing.T, item *cluster.QuotaCredentialSnapshot) {
+			if item.Plan == nil || item.Plan.Name != "Team" {
+				t.Fatalf("Claude plan was not persisted: %+v", item.Plan)
+			}
+		}},
 		{id: "antigravity-probe", provider: "antigravity", status: "healthy", windows: 4, assert: func(t *testing.T, item *cluster.QuotaCredentialSnapshot) {
 			if len(item.PrimaryWindows) != 2 || item.PrimaryWindows[0].ScopeID == nil || item.PrimaryWindows[1].ScopeID == nil || *item.PrimaryWindows[0].ScopeID != "gemini" || *item.PrimaryWindows[1].ScopeID != "third-party" {
 				t.Fatalf("unexpected antigravity primary windows: %+v", item.PrimaryWindows)
@@ -236,6 +240,16 @@ func TestClaudeProfileFailureProducesPartialSnapshot(t *testing.T) {
 	repo := newCollectorTestRepository(t)
 	now := time.Date(2026, 7, 16, 7, 0, 0, 0, time.UTC)
 	seedCollectorProviderAuth(t, repo, "claude-partial", "claude", map[string]any{"type": "claude", "access_token": "claude-secret"})
+	oldObservedAt := now.Add(-time.Hour)
+	oldExpiresAt := now.Add(-time.Minute)
+	_, errSeed := repo.UpsertQuotaSnapshot(context.Background(), cluster.QuotaSnapshotWrite{
+		CredentialID: "claude-partial", QuotaStatus: "healthy", CollectionStatus: "success", Source: "active_probe",
+		ObservedAt: &oldObservedAt, ExpiresAt: &oldExpiresAt, NextProbeAt: &oldExpiresAt,
+		Plan: &cluster.QuotaPlan{Name: "Max 20x", Premium: true}, ReplacePlan: true,
+	})
+	if errSeed != nil {
+		t.Fatalf("seed Claude plan: %v", errSeed)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/usage" {
 			_, _ = w.Write([]byte(`{"five_hour":{"utilization":90,"resets_at":"2026-07-16T10:00:00Z"}}`))
@@ -253,6 +267,9 @@ func TestClaudeProfileFailureProducesPartialSnapshot(t *testing.T) {
 	}
 	if item.CollectionStatus != "partial" || item.QuotaStatus != "low" || len(item.Windows) != 1 || item.Error == nil || item.Error.Code != "UPSTREAM_RATE_LIMITED" {
 		t.Fatalf("unexpected Claude partial snapshot: %+v", item)
+	}
+	if item.Plan == nil || item.Plan.Name != "Max 20x" || !item.Plan.Premium {
+		t.Fatalf("profile failure discarded the last verified Claude plan: %+v", item.Plan)
 	}
 }
 

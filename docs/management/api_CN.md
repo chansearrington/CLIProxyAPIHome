@@ -2886,6 +2886,8 @@ Provider 未报告该能力或没有可靠观测时，`reset_credits` 为 `null`
 
 usage 活动归属于通过 `auth_index` 解析出的当前 DB 凭证，因此委托 executor 上报的 Provider 不会阻止定时采集；Provider 专用的被动观测仍要求上报 Provider 与凭证 Provider 一致。定时扫描发现已过期的 `collecting` lease 且没有可恢复的近期活动水位时，会清除 lease 并把采集状态恢复为 `idle`，不会再次请求上游。
 
+Claude 套餐徽章来自 profile 的 organization type、rate-limit tier 和 account flags，可显示 `Max 5x`、`Max 20x`、`Max`、`Pro`、`Team`、`Enterprise` 或明确标识的 `Free`。未知套餐不会按额度大小推测。usage 成功但 profile 请求失败时返回 `partial`，保留上次验证的套餐；有效 profile 中的未知套餐会清除旧套餐。
+
 ### POST `/quota/collect`
 
 启动一轮异步按需额度采集，返回进入本地 collector 队列的凭证数量。这是唯一非只读的额度端点。按需任务与定时采集共享进程级 Provider 并发限制；同一凭证在本地排队或执行期间会去重。
