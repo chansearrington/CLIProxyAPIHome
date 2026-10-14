@@ -40,6 +40,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0021 | Codex reauthorization on original credential | configuration + fleet record | — | **done** — fresh OAuth fields transferred onto original UUID; duplicate removed; settings/access and 98,290 historical rows preserved; all six keys and four models pass; active entry and fresh quota verified |
 | ws-0022 | Automatic Claude plan badges | `fix/claude-plan-badges`, PR #16 | — | **deployed and verified** — seven Max 20x and one Enterprise after 82's automatic upgrade detection on 14 October; full Ark tests/build and reviewed merge; all six keys and five nodes passed deployment; settings and 64 panel assets preserved |
 | ws-0023 | Account 82 routing after Max 20x upgrade | operational verification + fleet record | — | **resolved and verified** — earlier 429 cooldown cleared during investigation; native Sonnet/Opus select 82 over Microsoft; all six original keys select available higher-priority Gmail; settings/history preserved and temporary verification scopes removed |
+| ws-0024 | The Vanderblooms Claude subscription | configuration + fleet record | — | **done** — Pro account shared with all users, priority 3 after Lara and before Microsoft; ninth CodexBar account with token sync and automatic following; actual Sonnet selection across six keys/five nodes and Opus success |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
