@@ -30,14 +30,19 @@ func (c *Collector) probeClaude(ctx context.Context, auth *coreauth.Auth) (probe
 	profileBody, _, errProfile := c.probeRequest(ctx, auth, http.MethodGet, c.options.ClaudeProfileURL, nil, headers)
 	if errProfile != nil {
 		result.partial = true
+		result.preservePlan = true
 		result.collectionError = probeCollectionError(errProfile, c.options.Now().UTC())
 		return result, nil
 	}
-	if !validClaudeProfile(profileBody) {
+	plan, errPlan := parseClaudeProfilePlan(profileBody)
+	if errPlan != nil {
 		profileError := &probeError{code: "PROFILE_RESPONSE_INVALID", message: "Claude profile response could not be parsed.", retryable: true}
 		result.partial = true
+		result.preservePlan = true
 		result.collectionError = probeCollectionError(profileError, c.options.Now().UTC())
+		return result, nil
 	}
+	result.plan = plan
 	return result, nil
 }
 
@@ -206,12 +211,52 @@ func claudeExtraUsageWindow(input *claudeExtraUsage, observedAt time.Time) (clus
 	return window, true
 }
 
-func validClaudeProfile(body []byte) bool {
+func parseClaudeProfilePlan(body []byte) (*cluster.QuotaPlan, error) {
 	var payload struct {
-		Account      map[string]any `json:"account"`
-		Organization map[string]any `json:"organization"`
+		Account *struct {
+			HasClaudeMax bool `json:"has_claude_max"`
+			HasClaudePro bool `json:"has_claude_pro"`
+		} `json:"account"`
+		Organization *struct {
+			Type          string `json:"organization_type"`
+			RateLimitTier string `json:"rate_limit_tier"`
+		} `json:"organization"`
 	}
-	return json.Unmarshal(body, &payload) == nil && (payload.Account != nil || payload.Organization != nil)
+	if errDecode := json.Unmarshal(body, &payload); errDecode != nil {
+		return nil, fmt.Errorf("decode claude profile response: %w", errDecode)
+	}
+	if payload.Account == nil && payload.Organization == nil {
+		return nil, fmt.Errorf("claude profile response has no account or organization")
+	}
+	organizationType, rateLimitTier := "", ""
+	if payload.Organization != nil {
+		organizationType = strings.ToLower(strings.TrimSpace(payload.Organization.Type))
+		rateLimitTier = strings.ToLower(strings.TrimSpace(payload.Organization.RateLimitTier))
+	}
+	// Organization plans take precedence over individual account flags.
+	switch organizationType {
+	case "claude_enterprise":
+		return &cluster.QuotaPlan{Name: "Enterprise"}, nil
+	case "claude_team":
+		return &cluster.QuotaPlan{Name: "Team"}, nil
+	}
+	switch rateLimitTier {
+	case "default_claude_max_20x":
+		return &cluster.QuotaPlan{Name: "Max 20x", Premium: true}, nil
+	case "default_claude_max_5x":
+		return &cluster.QuotaPlan{Name: "Max 5x", Premium: true}, nil
+	}
+	if organizationType == "claude_max" || (payload.Account != nil && payload.Account.HasClaudeMax) {
+		return &cluster.QuotaPlan{Name: "Max", Premium: true}, nil
+	}
+	if organizationType == "claude_pro" || (payload.Account != nil && payload.Account.HasClaudePro) {
+		return &cluster.QuotaPlan{Name: "Pro"}, nil
+	}
+	if organizationType == "claude_free" {
+		return &cluster.QuotaPlan{Name: "Free"}, nil
+	}
+	// Unknown future tiers must not be guessed from quota sizes or billing amounts.
+	return nil, nil
 }
 
 type antigravityPayload struct {

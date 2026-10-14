@@ -341,7 +341,7 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 	input := cluster.QuotaSnapshotWrite{
 		CredentialID: auth.ID, QuotaStatus: status, CollectionStatus: collectionStatus, Source: "active_probe",
 		ObservedAt: &observedAt, MaxAcceptedObservedAt: &observedAt, ExpiresAt: &expiresAt, LastAttemptAt: &observedAt, LastSuccessAt: &observedAt,
-		NextProbeAt: &expiresAt, ConsecutiveFailure: 0, Error: result.collectionError, Plan: result.plan, ReplacePlan: true, ParserVersion: snapshotVersion, CollectorVersion: snapshotVersion,
+		NextProbeAt: &expiresAt, ConsecutiveFailure: 0, Error: result.collectionError, Plan: result.plan, ReplacePlan: !result.preservePlan, ParserVersion: snapshotVersion, CollectorVersion: snapshotVersion,
 		ResetCredits: result.resetCredits, ReplaceResetCredits: result.replaceResetCredits,
 		ExpectedProbeOwner: c.options.Owner, ClearProbeLease: true, ReplaceWindows: result.replaceWindows, Windows: result.windows,
 	}
@@ -374,6 +374,7 @@ type probeResult struct {
 	plan                *cluster.QuotaPlan
 	resetCredits        *cluster.QuotaResetCredits
 	partial             bool
+	preservePlan        bool
 	replaceWindows      bool
 	replaceResetCredits bool
 	collectionError     *cluster.QuotaCollectionError
