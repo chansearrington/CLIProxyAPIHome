@@ -85,7 +85,7 @@ Private evidence: `/tmp/cpa-home-native-fleet/` on the Mac and
   fnm rather than the hardcoded Homebrew path. The installer now resolves real executable
   directories and the catalog adapter uses the existing bounded login-shell CLI pattern.
   Subsequent scheduled Home execution passed. Failures remain honestly recorded in history.
-- Node worker runtime bundle: `d7b02b0aa45205aa`. It contains no Management secret or cross-node
+- Node worker runtime bundle: `08da935389e41a3f`. It contains no Management secret or cross-node
   SSH coordinator. The MacBook worker reports `current` and only executes its own optional node.
 - Home's required-node acceptance attestation reached the MacBook's private worker receipt:
   schema `home-fleet-accepted-core/v1`, CPA 8.0.30, all four required node IDs verified.
@@ -100,7 +100,7 @@ agent-os; its installer exits with a Home handoff notice. Legacy plists are arch
 Old one-tap/manual recovery tools remain historical; the Easy pilot remains disabled.
 
 Verification: full Go suite and compile on Ark; deterministic fleet state-machine, lease,
-identity, rollback, review, namespace and Management API tests; seven offline worker tests;
+identity, rollback, review, namespace and Management API tests; eight offline worker tests;
 25 focused agent-os enrollment/pin tests plus the Home-receipt case; workflow lint passed.
 No existing CPA payload shape changed and the live official CPA 8.0.30 clients passed after cutover.
 The node executor protocol is versioned/additive. Major/minor approval is exposed in Home's
@@ -109,3 +109,5 @@ Management API; the existing panel bundle is preserved rather than claiming new 
 For manual maintenance, pause Home policy and let active tasks finish/reconcile before taking
 normal fleet locks. A permanently unavailable task owner requires operator reconciliation;
 expired tasks never permit silent fleet advancement. Worker/config/binary receipts remain private.
+
+A resumed core update must match the retained post-restart manifest as well as file SHA256. A candidate file without restart acceptance is reported for rollback/reconciliation, rather than being falsely acknowledged as a running upgrade.

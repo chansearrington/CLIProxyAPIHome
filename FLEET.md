@@ -132,7 +132,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   scaling limit remains a separate optimization follow-up, not a claimed update regression or fix.
 - Retain the verified fresh production backup and each node's `cli-proxy-api.8.0.7.bak`.
   Current image-only Home rollback targets immutable ID
-  `sha256:6c082596440ce369d22004b8cbbfb24dfa45500671adc12feacd8c382a1fb817`.
+  `sha256:76499632b410686ec14a68abbd26360369bd82cbace1ed77bc4617a2c207ba72`.
   The earlier major-upgrade rollback is recorded in ws-0011.
   Do not restore a stale database over newer rotating OAuth authorizations.
 - Evidence: [upgrade record](docs/fleet/ws-0011-upstream-fleet-upgrade.md).

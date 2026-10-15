@@ -66,4 +66,13 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(receipt['version'],'8.0.30')
             self.assertNotIn('token',receipt)
 
+    def test_resumed_update_cannot_acknowledge_new_file_without_verified_restart_manifest(self):
+        release={'version':'8.0.31','sha256':'b'*64,'size':100}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'install-manifest.json').write_text(json.dumps({'core_version':'8.0.30','core_sha256':'a'*64}))
+            with patch.object(worker,'inventory',return_value=release):
+                with self.assertRaisesRegex(worker.WorkerError,'installed_binary_needs_reconciliation'):
+                    worker.install_binary({'service_root':str(root)},{'operation':'upgrade','release':release},root,None)
+
 if __name__=='__main__':unittest.main()

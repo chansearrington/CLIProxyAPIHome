@@ -186,6 +186,9 @@ def install_binary(settings, job, state, lease):
     if rollback and current['sha256'] == release['sha256']:
         return
     if not rollback and current['sha256'] == release['sha256']:
+        manifest=json.loads((root/'install-manifest.json').read_bytes())
+        if manifest.get('core_sha256')!=release['sha256'] or manifest.get('core_version')!=release['version']:
+            raise WorkerError('installed_binary_needs_reconciliation')
         post_upgrade_probe(settings)
         return
     if not rollback:
