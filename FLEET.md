@@ -173,6 +173,22 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   their email addresses. Account UUIDs, tokens, ordering, priorities and permissions are
   preserved. [Plan/label verification](docs/fleet/ws-0028-max20-email-labels.md).
 
+- Since 2026-10-15 19:34 UTC, shared Codex order is `chanse.arrington@gmail.com`
+  (priority **2**, new shared binding 23), then `chansearrington@hotmail.com`
+  (priority **1**, original UUID/binding preserved). All six keys and five nodes pass
+  native Codex requests. CodexBar monitors both accounts with Home-owned access-token
+  sync and follows successful MacBook/key-6 Codex usage every 120 seconds.
+  Home alone owns refresh tokens; native Codex auth and all ten Claude mappings remain intact.
+  [Second Codex verification and rollback](docs/fleet/ws-0029-second-codex-account.md).
+
+- Current model-menu/node currency: all four OpenClaw gateways expose the 55 shared current
+  CPA models, including Opus 5.5 and Sol 6.1. All five nodes run verified CPA 8.0.30.
+  Home now owns catalog sync and guarded patch rollout through its DB-backed `/fleet` API;
+  the initial laptop coordinator from ws-0030 is retired.
+  User-confirmed defaults are Sol 6.1 for Moxy/Chip and Opus 5.5 for Lara/Hyper;
+  corresponding fallbacks are updated. Existing session pins stay intact. OpenClaw core remains 2026.9.4.
+  [Current Home automation and pause instructions](docs/fleet/ws-0031-home-native-fleet.md).
+
 ## Home-owned fleet maintenance
 
 The laptop fleet coordinator is superseded by Home's DB-backed `/fleet` control plane and

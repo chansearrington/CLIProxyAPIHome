@@ -45,6 +45,9 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0026 | CodexBar unresponsive menu | local preference mitigation + fleet record | — | **mitigated and verified** — captured WebKit/audio main-thread blocks; optional OpenAI Web Extras and quota-warning sounds disabled; all ten Claude accounts and sync preserved; normal event-loop samples across refresh/sync observation |
 | ws-0027 | Released fleet updates and Sol 1M in Claude Code | Home PR #17 + staged fleet/client rollout | — | **deployed and verified** — Home 1.1.1, five CPA 8.0.29 nodes, five Claude Code 2.1.300 clients, CodexBar 0.75; actual 900K Sol request and tool call pass; existing overview timeout confirmed on both images |
 | ws-0028 | Max 20x badges and CodexBar email labels | scoped quota collection + local config | — | **done** — both provider-backed Max 20x snapshots fresh; ten email labels, OAuth usage and scheduled following pass; all six keys native Claude 200; locks released |
+| ws-0029 | Second Codex subscription | configuration + local CodexBar helper | — | **done** — Gmail priority 2/shared, Hotmail 1; six keys/five nodes native Codex pass; both CodexBar accounts, access-only sync and automatic following verified |
+| ws-0030 | Current model menus and automatic CPA patch currency | agent-os controller + fleet configuration | — | **done** — 55 shared current models selectable on four agents; five CPA 8.0.30 nodes; native Opus/Sol and six-key proofs; hourly catalog and guarded patch automation verified |
+| ws-0031 | Home-native fleet maintenance | CPA Home fleet service + certificate-bound local workers | — | **done** — Home owns policy/scheduling/history; four mini tasks verified with laptop coordinators absent; native inference/scopes/panel preserved |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
