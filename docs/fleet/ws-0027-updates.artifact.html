@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Your CPA fleet update — October 14, 2026</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17342e;background:#f4f6f0;font-size:16px;line-height:1.65}*{box-sizing:border-box}body{margin:0}main{max-width:1060px;margin:auto;padding:64px 28px 80px}header{max-width:800px;margin-bottom:40px}.eyebrow{font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;font-weight:750;color:#526e60}h1{font-size:clamp(2.4rem,6vw,4.5rem);line-height:1.08;letter-spacing:-.05em;margin:16px 0 24px}h2{font-size:1.65rem;line-height:1.25;margin:0 0 16px;letter-spacing:-.025em}h3{font-size:1.1rem;margin:0 0 10px}p{margin:0 0 16px}a{color:#07644d;text-underline-offset:4px}a:focus-visible{outline:3px solid #e09c31;outline-offset:4px}.lede{font-size:1.25rem;color:#4b6558}.badge{display:inline-block;border-radius:24px;padding:7px 14px;background:#d9eadb;font-size:.8rem;font-weight:700}.card{background:white;border:1px solid #d9e2d6;border-radius:20px;padding:28px;margin:24px 0}.feature{background:#153c31;color:#fff;padding:36px}.feature p{color:#d9e9df}.feature a{color:#cbf2d2}.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.grid .card{margin:0}.muted{color:#53685a}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.94rem;text-align:left}th{font-size:.73rem;text-transform:uppercase;letter-spacing:.08em;color:#526b5a}th,td{padding:13px 12px;border-bottom:1px solid #e3e9df;vertical-align:top}td:first-child{font-weight:650}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.87em;overflow-wrap:anywhere}pre{padding:18px;background:#0f2f26;border:1px solid #456759;border-radius:12px;overflow-x:auto;color:#ecf6eb}.note{background:#fff4df;border-color:#e8d4a9}.small{font-size:.86rem}.checks{padding-left:22px}.checks li{margin:8px 0}footer{margin-top:40px;color:#5b6d5f;font-size:.85rem}@media(max-width:650px){main{padding:36px 18px 56px}.grid{grid-template-columns:1fr}.card,.feature{padding:22px}th,td{padding:10px 8px}}
+</style>
+</head>
+<body><main>
+<header>
+<p class="eyebrow">Your update guide · October 14, 2026, Central time</p>
+<h1>A current fleet.<br>A bigger window for Sol.</h1>
+<p class="lede">Home, all five proxy nodes, Claude Code and CodexBar are on their current released versions. Your accounts, priorities, permissions and history stay in place.</p>
+<span class="badge">Deployed · real routing and large-context checks passed</span>
+</header>
+
+<section class="card feature" aria-labelledby="sol-title">
+<p class="eyebrow" style="color:#b7d8bf">Ready in Claude Code on your MacBook</p>
+<h2 id="sol-title">GPT 6.1 Sol — High · 1M</h2>
+<p>Open <code>/model</code> and choose this new entry. It runs Sol through your CPA node and Home, using your Codex subscription, with high reasoning and a one-million-token context window.</p>
+<p>The larger window gives a long conversation more room before it needs summarizing. Automatic compaction is set to 900,000 tokens to leave room for the next reply and tool results.</p>
+<pre><code>claude --model 'gpt-6.1-sol(high)[1m]'</code></pre>
+<p class="small">Verified beyond the menu: a real request used <strong>900,341 input tokens</strong> and returned the correct answer. A fresh Claude Code run also executed a Bash tool successfully and reported a 1,000,000-token window. Larger requests consume more usage.</p>
+</section>
+
+<section class="card" aria-labelledby="versions-title">
+<h2 id="versions-title">What is running now</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Component</th><th scope="col">Before</th><th scope="col">Now</th><th scope="col">Where</th></tr></thead>
+<tbody>
+<tr><td>CPA Home</td><td>1.1.0 fleet fork</td><td>1.1.1 fleet fork</td><td>Ark, including the official Home panel</td></tr>
+<tr><td>CPA nodes</td><td>8.0.27</td><td>8.0.29</td><td>MacBook, Moxy, Hyper, Lara, Chip</td></tr>
+<tr><td>Claude Code</td><td>2.1.286 on the minis</td><td>2.1.300</td><td>All five machines; MacBook was already current</td></tr>
+<tr><td>CodexBar</td><td>0.60.3</td><td>0.75.0</td><td>Your MacBook</td></tr>
+<tr><td>Codex CLI</td><td>0.162.1</td><td>0.162.1</td><td>Already current on your MacBook</td></tr>
+<tr><td>Copilot plugin fork</td><td>0.3.7</td><td>0.3.7</td><td>Already current across the nodes</td></tr>
+</tbody></table></div>
+</section>
+
+<div class="grid">
+<section class="card" aria-labelledby="home-title"><h2 id="home-title">Home knows more</h2>
+<p>Home gains more detailed per-model availability information, making account and cooldown problems easier to investigate.</p>
+<p>Codex plan labels can update after token refresh. OAuth credential editing gains better control over excluded models. New capability information also helps supported clients discover Claude tool search.</p>
+<p class="small muted">The fleet's existing priority, quota, refresh-safety and database changes are included in the new build.</p></section>
+<section class="card" aria-labelledby="nodes-title"><h2 id="nodes-title">Fewer tool and connection problems</h2>
+<p>The node updates improve handling of MCP tool names and preserve prompt-cache reuse when Claude discovers its first deferred tool. They also improve tool-schema translation, stream handling and connection recovery.</p>
+<p>The newer Claude Code release includes fixes around reconnecting MCP servers, tool information after compaction, resumed conversations and automatic tool search.</p>
+<p class="small muted">Your global tool-search setting stays enabled. This update does not fully remove the previously identified differences in deferred tool loading when Claude Code uses Codex through CPA.</p></section>
+</div>
+
+<section class="card" aria-labelledby="bar-title"><h2 id="bar-title">CodexBar keeps your ten Claude accounts</h2>
+<p>The current app gives you more control over which Claude reset, extra-usage, credit and plan-date information appears. It also includes provider and usage-display fixes. Your existing ten Claude account entries, token sync and automatic selection remain in place. All ten return usage with the installed app's normal source selection.</p>
+<p>CodexBar still follows the account actually used by this MacBook through CPA. During the final checks, both Home's request history and CodexBar selected <strong>82</strong>.</p>
+<p class="small muted">The earlier freeze workaround remains: optional OpenAI Web Extras and warning sounds stay off; silent alerts stay on. A post-update process sample showed the normal menu event loop without the previously captured audio blocks. This is a bounded check, not a guarantee against every future app hang.</p></section>
+
+<section class="card" aria-labelledby="checks-title"><h2 id="checks-title">What was checked</h2>
+<ul class="checks">
+<li>All six client keys completed Claude and Sol requests. The private Copilot request also passed.</li>
+<li>Every proxy node passed its own requests, binary verification, readiness and Home membership/plugin checks.</li>
+<li>All 14 credential identities and static settings, client-key permissions and channel bindings matched their previous values.</li>
+<li>The full Home test suite and compile passed. The updated database remained readable by the previous Home image in an isolated rehearsal.</li>
+<li>Release digests, app signature and all 64 served Home panel files were verified. Previous images, node executables and the CodexBar app are retained for rollback.</li>
+</ul></section>
+
+<section class="card note" aria-labelledby="limit-title"><h2 id="limit-title">One existing dashboard limitation remains</h2>
+<p>A large 24-hour usage-overview query can exceed Home's query timeout. We rolled Home back and reproduced the same failure on the previous image before keeping the update.</p>
+<p>The one-hour overview works. The tested 24-hour aggregate rankings, usage records and request events also work. This update does not claim to fix the large overview query.</p></section>
+
+<footer>
+<p>Latest released versions rechecked October 15 UTC. Released updates were used; unreleased development changes were not deployed.</p>
+<p>Official changes: <a href="https://github.com/router-for-me/CLIProxyAPIHome/releases/tag/v1.1.1">Home 1.1.1</a> · <a href="https://github.com/router-for-me/CLIProxyAPI/compare/v8.0.27...v8.0.29">CPA node updates</a> · <a href="https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md">Claude Code</a> · <a href="https://github.com/steipete/CodexBar/releases/tag/v0.75.0">CodexBar 0.75</a></p>
+<p><a href="ws-0027-latest-sol-context.md">Detailed deployment and rollback record</a> · <a href="ws-0011-updates.artifact.html">Earlier fleet update guide</a></p>
+</footer>
+</main></body></html>

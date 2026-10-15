@@ -55,7 +55,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.27** (`bf934162`, since 2026-10-13 UTC, ws-0020). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.29** (`5fc580b1`, since 2026-10-15 UTC, ws-0027). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -93,17 +93,17 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0011 upgrade; ws-0014 quota; ws-0015 reconnect; ws-0020 node availability; ws-0022 plan badges, 2026-10-14 UTC)
+## Current verified runtime (ws-0027 released fleet updates, 2026-10-15 UTC)
 
-- Home is `cpa-home:1.1.0-claude-fleet-4e35cd4`, immutable image
-  `sha256:6c082596440ce369d22004b8cbbfb24dfa45500671adc12feacd8c382a1fb817`.
-  Source integrates upstream 1.1.0 and all 81 fleet patches, plus Claude refresh safety,
+- Home is `cpa-home:1.1.1-claude-fleet-f6ebd63`, immutable image
+  `sha256:76499632b410686ec14a68abbd26360369bd82cbace1ed77bc4617a2c207ba72`.
+  Source integrates released upstream 1.1.1 and preserves all deployed fleet patches, including Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
   The ws-0014 quota correction treats Claude utilization consistently as percentages, so
   1% used no longer appears 100% used and exhausted.
   The ws-0015 Linux subscription transport bound prevents unacknowledged heartbeat data
   from keeping a dead node's membership alive through the kernel's long retry window.
-- All five nodes have verified CPA 8.0.27 binaries, manifests and healthy membership;
+- All five nodes have verified CPA 8.0.29 binaries, manifests and healthy membership;
   Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
   Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
 - Shared Claude order is Gmail (10), HypeSports (9), 82 (8), Chip (7), Developer (6), Moxy (5), Lara (4), The Vanderblooms (3), Hyper Rally (2); Microsoft (1)
@@ -113,7 +113,8 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   Nine shared Claude accounts and the private Microsoft fallback are in CodexBar with
   Home access-token sync every 120 seconds; selection now follows the MacBook/key-6 latest
   successful Claude request. Home alone owns refresh tokens.
-  The ws-0026 local freeze mitigation disables CodexBar's optional OpenAI Web Extras and
+  CodexBar is now 0.75.0; all ten OAuth accounts and scheduled sync/follow pass.
+  The ws-0026 local freeze mitigation still disables CodexBar's optional OpenAI Web Extras and
   quota-warning sounds, avoiding captured WebKit/audio main-thread blocks. Silent warnings,
   all ten Claude account entries, token sync and automatic account following remain enabled.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
@@ -125,12 +126,13 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   requests passed and the other five keys preserved their quota/private-provider fences.
   [Verified correction and rollback record](docs/fleet/ws-0020-claude-priority-node-filter.md).
 - SQLite's writer remains single-connection. Dashboard reads use a separate bounded read-only
-  pool so they cannot queue scheduler/heartbeat operations behind analytics. Four-panel 24-hour
-  load passes. Seven-day overview can exceed the unchanged 10-second budget on the large database;
-  this was reproduced with the old image too and remains a separate optimization follow-up.
+  pool so they cannot queue scheduler/heartbeat operations behind analytics. The tested 24-hour
+  overview now exceeds the unchanged query budget on both old and new images; the one-hour
+  overview passes, and 24-hour aggregates, usage records and request events pass. This existing
+  scaling limit remains a separate optimization follow-up, not a claimed update regression or fix.
 - Retain the verified fresh production backup and each node's `cli-proxy-api.8.0.7.bak`.
   Current image-only Home rollback targets immutable ID
-  `sha256:a0622434ac0107c827f756a16a4bc0824c69673ba13e0057075d5a1589d20fc0`.
+  `sha256:6c082596440ce369d22004b8cbbfb24dfa45500671adc12feacd8c382a1fb817`.
   The earlier major-upgrade rollback is recorded in ws-0011.
   Do not restore a stale database over newer rotating OAuth authorizations.
 - Evidence: [upgrade record](docs/fleet/ws-0011-upstream-fleet-upgrade.md).
@@ -158,3 +160,9 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 - Automatic Claude subscription badges, source mapping, validation and image rollback:
   [plan badge record](docs/fleet/ws-0022-claude-plan-badges.md).
+
+- Current update, verified 900,341-token Sol request, client versions, panel, rollback and known dashboard limitation:
+  [ws-0027 deployment record](docs/fleet/ws-0027-latest-sol-context.md).
+  Plain-language [latest update guide](docs/fleet/ws-0027-updates.artifact.html).
+  Claude Code now offers **GPT 6.1 Sol — High · 1M**, model `gpt-6.1-sol(high)[1m]`,
+  with high reasoning and 900K automatic compaction. All five Claude Code clients are 2.1.300.
