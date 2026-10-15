@@ -42,6 +42,7 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0023 | Account 82 routing after Max 20x upgrade | operational verification + fleet record | — | **resolved and verified** — earlier 429 cooldown cleared during investigation; native Sonnet/Opus select 82 over Microsoft; all six original keys select available higher-priority Gmail; settings/history preserved and temporary verification scopes removed |
 | ws-0024 | The Vanderblooms Claude subscription | configuration + fleet record | — | **done** — Pro account shared with all users, priority 3 after Lara and before Microsoft; ninth CodexBar account with token sync and automatic following; actual Sonnet selection across six keys/five nodes and Opus success |
 | ws-0025 | Hyper Rally Claude subscription | configuration + fleet record | — | **done** — Max 5x account shared with all users, priority 2 after The Vanderblooms and before Microsoft; tenth CodexBar account with token sync and following; actual Sonnet selection across six keys/five nodes and Opus success |
+| ws-0026 | CodexBar unresponsive menu | local preference mitigation + fleet record | — | **mitigated and verified** — captured WebKit/audio main-thread blocks; optional OpenAI Web Extras and quota-warning sounds disabled; all ten Claude accounts and sync preserved; normal event-loop samples across refresh/sync observation |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).

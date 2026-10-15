@@ -113,6 +113,9 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   Nine shared Claude accounts and the private Microsoft fallback are in CodexBar with
   Home access-token sync every 120 seconds; selection now follows the MacBook/key-6 latest
   successful Claude request. Home alone owns refresh tokens.
+  The ws-0026 local freeze mitigation disables CodexBar's optional OpenAI Web Extras and
+  quota-warning sounds, avoiding captured WebKit/audio main-thread blocks. Silent warnings,
+  all ten Claude account entries, token sync and automatic account following remain enabled.
   Fresh native Codex defaults to CPA, executes a real shell tool and shows no daemon mismatch.
 - CPA 8.0.27 corrects the node's second availability check after Home dispatch. A canceled
   Claude request with no retry deadline no longer makes the node skip Home's eligible
