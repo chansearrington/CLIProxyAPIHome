@@ -1,0 +1,2096 @@
+#!/bin/sh
+# fleet-lock — per-agent live-box mutual exclusion for the agent-os fleet.
+#
+# WHY THIS EXISTS (plain English): only ONE person/session at a time may make changes
+# on a live agent's Mac mini. Two parallel Claude sessions both SSH-ing into Moxy's box
+# and running `openclaw ...` at the same time would step on each other. This tool is the
+# turnstile: you must "acquire" an agent's lock before you touch its live box, and
+# "release" it when you're done. The lock is a real file ON the target mini, so it works
+# no matter which laptop/session is driving.
+#
+# COMMANDS
+#   fleet-lock acquire   <agent> "<intent>" grab the lock (fails if someone else holds it
+#                                           and it isn't stale; re-acquiring your own lock
+#                                           just refreshes its timestamp)
+#   fleet-lock release   <agent>            free the lock (only the holder may)
+#   fleet-lock heartbeat <agent>            renew your held lock's liveness (holder only).
+#                                           NOTHING calls this for you automatically — see
+#                                           "hold" below for the one built-in way renewal
+#                                           actually happens without you remembering to type
+#                                           this yourself every so often.
+#   fleet-lock check    <agent>             cheap "do I STILL hold this, right now?" gate —
+#                                           read-only; tells you apart LOST / LAPSED / HELD
+#                                           (see cmd_check for the exact wording+exit codes).
+#   fleet-lock hold <agent> "<intent>" -- <command...>
+#                                           acquire (or refresh) the lock, auto-renew it for
+#                                           as long as <command> runs, then release it (only
+#                                           if THIS call created it) and stop renewing when
+#                                           <command> exits. This is the scoped, bounded way
+#                                           to get automatic renewal for one operation.
+#   fleet-lock status   [agent]             show holder(s), intent, age, liveness, TTL left.
+#                                           An UNREACHABLE box prints UNKNOWN (never UNLOCKED).
+#   fleet-lock steal <agent> --force [--evict-live] ["<intent>"]
+#                                           override a stale/abandoned lock (prints who was
+#                                           evicted). A genuinely LIVE (heartbeating) holder ALSO
+#                                           needs --evict-live -- --force alone is only ever enough
+#                                           against a STALE holder or an empty lock. Disabled by
+#                                           default for an AUTOMATED caller; every steal AND every
+#                                           refused attempt is logged -- see "STEAL IS AUDITED +
+#                                           DEFAULT-DENY" below.
+#   fleet-lock whoami                       print how THIS tool resolves your identity right now
+#                                           (holder, session, actor, actor-source, and whether
+#                                           you're agent-distinct from a same-session peer) — no
+#                                           lock, no network, exit 0 always. See "PER-AGENT
+#                                           IDENTITY" below for what "actor" means and why it
+#                                           exists.
+#   fleet-lock capabilities                 machine-readable: version + every FLEET_LOCK_* var and
+#                                           subcommand THIS copy honours (ws-166). No lock, no
+#                                           network, exit 0 ALWAYS — even handed a FLEET_LOCK_* var
+#                                           this copy doesn't honour (the documented escape hatch
+#                                           for the exit-4 refusal below; see fl_check_env_allowlist).
+#   fleet-lock --version                    print the version and exit 0. Same exemption as above.
+#
+#   <agent> is one of: moxy | lara | chip | hyper
+#
+# NOTHING RENEWS A HELD LOCK AUTOMATICALLY unless you use "hold". A bare `acquire` gets you a
+# lock that lapses after HEARTBEAT_TTL (300s) of silence — that used to be a real, undetected
+# gap: a long-running operation could silently outlive its own lock with no warning anywhere
+# (a real incident: docs/runbooks/workboard-pro-deploy.md). "check" detects that after the
+# fact; "hold" is the way to prevent it happening in the first place, for one bounded scope.
+#
+# EXIT CODES:  0 ok · 1 blocked/refused/LOST/LAPSED · 2 usage · 3 UNKNOWN/unreachable
+#              (DO NOT PROCEED) · 4 was handed a FLEET_LOCK_* var this copy doesn't honour (ws-166)
+#              — EXCEPT capabilities / --version / -h|--help|help, which NEVER hit exit 4: they are
+#              the documented escape hatch for it (fixed declarations, not derived answers — see
+#              fl_check_env_allowlist / main()'s dispatch comment for why that distinction matters).
+#
+# HOW THE LOCK IS STORED
+#   The authoritative lock is a DIRECTORY on the target mini:  ~/.openclaw/.agent-os.lock
+#   Created atomically with `mkdir` (POSIX-atomic: it either creates it or fails — no race).
+#   A payload file inside (meta.json) records who holds it and why, as JSON:
+#     {holder, session, worktree, intent, host, acquired_at, heartbeat_at, ttl_seconds,
+#      actor, actor_source}
+#   Liveness is heartbeat-based: a holder that keeps heartbeating (heartbeat_at within
+#   HEARTBEAT_TTL, 300s) is live and NOT reclaimable; one that stops is "stale" and reclaimable.
+#   ttl_seconds (1800s) is only the LEGACY absolute cap for meta with no heartbeat_at.
+#
+# UNKNOWN vs UNLOCKED (the core safety invariant): if the box can't be reached we CANNOT tell
+#   whether it's locked, so status prints UNKNOWN and exits 3 — never a falsely-clean UNLOCKED.
+#   acquire/steal refuse (exit 3) on an unreachable host rather than guess.
+#
+# PER-AGENT IDENTITY (ws-127): `holder` (user@host) + `session` (CLAUDE_CODE_SESSION_ID, etc.)
+#   identify a SESSION, not an agent. Two agent-teams leads (workstream-lead teammates) sharing
+#   ONE Claude Code session are, by that alone, ONE identity — so lead B could check/release/
+#   heartbeat lead A's live lock and be told it was B's own (found by ws-71 with two real locks
+#   held). `actor` is the fix: a THIRD identity signal, resolved with this precedence —
+#     1) FLEET_LOCK_ACTOR   — explicit override (source: env). Set this in any context that knows
+#        its own identity but can't be auto-detected.
+#     2) --agent-name       — parsed from `ps -o args= -p "$CLAUDE_PID"` (source: agent). This is
+#        how a workstream-lead's own workstream slug is recovered automatically.
+#     3) (nothing resolves) — source: none. `acquire` warns loudly when this happens: the
+#        resulting lock is session-scoped only, exactly like before ws-127.
+#   Ownership (release/heartbeat/check/idempotent-refresh) requires holder+session+actor to
+#   match — POSITIVE equality, never a negated blacklist (fl_meta_is_mine has the full table).
+#   `fleet-lock whoami` prints what this box resolves for you, right now, with no lock and no
+#   network — the audit answer to "can we even tell agents apart here?"
+#
+# STEAL IS AUDITED + DEFAULT-DENY (ws-165)
+#   `steal --force` used to destroy the evidence: it evicted a holder unconditionally (no
+#   freshness/staleness check at all, unlike acquire) and nothing on disk (or anywhere else)
+#   recorded who was evicted, when, or why -- the ONLY trace was one line printed to whoever's
+#   terminal happened to be running the steal, gone the moment that scrollback was gone. Two fixes:
+#     1) AUDITED. Every steal -- and every REFUSED steal attempt -- appends a line to a local audit
+#        log: $FLEET_LOCK_AUDIT_LOG if set, else $FLEET_LOCK_ROOT/steal.log in simulation mode, else
+#        control-plane/locks/steal.log. The evicted holder's identity/intent/liveness ALSO survive
+#        inside the new lock's own meta.json, as stolen_from*/stolen_at* fields (visible via
+#        `status`) that a same-identity heartbeat/refresh carries forward. Writing a real STOLEN
+#        event is FAIL-CLOSED: if the audit line cannot be written, the steal itself is refused
+#        rather than proceeding unaudited (a REFUSED line, by contrast, is best-effort -- the
+#        operation is already refused, so a failed log there cannot un-refuse it).
+#     2) DEFAULT-DENY for an automated caller. steal now refuses (exit 1) unless it can positively
+#        prove a human is driving it. A recognized automation env marker (CI, a Claude-agent marker,
+#        FLEET_LOCK_NONINTERACTIVE) refuses immediately, no prompt. A real TTY on both stdin and
+#        stderr is NOT, by itself, proof of a human -- tmux/screen/`ssh -tt`/expect/`docker -t` all
+#        hold a pty with nobody at the keyboard, and a caller that automated has EVERY env marker
+#        above absent -- so a TTY earns only the CHANCE to ask: a bounded interactive confirmation on
+#        /dev/tty that requires the operator to type the agent's name (not `y`, not Enter -- a
+#        deliberate, non-reflexive act), after showing them the current holder, its intent, and its
+#        liveness so it is a real decision. A mismatched/empty/timed-out answer, or a /dev/tty this
+#        process cannot open, all DENY -- "can't confirm" is exactly "can't tell" and lands on the
+#        same side as every other unclassifiable context (see fl_steal_context / fl_steal_confirm).
+#        A human opts out of BOTH the automation check and the prompt with FLEET_LOCK_ALLOW_STEAL=1.
+#        This is INDEPENDENT of the pre-existing FLEET_LOCK_NO_FORCE (still hard-disables steal
+#        outright, still NOT overridable by FLEET_LOCK_ALLOW_STEAL): NO_FORCE is opt-IN -- a caller
+#        has to remember to set it on itself -- while this is the opt-OUT complement, safe by default
+#        instead of safe only if remembered at exactly the moment it matters least to whoever forgot.
+#   Evicting a holder that is currently LIVE (heartbeating, not stale) additionally requires
+#   --evict-live; --force alone remains enough against a STALE holder or an empty lock (no change
+#   there from before ws-165).
+#   STEALING YOUR OWN ALREADY-HELD LOCK is not a steal (fl_meta_is_mine says so — the same check
+#   release/heartbeat/check/acquire's idempotent-refresh already use): it is a no-op self-refresh,
+#   regardless of --evict-live, and logs a SELF-REFRESH line, never a STOLEN one. See
+#   docs/reference/ws-165-steal-audit-design.md § "Self-steal is a refresh, not a steal".
+#
+# SIMULATION MODE (for testing WITHOUT a real mini)
+#   If FLEET_LOCK_ROOT is set (e.g. /tmp/fleet-lock-test), the lock lives on the LOCAL
+#   filesystem under $FLEET_LOCK_ROOT/<agent>/.agent-os.lock instead of over SSH. This lets
+#   the full acquire/release/steal/status logic be tested with no network and no mini.
+#   test-fleet-lock.sh proves the mutual-exclusion guarantees this way.
+#
+# LOCAL-AGENT MODE (for a job running ON its own mini)
+#   Set BOTH FLEET_LOCK_LOCAL_AGENT=<agent> and
+#   FLEET_LOCK_LOCAL_STATE_DIR=$HOME/.openclaw. The lock then lives at
+#   <state-dir>/.agent-os.lock, with no SSH-to-self. This is an actual local transport, not
+#   simulation: it is restricted to exactly the configured agent, uses a distinct status label,
+#   and reuses the same ownership, heartbeat, hold, release, and stale-reclaim policy as SSH.
+#   FLEET_LOCK_ROOT cannot be combined with these variables.
+#
+# SECRETS: this tool never reads or prints secrets. It only writes non-secret identity
+# metadata (who/why/when). Safe to log.
+#
+# POSIX sh — no bashisms; runs under /bin/sh, dash, or zsh.
+
+set -eu
+
+# ---------------------------------------------------------------------------
+# Config: agent -> host mapping. Sourced from a small config file so the host
+# list is NOT hardcoded here and the enforcement hook can read the SAME source.
+# Resolution order:
+#   1) $FLEET_LOCK_HOSTS_FILE (explicit override)
+#   2) <repo>/control-plane/locks/fleet-hosts.conf (checked-in default)
+# Format (one per line):  <agent> <ssh-target>   e.g.  moxy moxy@192.168.1.12
+# Lines starting with # and blank lines are ignored.
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# repo root = two levels up from shared/scripts/
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+
+fl_hosts_file() {
+  if [ -n "${FLEET_LOCK_HOSTS_FILE:-}" ]; then
+    printf '%s\n' "$FLEET_LOCK_HOSTS_FILE"
+  else
+    printf '%s\n' "$REPO_ROOT/control-plane/locks/fleet-hosts.conf"
+  fi
+}
+
+VALID_AGENTS="moxy lara chip hyper"
+
+fl_is_valid_agent() {
+  for a in $VALID_AGENTS; do
+    [ "$1" = "$a" ] && return 0
+  done
+  return 1
+}
+
+# Look up the ssh target for an agent from the hosts config. Empty if unknown.
+fl_host_for() {
+  _agent=$1
+  _hf=$(fl_hosts_file)
+  [ -f "$_hf" ] || return 0
+  # first match wins; ignore comments/blanks
+  awk -v a="$_agent" '
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*$/ {next}
+    { if ($1 == a) { print $2; exit } }
+  ' "$_hf"
+}
+
+TTL_DEFAULT=1800               # absolute cap, used only for LEGACY meta with no heartbeat_at
+HEARTBEAT_TTL_DEFAULT=300      # liveness TTL: a live holder renews heartbeat_at within this window;
+                              # a holder that STOPS heartbeating past this is reclaimable. This is
+                              # the primary staleness signal (see meta_is_stale).
+LOCK_NAME=".agent-os.lock"     # the mkdir-created directory
+META_NAME="meta.json"          # payload file inside the lock dir
+
+FL_VERSION=3                    # bump whenever a subcommand or a FLEET_LOCK_* var is added/removed.
+                                 # `capabilities` / `--version` report this; nothing else consumes it.
+
+# ---------------------------------------------------------------------------
+# Honoured FLEET_LOCK_* env vars + subcommands (ws-166) — WHY THIS EXISTS:
+#
+# A worktree branched BEFORE a new FLEET_LOCK_* var (e.g. FLEET_LOCK_ACTOR, added ws-127) was added
+# runs an OLD copy of this script. Handed that var, the old copy reads every var it knows with the
+# same `${VAR:-}` idiom — so it has NO WAY to notice it was just handed a safety input it does not
+# understand. Measured (ws-166): the pre-ws-127 script printed "acquired: moxy …", exit 0, having
+# silently ignored FLEET_LOCK_ACTOR entirely — no warning anywhere, no field recording it. That is
+# the exact defect class this fleet keeps rediscovering: an ignored safety input that looks like
+# success.
+#
+# We cannot retrofit that old copy. What we CAN do is make THIS copy — and every copy going
+# forward — refuse to repeat the mistake: any FLEET_LOCK_* var NOT declared in FL_ENV_ALLOWLIST is a
+# LOUD refusal (fl_check_env_allowlist, exit 4), never a silent no-op. That way the NEXT capability
+# added after this one inherits the protection automatically, instead of relying on someone to
+# remember to add a check for it.
+#
+# 🔴 ADDING A NEW FLEET_LOCK_* VAR REQUIRES ADDING IT HERE, IN THE SAME COMMIT. Skip this and the new
+# var is REFUSED by every build (including this one) rather than silently ignored by an old one —
+# deliberate: a loud "I don't know this var" beats a quiet ignore, every time.
+#
+# shared/scripts/test-fleet-lock-input-strictness.sh asserts FL_ENV_HONOURED against the script's
+# OWN SOURCE (every `$FLEET_LOCK_*` / `${FLEET_LOCK_*` read below) — so this comment cannot go stale
+# without the test noticing.
+#
+# 🔴 POST-HOC FIX (ws-166 GAP-4): the refusal above is unconditional for every REAL command, but three
+# pure DECLARATION-PRINTERS — `capabilities` / `--version` / `-h`|`--help`|`help` — are exempt (see
+# main()'s dispatch and fl_check_env_allowlist_soft below). They are the escape hatch this exact
+# refusal points a reader at ("Or: fleet-lock capabilities"); the residual scenario that makes the
+# exemption load-bearing, not cosmetic, is an operator's OWN shell profile exporting a stray
+# FLEET_LOCK_* var (nobody remembers exporting) — the var is still set no matter which fleet-lock
+# subcommand they try next, so the remedy has to work under the exact condition that triggered it.
+# ---------------------------------------------------------------------------
+# ws-165's four steal-safety vars (ALLOW_STEAL, AUDIT_LOG, CONFIRM_TIMEOUT, NONINTERACTIVE) are
+# declared here as part of the ws-165 × ws-166 merge. 🟢 THIS IS THE ALLOWLIST WORKING, NOT A CHORE:
+# the two workstreams were in flight simultaneously, ws-165 added four new FLEET_LOCK_* vars with no
+# knowledge of this guard, and on merge the rot-guard in
+# test-fleet-lock-input-strictness.sh FAILED LOUDLY naming all four — which is precisely the outcome
+# this workstream exists to produce. Before this guard, four unregistered safety inputs would have
+# been read by some copies of the script and silently ignored by others, with nothing reporting it.
+FL_ENV_HONOURED="FLEET_LOCK_ACTOR FLEET_LOCK_ALLOW_STEAL FLEET_LOCK_AUDIT_LOG FLEET_LOCK_CONFIRM_TIMEOUT FLEET_LOCK_HOSTS_FILE FLEET_LOCK_LOCAL_AGENT FLEET_LOCK_LOCAL_STATE_DIR FLEET_LOCK_NO_FORCE FLEET_LOCK_NONINTERACTIVE FLEET_LOCK_RENEW_INTERVAL FLEET_LOCK_ROOT FLEET_LOCK_SESSION FLEET_LOCK_SIM_UNREACHABLE"
+
+# FL_ENV_PASSTHROUGH — vars in the SAME FLEET_LOCK_* namespace that belong to a COMPANION tool, not
+# to fleet-lock itself, but that measurably end up in fleet-lock's own environment as a side effect
+# of how that companion tool invokes it — so refusing them would be a false positive, not a caught
+# defect. This is a real, measured coupling (ws-166), not a hypothetical:
+#   - FLEET_LOCK_NO_AUTO_RENEW — read by .claude/hooks/enforce-fleet-lock.sh only (see
+#     hook-internals.md). When that hook auto-renews a lock it already confirmed you own, it shells
+#     out to THIS script (`sh "$FLEET_LOCK" heartbeat "$g"`) from the SAME process tree — so if the
+#     hook's own invocation carried FLEET_LOCK_NO_AUTO_RENEW=1, that fleet-lock subcall inherits it
+#     too, even though fleet-lock never reads it. Confirmed by running
+#     shared/scripts/test-enforce-fleet-lock-hook.sh: without this entry, its
+#     FLEET_LOCK_NO_AUTO_RENEW=1 case broke (fleet-lock exit 4) purely from this change.
+#   - FLEET_LOCK_HOOK — read only by shared/scripts/test-enforce-fleet-lock-hook.sh itself (chooses
+#     which hook copy to test against a prior revision — "CI never sets it"). The same inheritance
+#     mechanism applies if a developer ever runs that ONE dev-only workflow with it set.
+# `capabilities` reports these under the DISTINCT tag `env-passthrough`, never `env` — `env` means
+# "this copy actually reads and acts on it"; `env-passthrough` means "known to arrive from a
+# companion tool's env, deliberately not refused, but otherwise ignored."
+FL_ENV_PASSTHROUGH="FLEET_LOCK_NO_AUTO_RENEW FLEET_LOCK_HOOK"
+
+# Every real subcommand (every `cmd_<name>` function main() can dispatch to). ONE declaration,
+# consumed by BOTH `capabilities` (below) and main()'s dispatch (`"cmd_$_cmd" "$@"` — a POSIX-safe
+# dynamic function call, not eval: $_cmd is only ever used this way AFTER fl_is_known_command has
+# matched it against this exact list). There is no second, hand-maintained command list to drift.
+FL_COMMANDS="acquire release heartbeat check hold status steal whoami capabilities"
+
+fl_is_known_command() {
+  for _c in $FL_COMMANDS; do
+    [ "$1" = "$_c" ] && return 0
+  done
+  return 1
+}
+
+# Scan the REAL environment for any FLEET_LOCK_* name not in FL_ENV_HONOURED or FL_ENV_PASSTHROUGH.
+# Uses awk's ENVIRON array (a genuine per-variable iteration) rather than text-parsing `env`'s
+# NAME=VALUE output, which would be corruptible by a value containing an embedded newline. Prints
+# one offending name per line; empty output means clean.
+fl_scan_unknown_env_vars() {
+  awk -v allow="$FL_ENV_HONOURED $FL_ENV_PASSTHROUGH" '
+    BEGIN {
+      n = split(allow, arr, " ");
+      for (i = 1; i <= n; i++) allowed[arr[i]] = 1;
+      for (name in ENVIRON) {
+        if (name ~ /^FLEET_LOCK_/ && !(name in allowed)) print name;
+      }
+    }
+  '
+}
+
+# Called FIRST in main() for every REAL command — acquire/release/heartbeat/check/hold/status/
+# steal/whoami/capabilities — including status/whoami, a diagnostic command that silently trusted
+# an unrecognised safety input would be worse than useless. Exit 4 is distinct from every other
+# fleet-lock exit code (0 ok, 1 blocked/refused, 2 usage, 3 UNKNOWN/unreachable) precisely so a
+# caller can tell "this input was refused because this copy doesn't know it" apart from every other
+# failure shape.
+#
+# 🔴 GAP-4 CORRECTION: `capabilities` / `--version` / `-h`|`--help`|`help` do NOT go through this
+# function — see main()'s dispatch, which routes them to fl_check_env_allowlist_soft instead. See
+# that function's own header, and the FL_ENV_HONOURED block comment above, for why those three
+# specifically are exempt and `whoami` deliberately is not.
+fl_check_env_allowlist() {
+  _unknown=$(fl_scan_unknown_env_vars)
+  [ -z "$_unknown" ] && return 0
+  _list=$(printf '%s' "$_unknown" | tr '\n' ' ' | sed 's/ *$//')
+  _first=$(printf '%s\n' "$_unknown" | head -n1)
+  printf 'fleet-lock: REFUSING — was handed %s, which this build does not honour.\n' "$_list" >&2
+  printf '  This copy may predate the capability your instructions assume (e.g. a worktree branched\n' >&2
+  printf '  before %s was added would silently ignore it instead of erroring — ws-166).\n' "$_first" >&2
+  printf '  These two ALWAYS run — even with %s still set, because they print a fixed declaration,\n' "$_first" >&2
+  printf '  not a derived answer, so no input this copy misunderstands can change what they say:\n' >&2
+  printf '    shared/scripts/fleet-lock capabilities   # every var + subcommand this copy honours\n' >&2
+  printf '    shared/scripts/fleet-lock --version\n' >&2
+  printf '  Or:      shared/scripts/fleet-tooling-check --requires "fleet-lock:%s"\n' "$_first" >&2
+  exit 4
+}
+
+# Soft counterpart, used ONLY by the three declaration-only commands (see main()'s dispatch case).
+# Same detection as fl_check_env_allowlist — same offending names, same stderr warning, nothing
+# silently swallowed — but it returns 0 instead of exiting 4, and it stashes the offending names in
+# FL_UNKNOWN_ENV_VARS so `cmd_capabilities` can ALSO surface them on stdout as `unknown-env <NAME>`
+# lines: a THIRD, distinct tag alongside `env` ("this copy reads and acts on this var") and
+# `env-passthrough` ("a companion tool's var, known to arrive here, deliberately not refused, but
+# otherwise ignored") — `unknown-env` means "this copy does not recognise this var at all", which is
+# exactly the information the exit-4 refusal above would otherwise have carried, so following the
+# escape hatch never loses it.
+fl_check_env_allowlist_soft() {
+  FL_UNKNOWN_ENV_VARS=$(fl_scan_unknown_env_vars)
+  [ -z "$FL_UNKNOWN_ENV_VARS" ] && return 0
+  _list=$(printf '%s' "$FL_UNKNOWN_ENV_VARS" | tr '\n' ' ' | sed 's/ *$//')
+  printf 'fleet-lock: WARNING — was handed %s, which this build does not honour.\n' "$_list" >&2
+  printf '  NOT refusing here: this command prints a fixed declaration only (no lock, no network,\n' >&2
+  printf '  acts on nothing) and is the documented escape hatch for the exit-4 refusal — see the\n' >&2
+  printf '  "unknown-env" line(s) in its own output for exactly what was ignored.\n' >&2
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Identity of THIS caller (non-secret). Used to decide "same holder" vs "other".
+# ---------------------------------------------------------------------------
+fl_holder() {
+  # A stable identity for the human/machine driving this session.
+  printf '%s@%s' "$(id -un 2>/dev/null || echo unknown)" "$(hostname -s 2>/dev/null || echo host)"
+}
+fl_session() {
+  # Session id so two sessions on the SAME machine are still distinct AND the SAME
+  # session stays recognizable across separate CLI invocations (needed for idempotent
+  # re-acquire and for release to recognize its own lock).
+  #
+  #   1) CLAUDE_SESSION_ID      — legacy harness var; stable across a session when present.
+  #   2) FLEET_LOCK_SESSION     — explicit override; MUST outrank CLAUDE_CODE_SESSION_ID so a
+  #      caller (or the test harness) that deliberately pins a distinct identity always wins over
+  #      an ambient session var. Reordering this below CCSID collapsed every pinned test session
+  #      onto one ambient id and broke mutual exclusion (WS-17 review catch: 6 suite failures).
+  #   3) CLAUDE_CODE_SESSION_ID — the var the current Claude Code CLI actually injects. Read here
+  #      too (after the override), or a background/worktree session — where CLAUDE_SESSION_ID is
+  #      unset — stamps a per-shell token the enforce-fleet-lock hook can't match → it blocks the
+  #      real holder (WS-17). The hook mirrors this EXACT precedence.
+  #   4) a stable per-login token file — so a plain shell (no env var) that calls this
+  #      script twice is treated as the SAME holder both times, not two PIDs.
+  if [ -n "${CLAUDE_SESSION_ID:-}" ]; then printf 'cc-%s' "$CLAUDE_SESSION_ID"; return; fi
+  if [ -n "${FLEET_LOCK_SESSION:-}" ]; then printf '%s' "$FLEET_LOCK_SESSION"; return; fi
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then printf 'cc-%s' "$CLAUDE_CODE_SESSION_ID"; return; fi
+  # Stable token: one per login session (keyed by SID/PPID under $TMPDIR). Created once,
+  # reused thereafter — so repeat invocations from the same shell share an identity.
+  _tokdir="${TMPDIR:-/tmp}/fleet-lock-session-$(id -u 2>/dev/null || echo 0)"
+  if [ -n "${FLEET_LOCK_ROOT:-}" ]; then
+    _tokkey=sim
+  elif [ -n "${FLEET_LOCK_LOCAL_AGENT:-}" ]; then
+    _tokkey="local-$FLEET_LOCK_LOCAL_AGENT"
+  else
+    _tokkey=live
+  fi
+  _tokfile="$_tokdir/$_tokkey"
+  mkdir -p "$_tokdir" 2>/dev/null || true
+  if [ ! -f "$_tokfile" ]; then
+    printf 'sh-%s-%s' "$(date +%s)" "$$" > "$_tokfile" 2>/dev/null || { printf 'pid-%s' "$$"; return; }
+  fi
+  cat "$_tokfile" 2>/dev/null || printf 'pid-%s' "$$"
+}
+fl_worktree() {
+  printf '%s' "${CLAUDE_PROJECT_DIR:-$REPO_ROOT}"
+}
+
+fl_now() { date +%s; }
+# ISO-8601 UTC, no -d/-r: `date -u +FORMAT` with no flags beyond -u is the one spelling that is
+# byte-identical on BSD date (the mac minis, this laptop) and GNU date (CI's ubuntu-latest).
+fl_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ---------------------------------------------------------------------------
+# fl_actor / fl_actor_source (ws-127) — a per-AGENT identity, distinct from fl_holder/fl_session
+# (which identify a SESSION). See the "PER-AGENT IDENTITY" header comment for why this exists.
+# ---------------------------------------------------------------------------
+
+# Keep an actor value confined to characters that are safe EVERYWHERE it is later used:
+#   - embedded in flat JSON and read back by json_get, whose regex assumes a string value
+#     contains no literal '"', ',', or '}' anywhere in it (see the "Tiny JSON helpers" comment
+#     below) — any of those would silently truncate or corrupt the captured value.
+#   - printed as one whitespace-delimited field on the `status` holder line
+#     ("holder=… session=… actor=… age=…") — a space INSIDE the actor value would silently merge
+#     two fields into one for any caller (including the enforce-fleet-lock hook) that parses that
+#     line by simple token/grep matching, exactly the class of bug this whole workstream exists to
+#     close.
+# Rather than reject an unsafe value outright — which would just make e.g.
+# FLEET_LOCK_ACTOR="lead A" silently degrade all the way to actor_source=none, a WORSE outcome
+# than a still-useful sanitized token — strip anything outside [A-Za-z0-9._/-] and let the caller
+# decide what to do with an empty result (fl_actor/fl_actor_source both treat "sanitizes to empty"
+# exactly like "was never provided", falling through to the next precedence level).
+fl_sanitize_actor() { # <raw-value> -> sanitized value (may be empty)
+  # Two steps, and the SECOND one is a real security fix, not tidiness (ws-127 review, measured):
+  #
+  #  1. Restrict to a charset that cannot corrupt the flat-JSON payload `json_get` parses.
+  #  2. Require at least one ALPHANUMERIC character, or resolve to empty.
+  #
+  # Why step 2 exists. `status` renders a lock with no actor as the literal sentinel `actor=-`, and
+  # the PreToolUse hook reads ownership off that rendered line. The charset in step 1 permits `-`,
+  # `.`, `_` and `/` — so a value that sanitizes to exactly `-` (e.g. FLEET_LOCK_ACTOR='-', or any
+  # junk whose only surviving character is a dash) used to be stored as a REAL actor that rendered
+  # IDENTICALLY to "no actor at all". The two halves of this control then disagreed:
+  #   - fleet-lock itself compared the stored string and correctly REFUSED a peer's release (exit 1);
+  #   - the hook saw `actor=-`, read it as "absent", matched it against a caller with no actor, and
+  #     ALLOWED that caller's live-box MUTATION (measured: hook exit 0).
+  # That is a bypass of the very collision this field exists to prevent, and it is the more
+  # dangerous half — the mutation runs on the live box before any release is ever attempted.
+  # Requiring an alphanumeric makes the sentinel UNAMBIGUOUS: `actor=-` now means "no actor",
+  # always, in both halves. Note this is a POSITIVE requirement (must contain an alnum), not a
+  # blacklist of known-bad values — an unrecognized or degenerate value therefore lands on the
+  # safe side (no actor, which is treated as "cannot prove ownership") instead of masquerading
+  # as a real one.
+  # 🔴 STEP 1 IS ALL-OR-NOTHING: REJECT a value with disallowed characters, NEVER STRIP IT.
+  # (ws-127 second review — a measured, end-to-end bypass, and the GENERALIZATION of the sentinel
+  # bug described above. That earlier fix treated one symptom; this is the disease.)
+  #
+  # STRIPPING IS LOSSY, AND LOSSY MEANS MANY-TO-ONE. `tr -cd` mapped two DIFFERENT, entirely
+  # plausible identities onto ONE stored token:
+  #     FLEET_LOCK_ACTOR='lead A'  -> leadA
+  #     FLEET_LOCK_ACTOR='leadA'   -> leadA
+  # Measured: agent A acquired moxy, and agent B — a genuinely different agent — RELEASED A's live,
+  # in-progress lock with exit 0 and no warning anywhere. The hook allowed B's live-box mutation
+  # too. That is the exact collision this whole field exists to prevent, reintroduced by the
+  # sanitizer itself.
+  #
+  # It is worse than the sentinel bug because of WHO it hits: `FLEET_LOCK_ACTOR` is precisely the
+  # recovery step this PR's own docs and operator.md tell a human to use on the DEGRADED fallback
+  # substrate. A human typing a natural name with a space got silent collision on the one path
+  # they were told to trust.
+  #
+  # WHY REJECTING TO EMPTY IS NOT SUFFICIENT, and why the caller must HARD-FAIL instead: two
+  # different invalid values would both resolve to "no actor", and the ownership table's
+  # both-absent row treats that as a match — so a silent downgrade rebuilds the same collision one
+  # level down. An explicitly-set-but-invalid actor is therefore a LOUD REFUSAL at every command
+  # that acts on ownership (see fl_require_valid_actor_env), never a quiet fallback.
+  case "$1" in
+    *[!A-Za-z0-9._/-]*) printf ''; return ;;   # any disallowed char -> reject WHOLLY, never strip
+  esac
+  # Positive requirement (not a blacklist): must contain at least one ALPHANUMERIC. This keeps the
+  # `actor=-` sentinel unambiguous — see the long note above for the hook-fails-open bypass it
+  # closes — so a degenerate all-punctuation value lands on the safe side rather than masquerading
+  # as a real identity that renders identically to "absent".
+  case "$1" in
+    *[A-Za-z0-9]*) printf '%s' "$1" ;;
+    *)             printf '' ;;
+  esac
+}
+
+# Is FLEET_LOCK_ACTOR set to something we REFUSED? Distinguishes "no actor was requested" (fine —
+# fall through to the next precedence level) from "an actor was requested and it is INVALID" (never
+# fine: silently continuing would either mangle the identity or downgrade it to the both-absent row,
+# and both rebuild the collision this field exists to prevent).
+fl_actor_env_is_invalid() {
+  [ -n "${FLEET_LOCK_ACTOR:-}" ] || return 1
+  [ -z "$(fl_sanitize_actor "$FLEET_LOCK_ACTOR")" ]
+}
+
+# Refuse loudly, at every command that acts on ownership. Exit 2 (usage) — the caller asked for an
+# identity we cannot honour, which is a mistake in the request, not a lock conflict. Deliberately
+# NOT called by `status`/`whoami`: those are the DIAGNOSTIC commands, and a tool that dies instead
+# of telling you what is wrong with your identity is exactly the dead end this workstream keeps
+# finding in its own error paths.
+fl_require_valid_actor_env() {
+  fl_actor_env_is_invalid || return 0
+  printf 'fleet-lock: FLEET_LOCK_ACTOR is set to an INVALID agent identity: "%s"\n' "$FLEET_LOCK_ACTOR" >&2
+  printf '  Allowed: letters, digits, and . _ / - only, with at least one letter or digit.\n' >&2
+  printf '  NOTE: the value is REJECTED, never silently cleaned up. Stripping bad characters would\n' >&2
+  printf '  map different identities onto the same one (e.g. "lead A" and "leadA"), which is exactly\n' >&2
+  printf '  how one agent ends up releasing another agent'"'"'s live lock.\n' >&2
+  printf '  Fix the value (e.g. use your workstream slug: ws-127-my-thing) and re-run.\n' >&2
+  printf '  Diagnose with:  fleet-lock whoami\n' >&2
+  exit 2
+}
+
+# Parse the single whitespace-free token that follows a literal `--agent-name` in a process's
+# argv (as reported by `ps -o args=`). Deliberately conservative: this must NEVER crash and NEVER
+# emit a partial/garbled value — every one of "no pid given", "pid is dead / ps can't see it",
+# "ps itself failed", and "the token is the last word in argv (no value follows it)" must resolve
+# to a clean empty string, not a truncated guess.
+#   - `ps -o args= -p "$_pid" 2>/dev/null` returns non-zero (and prints nothing useful) for a
+#     dead/nonexistent pid on both macOS (BSD ps) and Linux (procps) — caught by the `|| { ...; }`
+#     fallback so a stale $CLAUDE_PID (process exited since the var was set) is silently source=none,
+#     never an error.
+#   - awk (not shell word-splitting) does the tokenizing: it is POSIX, whitespace-splits on any
+#     run of spaces/tabs the same way `ps`'s own argv rendering does, and — critically — if
+#     `--agent-name` is the LAST field (i < NF fails) the loop finishes with nothing printed
+#     instead of ever touching an out-of-range field, so there is no partial-string case to guard
+#     separately.
+fl_agent_name_from_pid() { # <pid-or-empty> -> agent-name token, or empty
+  _fanp_pid=$1
+  [ -n "$_fanp_pid" ] || { printf ''; return; }
+  _fanp_args=$(ps -o args= -p "$_fanp_pid" 2>/dev/null) || { printf ''; return; }
+  [ -n "$_fanp_args" ] || { printf ''; return; }
+  printf '%s' "$_fanp_args" | awk '
+    { for (i = 1; i <= NF; i++) { if ($i == "--agent-name" && i < NF) { print $(i + 1); exit } } }
+  '
+}
+
+# fl_actor_source() — WHICH signal (if any) resolved fl_actor()'s value. This is the thing that is
+# actually safety-relevant: sources 1 and 2 are agent-distinct (two different agents resolve two
+# different values); source 3 is NOT, and every caller that cares about safety (cmd_acquire's
+# warning, `whoami`'s agent-distinct line) must be able to tell the difference rather than infer
+# it from "is the string non-empty" — a value that sanitized down to empty must report exactly
+# the same source ("none") that an entirely absent signal would, never a false "env"/"agent".
+fl_actor_source() {
+  if [ -n "${FLEET_LOCK_ACTOR:-}" ] && [ -n "$(fl_sanitize_actor "$FLEET_LOCK_ACTOR")" ]; then
+    printf 'env'; return
+  fi
+  _fas_name=$(fl_agent_name_from_pid "${CLAUDE_PID:-}")
+  if [ -n "$_fas_name" ] && [ -n "$(fl_sanitize_actor "$_fas_name")" ]; then
+    printf 'agent'; return
+  fi
+  printf 'none'
+}
+
+# fl_actor() — the resolved per-agent identity itself (sanitized), or empty if none of the three
+# precedence levels resolved. Empty here is EXACTLY today's (pre-ws-127) situation for a plain
+# human shell with neither signal — see fl_meta_is_mine's "both absent -> mine" row, which is what
+# keeps that case a no-op change.
+fl_actor() {
+  if [ -n "${FLEET_LOCK_ACTOR:-}" ]; then
+    _fa_v=$(fl_sanitize_actor "$FLEET_LOCK_ACTOR")
+    [ -n "$_fa_v" ] && { printf '%s' "$_fa_v"; return; }
+  fi
+  _fa_name=$(fl_agent_name_from_pid "${CLAUDE_PID:-}")
+  if [ -n "$_fa_name" ]; then
+    _fa_v=$(fl_sanitize_actor "$_fa_name")
+    [ -n "$_fa_v" ] && { printf '%s' "$_fa_v"; return; }
+  fi
+  printf ''
+}
+
+fl_die() { printf 'fleet-lock: %s\n' "$*" >&2; exit 1; }
+# Like fl_die, but for genuine command-line usage errors (missing `--`, missing the wrapped
+# command) — matching the documented "2 = usage" exit code, the same class as the no-args/help
+# path through usage() below.
+fl_die2() { printf 'fleet-lock: %s\n' "$*" >&2; exit 2; }
+
+# Fail closed on an ambiguous or overly broad local transport before any command can touch a
+# lock. Both inputs are mandatory: inferring the agent from the hostname or the state directory
+# would turn a typo into action on the wrong canonical lock. The state directory must already
+# exist and must be a normalized, absolute path below (not equal to) a top-level directory or the
+# current account's home directory. It must be exactly $HOME/.openclaw, and that account name
+# must match the SSH username registered for the selected fleet agent. Those bindings prevent a
+# typo such as agent=chip + state=/Users/hyper/.openclaw from claiming the wrong canonical lock.
+fl_validate_transport() {
+  _fvt_agent=${FLEET_LOCK_LOCAL_AGENT:-}
+  _fvt_state=${FLEET_LOCK_LOCAL_STATE_DIR:-}
+
+  if [ -n "${FLEET_LOCK_ROOT:-}" ] && { [ -n "$_fvt_agent" ] || [ -n "$_fvt_state" ]; }; then
+    fl_die2 "FLEET_LOCK_ROOT simulation cannot be combined with FLEET_LOCK_LOCAL_AGENT/FLEET_LOCK_LOCAL_STATE_DIR"
+  fi
+  if { [ -n "$_fvt_agent" ] && [ -z "$_fvt_state" ]; } \
+    || { [ -z "$_fvt_agent" ] && [ -n "$_fvt_state" ]; }; then
+    fl_die2 "local transport requires BOTH FLEET_LOCK_LOCAL_AGENT and FLEET_LOCK_LOCAL_STATE_DIR"
+  fi
+  [ -n "$_fvt_agent" ] || return 0
+
+  fl_is_valid_agent "$_fvt_agent" \
+    || fl_die2 "FLEET_LOCK_LOCAL_AGENT must be one of: $VALID_AGENTS"
+  [ -n "${HOME:-}" ] \
+    || fl_die2 "actual-local transport requires HOME to identify the current agent account"
+  case "$_fvt_state" in
+    /*) ;;
+    *) fl_die2 "FLEET_LOCK_LOCAL_STATE_DIR must be an absolute, narrowly scoped directory" ;;
+  esac
+  case "$_fvt_state" in
+    /|*/|*//*|*/./*|*/../*|*/.|*/..)
+      fl_die2 "FLEET_LOCK_LOCAL_STATE_DIR must be a normalized, narrowly scoped directory" ;;
+  esac
+  [ "$_fvt_state" = "$HOME/.openclaw" ] \
+    || fl_die2 "FLEET_LOCK_LOCAL_STATE_DIR must be exactly \$HOME/.openclaw for the current agent account"
+  _fvt_target=$(fl_host_for "$_fvt_agent")
+  case "$_fvt_target" in
+    ?*@*) _fvt_user=${_fvt_target%%@*} ;;
+    *) fl_die2 "local transport requires an explicit user@host mapping for FLEET_LOCK_LOCAL_AGENT=$_fvt_agent" ;;
+  esac
+  [ "$(basename "$HOME")" = "$_fvt_user" ] \
+    || fl_die2 "local transport agent/account mismatch: $_fvt_agent maps to account $_fvt_user, not $(basename "$HOME")"
+  [ ! -L "$_fvt_state" ] \
+    || fl_die2 "FLEET_LOCK_LOCAL_STATE_DIR must not itself be a symbolic link"
+  [ -d "$_fvt_state" ] \
+    || fl_die2 "FLEET_LOCK_LOCAL_STATE_DIR must already exist as a directory"
+}
+
+# fl_reject_flag_token <token> <usage-string> — loud, exit-2 refusal of a token that LOOKS like a
+# flag (leading '-') where a fixed-vocabulary positional (an agent name) is expected. ws-166: this
+# is what turns `fleet-lock status --json` into a distinct "unrecognised flag" usage error instead
+# of falling through to fl_is_valid_agent's "unknown agent '--json'" (exit 1) — same silence class
+# as an ignored env var, just on argv instead of the environment. Deliberately NOT applied to a
+# free-text positional (like an `intent`): that value legitimately may start with '-' and must never
+# be flag-checked, only counted (see each cmd_* for where this is, and is not, called).
+fl_reject_flag_token() { # <token> <usage-string>
+  case "$1" in
+    -*) fl_die2 "$2 — unrecognised flag '$1'" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Transport abstraction. In simulation mode everything is local shell; over SSH
+# we wrap the SAME shell snippets in `ssh <host> 'sh -c ...'`. The remote snippets
+# are deliberately tiny and POSIX so they run under the mini's /bin/sh.
+# ---------------------------------------------------------------------------
+
+fl_sim() { [ -n "${FLEET_LOCK_ROOT:-}" ]; }
+fl_local() {
+  [ -n "${FLEET_LOCK_LOCAL_AGENT:-}" ] && [ -n "${FLEET_LOCK_LOCAL_STATE_DIR:-}" ]
+}
+
+fl_require_transport_agent() { # agent
+  if fl_local && [ "$1" != "$FLEET_LOCK_LOCAL_AGENT" ]; then
+    fl_die2 "local transport is restricted to FLEET_LOCK_LOCAL_AGENT=$FLEET_LOCK_LOCAL_AGENT (refusing target '$1')"
+  fi
+}
+
+# Base dir that holds an agent's lock.
+#  - simulation: $FLEET_LOCK_ROOT/<agent>
+#  - live: the remote HOME (~) — the lock dir is ~/.agent-os path under ~/.openclaw
+fl_lock_dir_local() {
+  if fl_sim; then
+    printf '%s/%s/%s' "$FLEET_LOCK_ROOT" "$1" "$LOCK_NAME"
+  else
+    # fl_validate_transport has already validated this explicit actual-local path, while
+    # fl_require_transport_agent confines the operation to its exact configured agent.
+    printf '%s/%s' "$FLEET_LOCK_LOCAL_STATE_DIR" "$LOCK_NAME"
+  fi
+}
+
+# --- local-filesystem primitives (simulation OR explicit actual-local) -----
+_localfs_mkdir_lock() { # agent -> 0 if we created it, 1 if it already existed
+  _d=$(fl_lock_dir_local "$1")
+  if fl_sim; then
+    mkdir -p "$(dirname "$_d")"
+  else
+    # fl_validate_transport requires the real state directory to pre-exist. Do not recreate it
+    # after a concurrent removal: silently manufacturing an empty ~/.openclaw would make the
+    # scheduler appear safely locked while its real state/config had disappeared or moved.
+    [ -d "$(dirname "$_d")" ] || return 1
+  fi
+  if mkdir "$_d" 2>/dev/null; then return 0; else return 1; fi
+}
+_localfs_write_meta() { # agent  json  (atomic: write temp, then rename into place)
+  _d=$(fl_lock_dir_local "$1")
+  printf '%s\n' "$2" > "$_d/$META_NAME.tmp"
+  mv "$_d/$META_NAME.tmp" "$_d/$META_NAME"
+}
+_localfs_read_meta() { # agent -> prints meta json, or nothing if no lock
+  _d=$(fl_lock_dir_local "$1")
+  [ -f "$_d/$META_NAME" ] && cat "$_d/$META_NAME" || true
+}
+_localfs_rm_lock() { # agent
+  _d=$(fl_lock_dir_local "$1")
+  rm -rf "$_d"
+}
+_localfs_exists() { # agent -> 0 if lock dir exists
+  _d=$(fl_lock_dir_local "$1")
+  [ -d "$_d" ]
+}
+
+# --- live-mode primitives (over SSH) ---------------------------------------
+# The remote lock dir is ~/.openclaw/.agent-os.lock . We keep the remote commands
+# minimal and quote-safe. HOST is resolved by the caller.
+_ssh() { # host  remote-sh-command
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$1" "$2"
+}
+_live_lockpath() { printf '%s' "\$HOME/.openclaw/$LOCK_NAME"; }
+
+_live_mkdir_lock() { # host -> 0 created, 1 existed/failed
+  _lp=$(_live_lockpath)
+  # mkdir -p the parent, then atomic mkdir of the lock dir; echo a sentinel on success.
+  if _ssh "$1" "mkdir -p \$HOME/.openclaw && mkdir $_lp 2>/dev/null && echo __FLEET_OK__" \
+        2>/dev/null | grep -q __FLEET_OK__; then
+    return 0
+  fi
+  return 1
+}
+_live_write_meta() { # host  json
+  _lp=$(_live_lockpath)
+  # Pass JSON on stdin to avoid quoting hell; write it inside the lock dir.
+  printf '%s\n' "$2" | _ssh "$1" "cat > $_lp/$META_NAME"
+}
+_live_read_meta() { # host -> meta json or nothing
+  _lp=$(_live_lockpath)
+  _ssh "$1" "[ -f $_lp/$META_NAME ] && cat $_lp/$META_NAME || true" 2>/dev/null || true
+}
+_live_rm_lock() { # host
+  _lp=$(_live_lockpath)
+  _ssh "$1" "rm -rf $_lp" >/dev/null 2>&1 || true
+}
+_live_exists() { # host -> 0 if exists
+  _lp=$(_live_lockpath)
+  _ssh "$1" "[ -d $_lp ] && echo __FLEET_YES__ || true" 2>/dev/null | grep -q __FLEET_YES__
+}
+
+# --- transport dispatch -----------------------------------------------------
+lk_mkdir()     { if fl_sim || fl_local; then _localfs_mkdir_lock "$1"; else _live_mkdir_lock "$(fl_host_for "$1")"; fi; }
+lk_write_meta(){ if fl_sim || fl_local; then _localfs_write_meta "$1" "$2"; else _live_write_meta "$(fl_host_for "$1")" "$2"; fi; }
+lk_read_meta() { if fl_sim || fl_local; then _localfs_read_meta "$1"; else _live_read_meta "$(fl_host_for "$1")"; fi; }
+lk_rm()        { if fl_sim || fl_local; then _localfs_rm_lock "$1"; else _live_rm_lock "$(fl_host_for "$1")"; fi; }
+lk_exists()    { if fl_sim || fl_local; then _localfs_exists "$1"; else _live_exists "$(fl_host_for "$1")"; fi; }
+
+# --- reachability probe (read-only, bounded) --------------------------------
+# Distinguishes "can't tell" from "free". An unreachable box must render UNKNOWN, never a
+# falsely-clean UNLOCKED (the two-operators-on-one-gateway footgun, operator.md:40-54).
+#  - sim mode: reachable UNLESS the agent is in the space-separated $FLEET_LOCK_SIM_UNREACHABLE
+#    (the deterministic, network-free test seam).
+#  - live mode: a 5s-bounded `ssh echo` probe (shorter than _ssh's 10s so a status/acquire is
+#    quickly bounded). An empty host mapping (no config line) counts as unreachable.
+fl_reachable() { # agent -> exit 0 reachable, non-0 unreachable
+  _ra=$1
+  if fl_sim; then
+    for _u in ${FLEET_LOCK_SIM_UNREACHABLE:-}; do
+      [ "$_ra" = "$_u" ] && return 1
+    done
+    return 0
+  fi
+  if fl_local; then
+    [ "$_ra" = "$FLEET_LOCK_LOCAL_AGENT" ] && [ -d "$FLEET_LOCK_LOCAL_STATE_DIR" ]
+    return
+  fi
+  _rh=$(fl_host_for "$_ra")
+  [ -n "$_rh" ] || return 1
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$_rh" 'echo __FLEET_UP__' 2>/dev/null | grep -q __FLEET_UP__
+}
+
+# ---------------------------------------------------------------------------
+# Tiny JSON helpers. The payload is flat with known string/number keys, so a
+# regex-free field pluck is safe here (values never contain a literal `","`).
+# ---------------------------------------------------------------------------
+json_get() { # key  <json-on-stdin>  -> value (strings unquoted)
+  _key=$1
+  sed -n 's/.*"'"$_key"'"[[:space:]]*:[[:space:]]*"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p'
+}
+
+json_escape() { # escape a value for embedding in a JSON string
+  # backslash and double-quote only; intents are short human strings.
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+build_meta() { # holder session worktree intent host acquired_at heartbeat_at ttl actor actor_source
+  # NEW fields (ws-127) are appended at the END, not interleaved — an older json_get caller (or a
+  # human eyeballing an old meta.json) reading any of the original 8 keys is completely unaffected
+  # by this field's existence or absence.
+  printf '{"holder":"%s","session":"%s","worktree":"%s","intent":"%s","host":"%s","acquired_at":%s,"heartbeat_at":%s,"ttl_seconds":%s,"actor":"%s","actor_source":"%s"}' \
+    "$(json_escape "$1")" "$(json_escape "$2")" "$(json_escape "$3")" \
+    "$(json_escape "$4")" "$(json_escape "$5")" "$6" "$7" "$8" \
+    "$(json_escape "${9:-}")" "$(json_escape "${10:-}")"
+}
+
+# ---------------------------------------------------------------------------
+# ws-165 — the evicted-holder record. meta_with_steal_fields() appends eight NEW keys to an
+# already-built meta blob (never touches build_meta's own signature/callers — acquire/release/
+# heartbeat are untouched by this). meta_steal_suffix() is the inverse: given an EXISTING meta,
+# extract just that trailing fragment so a later heartbeat/idempotent-refresh of the SAME identity
+# can carry it forward without erasing the evidence a steal just wrote. Every new key is prefixed
+# stolen_ so json_get's exact-quoted-key match can never confuse it with holder/session/actor/intent
+# (or with each other — json_get requires the CLOSING quote immediately after the key name, so
+# "stolen_from" can never match inside "stolen_from_session" etc). Kept FLAT (no nesting) — the only
+# reader is the same regex-based json_get every other field here goes through.
+# ---------------------------------------------------------------------------
+meta_with_steal_fields() { # <meta-json> from_holder from_session from_actor from_intent from_liveness from_hb_age
+  _mwsf_meta=$1; _mwsf_fh=$2; _mwsf_fs=$3; _mwsf_fa=$4; _mwsf_fi=$5; _mwsf_fl=$6; _mwsf_fhb=$7
+  _mwsf_base=${_mwsf_meta%\}}
+  printf '%s,"stolen_at":%s,"stolen_at_iso":"%s","stolen_from":"%s","stolen_from_session":"%s","stolen_from_actor":"%s","stolen_from_intent":"%s","stolen_from_liveness":"%s","stolen_from_hb_age":"%s"}' \
+    "$_mwsf_base" "$(fl_now)" "$(json_escape "$(fl_iso_now)")" \
+    "$(json_escape "$_mwsf_fh")" "$(json_escape "$_mwsf_fs")" "$(json_escape "$_mwsf_fa")" \
+    "$(json_escape "$_mwsf_fi")" "$(json_escape "$_mwsf_fl")" "$(json_escape "$_mwsf_fhb")"
+}
+
+meta_steal_suffix() { # <meta-json> -> the trailing ,"stolen_at":...,"stolen_from_hb_age":"..." fragment
+  # (WITHOUT the closing brace), or empty if this meta was never stolen. Callers re-append it to a
+  # freshly build_meta()'d blob before writing, so a heartbeat or a same-identity idempotent refresh
+  # never silently erases the ws-165 evidence a prior steal wrote. Deliberately NOT reused by a
+  # stale-reclaim or a fresh acquire by a DIFFERENT holder — a new tenure is a new story; that
+  # boundary is exactly what the audit log (steal.log), not the carried meta, exists to preserve.
+  case "$1" in
+    *'"stolen_at"'*) printf '%s' "$1" | sed -n 's/^.*\(,"stolen_at".*\)}$/\1/p' ;;
+    *) printf '' ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Staleness (heartbeat-based). A lock with a heartbeat_at is stale iff its holder stopped
+# heartbeating past HEARTBEAT_TTL_DEFAULT — so a LIVE holder that keeps heartbeating NEVER goes
+# stale, while a DEAD holder's lock frees fast. Legacy meta with NO heartbeat_at falls back to
+# the old absolute cap (now - acquired_at > ttl_seconds), keeping old locks reclaimable.
+# ---------------------------------------------------------------------------
+meta_is_stale() { # <meta-json>
+  _m=$1
+  _hb=$(printf '%s' "$_m" | json_get heartbeat_at)
+  if [ -n "$_hb" ]; then
+    _age=$(( $(fl_now) - _hb ))
+    [ "$_age" -gt "$HEARTBEAT_TTL_DEFAULT" ]
+    return
+  fi
+  # legacy meta with no heartbeat_at -> old absolute-cap rule.
+  _acq=$(printf '%s' "$_m" | json_get acquired_at)
+  _ttl=$(printf '%s' "$_m" | json_get ttl_seconds)
+  [ -n "$_acq" ] || return 0            # no timestamp -> treat as stale
+  [ -n "$_ttl" ] || _ttl=$TTL_DEFAULT
+  _age=$(( $(fl_now) - _acq ))
+  [ "$_age" -gt "$_ttl" ]
+}
+
+# ---------------------------------------------------------------------------
+# fl_meta_is_mine <meta-json> — the ONE ownership check, used by release / heartbeat / check /
+# acquire's idempotent-refresh branch. Returns 0 = mine, 1 = not mine.
+#
+# Before ws-127 this was "holder matches AND session matches" — which is exactly the defect: two
+# agent-teams leads (workstream-lead teammates) sharing ONE Claude Code session have the SAME
+# holder (same user@host) AND the SAME session (same CLAUDE_CODE_SESSION_ID), so lead B's
+# `release`/`check`/`heartbeat` on lead A's lock was indistinguishable from A's own — ws-71 found
+# this live, with two real locks held. `actor` (fl_actor) is the third signal that tells them
+# apart, and the table below is POSITIVE EQUALITY throughout — never a negated blacklist. An
+# absent/unrecognized actor on EITHER side lands on "not mine" unless BOTH sides are absent:
+#
+#   stored actor | my actor              | verdict
+#   -------------|------------------------|--------------------------------------------------
+#   present      | present, EQUAL         | mine
+#   present      | present, DIFFERENT     | NOT mine  -- a same-session peer (the ws-127 case)
+#   present      | absent                 | NOT mine  -- can't prove this lock is ours
+#   absent       | present                | NOT mine  -- legacy/foreign lock (pre-ws-127 meta,
+#                |                        |             or written by a tool with no identity)
+#   absent       | absent                 | mine      -- EXACTLY today's (pre-ws-127) behaviour:
+#                |                        |             no actor signal exists anywhere, so a
+#                |                        |             plain human shell sees ZERO regression.
+#
+# WHY unknown/absent never wins a comparison: if an absent actor were treated as a wildcard that
+# matches anything, then EITHER the "stored absent, mine present" row would silently let a
+# caller with an identity claim a lock that predates identity entirely (a foreign/legacy lock —
+# nothing proves it's actually the same party), OR the "stored present, mine absent" row would
+# let a caller with NO resolvable identity silently claim a lock that DOES have one recorded.
+# Both are exactly the silent-collapse-to-one-identity failure mode this workstream exists to
+# close. The only case where "no information on either side" is safe to treat as a match is when
+# there is genuinely NO information on either side — which is the last row, and is what makes this
+# a pure additive safety check with no regression for a caller that never had an actor at all.
+# ---------------------------------------------------------------------------
+fl_meta_is_mine() { # <meta-json>
+  _fmim_m=$1
+  _fmim_cur_holder=$(printf '%s' "$_fmim_m" | json_get holder)
+  _fmim_cur_sess=$(printf '%s' "$_fmim_m" | json_get session)
+  _fmim_cur_actor=$(printf '%s' "$_fmim_m" | json_get actor)
+  _fmim_me=$(fl_holder); _fmim_sess=$(fl_session); _fmim_my_actor=$(fl_actor)
+
+  # Unchanged pre-ws-127 baseline: holder+session must match, full stop.
+  [ "$_fmim_cur_holder" = "$_fmim_me" ] && [ "$_fmim_cur_sess" = "$_fmim_sess" ] || return 1
+
+  # Both absent -> mine (no regression). Otherwise -> positive equality only.
+  if [ -z "$_fmim_cur_actor" ] && [ -z "$_fmim_my_actor" ]; then
+    return 0
+  fi
+  [ -n "$_fmim_cur_actor" ] && [ -n "$_fmim_my_actor" ] && [ "$_fmim_cur_actor" = "$_fmim_my_actor" ]
+}
+
+# fl_refuse_ownership <verb> <agent> <meta-json> — print a LOUD, NAMED refusal (naming BOTH
+# actors when that's the axis that failed) and exit 1. Shared by release/heartbeat once
+# fl_meta_is_mine has already said "not mine" for this exact meta — this function does not
+# re-derive the mine/not-mine verdict, only WHY it's "not mine", so the message tells the truth
+# about which axis actually failed instead of a generic "not you":
+#   - holder/session differ at all            -> the pre-ws-127 case: a genuinely different
+#     caller (different real user/host, or a wholly different Claude Code session).
+#   - holder/session MATCH, stored actor is
+#     absent, ours is present                  -> a legacy/foreign lock: this predates per-agent
+#     identity (or was written by a tool with none) and holder+session alone cannot prove it's
+#     ours, because holder+session is EXACTLY the axis two same-session leads collapse onto.
+#   - holder/session MATCH, actors differ (or
+#     stored is present and ours is absent)    -> the actual ws-127 defect this workstream fixes:
+#     a same-session peer. Name both actors explicitly.
+fl_refuse_ownership() {
+  _fro_verb=$1; _fro_agent=$2; _fro_m=$3
+  _fro_cur_holder=$(printf '%s' "$_fro_m" | json_get holder)
+  _fro_cur_sess=$(printf '%s' "$_fro_m" | json_get session)
+  _fro_cur_actor=$(printf '%s' "$_fro_m" | json_get actor)
+  _fro_me=$(fl_holder); _fro_sess=$(fl_session); _fro_my_actor=$(fl_actor)
+
+  if [ "$_fro_cur_holder" != "$_fro_me" ] || [ "$_fro_cur_sess" != "$_fro_sess" ]; then
+    printf 'fleet-lock: refusing to %s %s — held by %s (session %s), not you.\n' \
+      "$_fro_verb" "$_fro_agent" "$_fro_cur_holder" "$_fro_cur_sess" >&2
+  elif [ -z "$_fro_cur_actor" ] && [ -n "$_fro_my_actor" ]; then
+    printf 'fleet-lock: refusing to %s %s — held by %s (session %s, agent <none recorded — legacy lock>), but you are agent %s.\n' \
+      "$_fro_verb" "$_fro_agent" "$_fro_cur_holder" "$_fro_cur_sess" "$_fro_my_actor" >&2
+    printf '  this lock predates per-agent identity (or was written with none) and cannot be proven to be yours.\n' >&2
+  else
+    printf 'fleet-lock: refusing to %s %s — held by %s (session %s, agent %s), but you are agent %s.\n' \
+      "$_fro_verb" "$_fro_agent" "$_fro_cur_holder" "$_fro_cur_sess" "${_fro_cur_actor:-<none>}" "${_fro_my_actor:-<none>}" >&2
+  fi
+  printf '  if it is abandoned:  fleet-lock steal %s --force\n' "$_fro_agent" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# ws-165 — the steal audit log. A local, append-only, plain-text record of every steal AND every
+# refused steal attempt, kept SEPARATE from meta.json (which only ever describes the CURRENT lock,
+# not its history). Path precedence mirrors the transport split so the
+# test suite can never write into this repo's real control-plane/locks/:
+#   1) $FLEET_LOCK_AUDIT_LOG  — explicit override, used verbatim.
+#   2) $FLEET_LOCK_ROOT set   — simulation mode: $FLEET_LOCK_ROOT/steal.log (keeps every test run
+#      confined to its own mktemp sandbox, same as the lock data itself).
+#   3) local-agent mode       — $FLEET_LOCK_LOCAL_STATE_DIR/fleet-lock-steal.log, on that mini.
+#   4) otherwise              — control-plane/locks/steal.log, alongside hook.log (a DIFFERENT
+#      mechanism, owned by the PreToolUse guard — see that file's own header — but the same
+#      "runtime output living next to the durable fleet-hosts.conf/README" convention).
+# ---------------------------------------------------------------------------
+fl_audit_path() {
+  if [ -n "${FLEET_LOCK_AUDIT_LOG:-}" ]; then
+    printf '%s' "$FLEET_LOCK_AUDIT_LOG"
+  elif [ -n "${FLEET_LOCK_ROOT:-}" ]; then
+    printf '%s/steal.log' "$FLEET_LOCK_ROOT"
+  elif fl_local; then
+    printf '%s/fleet-lock-steal.log' "$FLEET_LOCK_LOCAL_STATE_DIR"
+  else
+    printf '%s/control-plane/locks/steal.log' "$REPO_ROOT"
+  fi
+}
+
+# Make a raw value safe to sit inside ONE whitespace-token-delimited line of the audit log: collapse
+# any newline/CR/tab to a space (so a multi-line intent can never inject a fake extra log line or
+# split a token boundary) and swap a literal `"` for `'` (the free-text fields are wrapped in `"..."`
+# in the log format below, so an embedded `"` would otherwise prematurely close that wrapper). This
+# NEVER drops the value silently on empty input — an empty result here means the input WAS empty;
+# it is the CALLER's job to substitute the `-` sentinel for "absent", exactly like the pre-existing
+# `actor=-` convention in print_one_status.
+fl_audit_field() { # <raw-value> -> log-line-safe value (may be empty)
+  printf '%s' "$1" | tr '\n\r\t' '   ' | sed "s/\"/'/g"
+}
+
+# Append one fully-formed line to the audit log. Returns 0 on success, 1 if the directory could not
+# be created OR the append itself failed (e.g. an unwritable/nonexistent path from
+# FLEET_LOCK_AUDIT_LOG) — the CALLER decides what a failure means (fail-closed for a real STOLEN
+# event, best-effort with a stderr warning for a REFUSED one; see cmd_steal).
+fl_audit_write() { # <line>
+  _faw_path=$(fl_audit_path)
+  _faw_dir=$(dirname "$_faw_path")
+  mkdir -p "$_faw_dir" 2>/dev/null || return 1
+  printf '%s\n' "$1" >> "$_faw_path" 2>/dev/null || return 1
+}
+
+# Build + write one REFUSED audit line. Best-effort by design (unlike the STOLEN write in cmd_steal,
+# which is fail-closed): the operation is ALREADY refused at every call site, so a failed log write
+# here cannot make it "more refused" — it can only lose the forensic record of the refusal, which is
+# worth a loud stderr warning but never worth changing the (already-refused) outcome.
+fl_steal_audit_refused() { # agent reason detect by_holder by_session by_actor by_actor_source from_liveness
+  _star_agent=$1; _star_reason=$2; _star_detect=$3
+  _star_bh=$4; _star_bs=$5; _star_ba=$6; _star_basrc=$7; _star_fl=$8
+  _star_line=$(printf '%s REFUSED agent=%s reason=%s detect=%s by_holder=%s by_session=%s by_actor=%s by_actor_source=%s from_liveness=%s' \
+    "$(fl_iso_now)" "$_star_agent" "$_star_reason" "${_star_detect:--}" \
+    "$(fl_audit_field "${_star_bh:--}")" "$(fl_audit_field "${_star_bs:--}")" \
+    "${_star_ba:--}" "${_star_basrc:--}" "$_star_fl")
+  fl_audit_write "$_star_line" || \
+    printf 'fleet-lock: WARNING — could not append the REFUSED audit line to %s\n' "$(fl_audit_path)" >&2
+}
+
+# ws-165 — classify what we can prove about the caller, BEFORE any confirmation attempt.
+# POSITIVE-EVIDENCE-ONLY, and this is the whole point: it never returns anything meaning "a human is
+# definitely here". A recognized automation marker (CI / a Claude-agent env var / an explicit
+# FLEET_LOCK_NONINTERACTIVE declaration) is decisive both ways — a caller carrying one of those IS
+# automated, full stop, no prompt is going to change that. Absent any of those, a TTY on both stdin
+# and stderr proves only that a terminal is ATTACHED — it does NOT prove a human is behind it.
+# `tmux new-session -d`, `screen -dm`, `ssh -tt host <script>`, `expect`, and `docker run -t` all hold
+# a real pty on both fds with nobody typing; none of them set any of the automation markers above
+# either (a genuinely automated caller confirmed live via a real forkpty, no opt-in set: it was
+# classified `human` by the OLD version of this function and the steal SUCCEEDED). So `tty` here is
+# NOT a verdict, it's a referral: the caller MAY be human, and the only way to find out is to ask
+# them directly on /dev/tty and require a deliberate answer (fl_steal_confirm) — never to treat
+# "holds a pty" as itself sufficient. Order matters: evidence of automation is checked BEFORE the TTY
+# probes, because an agent harness can hold a TTY too (a Claude Code session's own shell is one).
+fl_steal_context() {
+  if [ -n "${CI:-}" ]; then
+    printf 'automated:ci-env'; return
+  fi
+  if [ -n "${CLAUDECODE:-}" ] || [ -n "${CLAUDE_PID:-}" ] || [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+    printf 'automated:claude-agent'; return
+  fi
+  if [ -n "${FLEET_LOCK_NONINTERACTIVE:-}" ]; then
+    printf 'automated:declared'; return
+  fi
+  if [ ! -t 0 ]; then
+    printf 'automated:no-tty-stdin'; return
+  fi
+  if [ ! -t 2 ]; then
+    printf 'automated:no-tty-stderr'; return
+  fi
+  printf 'tty'
+}
+
+# Does THIS shell's `read` accept a `-t <seconds>` timeout? Not POSIX (POSIX read has no -t at all);
+# bash/zsh/ksh accept it, dash rejects the flag outright ("Illegal option -t"). We must tell "the
+# flag was rejected" apart from "read returned 1 because input wasn't ready yet" -- both can exit
+# non-zero -- so this checks what the shell said on STDERR, not the exit code. Probed against
+# /dev/null so it can never itself block. Exit 0 = supported, 1 = not.
+fl_read_timeout_supported() {
+  # shellcheck disable=SC3045 # `-t` IS a non-POSIX extension -- that's exactly what this probes for; a shell that rejects it is handled below, never assumed away.
+  _frts_err=$( { read -t 0 _frts_dummy < /dev/null; } 2>&1 1>/dev/null ) || true
+  case "$_frts_err" in
+    *[Ii]llegal*[Oo]ption*|*[Ii]nvalid*[Oo]ption*|*[Uu]nknown*[Oo]ption*|*bad*option*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+FLEET_LOCK_CONFIRM_TIMEOUT_DEFAULT=30   # seconds; overridable via FLEET_LOCK_CONFIRM_TIMEOUT (test seam)
+
+# ws-165 — the actual "ask a human" step for a `steal` context that fl_steal_context could only
+# classify `tty` (an attached terminal, no proof anyone is behind it). Sets $FL_STEAL_REASON on
+# denial to one of: confirm-timeout-unsupported / confirm-no-tty-device / confirm-timeout /
+# confirm-empty / confirm-mismatch — each its own audit reason= slug, deliberately distinct, so
+# steal.log tells a "nobody answered" apart from "someone answered wrong" apart from "this shell
+# can't even ask safely". Returns 0 ONLY if the operator typed the agent's name EXACTLY — not `y`,
+# not a bare Enter — a deliberate, non-reflexive act, not muscle memory.
+fl_steal_confirm() { # <agent>
+  _fsc_agent=$1
+  FL_STEAL_REASON=""
+
+  # A bounded read is the ONLY thing standing between "ask a human" and "hang forever" if this
+  # branch is ever reached by a caller that genuinely holds a TTY but has nobody present (exactly
+  # the pty-automation case this whole mechanism exists to close). If this shell's `read` cannot be
+  # bounded, we do NOT fall back to an unbounded one — that would recreate the very hang a script
+  # under automation must never suffer. Fail closed instead, and say precisely how to proceed.
+  if ! fl_read_timeout_supported; then
+    FL_STEAL_REASON="confirm-timeout-unsupported"
+    printf "fleet-lock: this shell's read has no -t (timeout) support, so an interactive steal\n" >&2
+    printf '  confirmation cannot be safely bounded here -- refusing rather than risk an unbounded\n' >&2
+    printf '  hang. If you are a human and deliberately intend this steal, re-run with\n' >&2
+    printf '  FLEET_LOCK_ALLOW_STEAL=1 set.\n' >&2
+    return 1
+  fi
+
+  # Talk to the controlling terminal directly (fd 3), not stdin/stdout -- the standard way to reach
+  # whoever is actually at the keyboard, independent of how this process's stdin happens to be
+  # wired. A caller whose fds merely LOOK like TTYs (see fl_steal_context's own comment) but has no
+  # real controlling terminal fails right here, and that failure is itself a DENY, not a fallback.
+  if ! exec 3<>/dev/tty 2>/dev/null; then
+    FL_STEAL_REASON="confirm-no-tty-device"
+    printf 'fleet-lock: could not open /dev/tty for an interactive steal confirmation -- refusing.\n' >&2
+    return 1
+  fi
+
+  # Best-effort peek at the current holder, purely so the human is looking at a REAL decision
+  # surface (who/why/how-live), not a bare yes/no. Never fatal -- an unlocked agent or a box we
+  # can't yet reach (reachability is checked separately, right after this gate) just shows nothing.
+  _fsc_peek=""
+  if lk_exists "$_fsc_agent" 2>/dev/null; then
+    _fsc_peek=$(lk_read_meta "$_fsc_agent" 2>/dev/null) || _fsc_peek=""
+  fi
+
+  {
+    printf -- '--------------------------------------------------------------------------------\n'
+    printf 'fleet-lock steal --force %s\n' "$_fsc_agent"
+    printf 'A TTY is attached, but a TTY is not proof a human is here -- tmux/screen/`ssh -tt`/\n'
+    printf 'expect/`docker -t` can all hold one unattended.\n'
+    if [ -n "$_fsc_peek" ]; then
+      _fsc_h=$(printf '%s' "$_fsc_peek" | json_get holder)
+      _fsc_s=$(printf '%s' "$_fsc_peek" | json_get session)
+      _fsc_i=$(printf '%s' "$_fsc_peek" | json_get intent)
+      _fsc_hb=$(printf '%s' "$_fsc_peek" | json_get heartbeat_at)
+      if [ -n "$_fsc_hb" ]; then
+        _fsc_hbage="$(( $(fl_now) - _fsc_hb ))s ago"
+      else
+        _fsc_hbage="unknown"
+      fi
+      if meta_is_stale "$_fsc_peek"; then _fsc_live="STALE (reclaimable)"; else _fsc_live="FRESH (heartbeating)"; fi
+      printf 'current holder: %s (session %s) -- %s, last heartbeat %s\n' \
+        "${_fsc_h:-<unknown>}" "${_fsc_s:-?}" "$_fsc_live" "$_fsc_hbage"
+      printf 'their intent: %s\n' "${_fsc_i:-<none>}"
+    else
+      printf 'current holder: none recorded -- this agent may not be locked right now.\n'
+    fi
+    printf -- '--------------------------------------------------------------------------------\n'
+    printf 'Type the agent name EXACTLY ("%s") to confirm this eviction, or press Enter/Ctrl-D to\n' "$_fsc_agent"
+    printf 'cancel. You have %ss.\n' "${FLEET_LOCK_CONFIRM_TIMEOUT:-$FLEET_LOCK_CONFIRM_TIMEOUT_DEFAULT}"
+    printf '> '
+  } >&3
+
+  _fsc_timeout=${FLEET_LOCK_CONFIRM_TIMEOUT:-$FLEET_LOCK_CONFIRM_TIMEOUT_DEFAULT}
+  _fsc_t0=$(fl_now)
+  _fsc_answer=""; _fsc_rc=0
+  # shellcheck disable=SC3045 # only reached after fl_read_timeout_supported confirmed -t works on this shell.
+  IFS= read -r -t "$_fsc_timeout" _fsc_answer <&3 || _fsc_rc=$?
+  _fsc_elapsed=$(( $(fl_now) - _fsc_t0 ))
+  exec 3<&-
+
+  # Timed-out and truly-nobody-there (EOF, or a bare Enter) are told apart by elapsed time: a read
+  # that returns almost exactly at the timeout boundary was waiting the whole time; one that returns
+  # fast (Ctrl-D / closed input) never had anyone there to begin with. Either way this is a DENY --
+  # the split exists purely so steal.log records WHICH happened, not to treat one as safer.
+  if [ "$_fsc_rc" -ne 0 ] || [ -z "$_fsc_answer" ]; then
+    if [ "$_fsc_elapsed" -ge $(( _fsc_timeout - 1 )) ]; then
+      FL_STEAL_REASON="confirm-timeout"
+    else
+      FL_STEAL_REASON="confirm-empty"
+    fi
+    return 1
+  fi
+
+  if [ "$_fsc_answer" = "$_fsc_agent" ]; then
+    return 0
+  fi
+  FL_STEAL_REASON="confirm-mismatch"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+host_label() { # agent -> ssh target or an explicit transport label
+  if fl_sim; then printf '(simulated:%s)' "$FLEET_LOCK_ROOT"; return; fi
+  if fl_local; then printf '(local:%s:%s)' "$FLEET_LOCK_LOCAL_AGENT" "$FLEET_LOCK_LOCAL_STATE_DIR"; return; fi
+  _h=$(fl_host_for "$1")
+  if [ -n "$_h" ]; then printf '%s' "$_h"; else printf '(no host in config)'; fi
+}
+
+cmd_acquire() {
+  _agent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  _intent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  [ -n "$_agent" ] || fl_die "usage: fleet-lock acquire <agent> \"<intent>\""
+  fl_reject_flag_token "$_agent" "usage: fleet-lock acquire <agent> \"<intent>\""
+  fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+  fl_require_transport_agent "$_agent"
+  [ -n "$_intent" ] || fl_die "acquire needs an intent, e.g. fleet-lock acquire $_agent \"deploy approval-router\""
+  # ws-166: the intent itself is free text and is NEVER flag-checked (it may legitimately start with
+  # '-') — only the ARGUMENT COUNT is validated here. An unquoted multi-word intent used to be
+  # silently truncated to its first word with everything after it dropped with no warning; now it's
+  # a loud usage error instead.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock acquire <agent> \"<intent>\" — unexpected extra argument(s) after the intent: $* (quote the intent if it has spaces)"
+
+  # Non-sim mode with no host mapping is a hard error (can't reach the box).
+  if ! fl_sim && ! fl_local && [ -z "$(fl_host_for "$_agent")" ]; then
+    fl_die "no host for '$_agent' in $(fl_hosts_file) — add a '<agent> <ssh-target>' line"
+  fi
+
+  # Reachability guard: NEVER reason about a lock on a box we can't see. An unreachable host is
+  # UNKNOWN, not free — refuse with exit 3 rather than the old misleading "(lock present, no
+  # metadata, reclaim raced)" fake race (operator.md:40-54).
+  if ! fl_sim && ! fl_reachable "$_agent"; then
+    printf 'fleet-lock: UNREACHABLE — cannot reach %s; refusing to reason about the lock.\n' "$(host_label "$_agent")" >&2
+    printf '  (fix control-plane/locks/fleet-hosts.conf or pass FLEET_LOCK_HOSTS_FILE with a working address)\n' >&2
+    exit 3
+  fi
+
+  _me=$(fl_holder); _sess=$(fl_session); _wt=$(fl_worktree); _hl=$(host_label "$_agent")
+  _actor=$(fl_actor); _actor_src=$(fl_actor_source)
+
+  # Not a refusal — this acquire still SUCCEEDS either way. But say it LOUDLY: without an
+  # agent-distinct actor, this lock is scoped to the SESSION only (holder+session), and a
+  # same-session peer (e.g. another agent-teams lead sharing this exact Claude Code session) is
+  # INDISTINGUISHABLE from you to fl_meta_is_mine's "both absent -> mine" row — it could
+  # release/heartbeat/idempotent-refresh this lock as if it were its own. Set FLEET_LOCK_ACTOR to
+  # make this lock agent-distinct.
+  if [ "$_actor_src" = "none" ]; then
+    printf 'fleet-lock: WARNING — no agent-distinct identity could be established for this acquire\n' >&2
+    printf '  (no FLEET_LOCK_ACTOR, and no --agent-name found in the argv of $CLAUDE_PID). This lock\n' >&2
+    printf '  is session-scoped ONLY: a same-session peer would be indistinguishable from you and\n' >&2
+    printf '  could release/heartbeat/refresh it as if it were their own. Set FLEET_LOCK_ACTOR to fix.\n' >&2
+  fi
+
+  # Try the atomic create.
+  if lk_mkdir "$_agent"; then
+    lk_write_meta "$_agent" "$(build_meta "$_me" "$_sess" "$_wt" "$_intent" "$_hl" "$(fl_now)" "$(fl_now)" "$TTL_DEFAULT" "$_actor" "$_actor_src")"
+    printf 'acquired: %s (%s)  intent="%s"\n' "$_agent" "$_hl" "$_intent"
+    return 0
+  fi
+
+  # We lost the atomic mkdir — someone else holds (or is mid-acquire on) this lock.
+  # Read the winner's metadata. IMPORTANT (race-safety): the winner does mkdir THEN
+  # writes meta, so there is a brief window where the dir exists but meta is absent.
+  # We must NOT nuke the lock during that window — that would let two sessions both
+  # "win". So poll briefly for meta to appear before concluding it is truly absent.
+  _m=$(lk_read_meta "$_agent")
+  if [ -z "$_m" ]; then
+    _tries=0
+    while [ -z "$_m" ] && [ "$_tries" -lt 20 ]; do   # ~2s max: winner is mid-write
+      sleep 0.1 2>/dev/null || sleep 1
+      _tries=$((_tries + 1))
+      _m=$(lk_read_meta "$_agent")
+    done
+  fi
+  if [ -z "$_m" ]; then
+    # Meta stayed absent after polling: the holder crashed between mkdir and write,
+    # OR the lock dir was created out-of-band. Treat as abandoned and reclaim — but if
+    # the reclaim mkdir races another session, defer to it and refuse (never double-win).
+    lk_rm "$_agent"
+    if lk_mkdir "$_agent"; then
+      lk_write_meta "$_agent" "$(build_meta "$_me" "$_sess" "$_wt" "$_intent" "$_hl" "$(fl_now)" "$(fl_now)" "$TTL_DEFAULT" "$_actor" "$_actor_src")"
+      printf 'acquired: %s (%s)  [reclaimed a lock with no metadata]\n' "$_agent" "$_hl"
+      return 0
+    fi
+    fl_die "could not acquire '$_agent' (lock present, no metadata, reclaim raced)"
+  fi
+
+  _cur_holder=$(printf '%s' "$_m" | json_get holder)
+  _cur_sess=$(printf '%s' "$_m" | json_get session)
+
+  # Same holder+session+actor (or both actor-less, per fl_meta_is_mine's table) -> idempotent
+  # refresh (bump acquired_at, keep new intent). This USED to be a bare holder+session check —
+  # replacing it with fl_meta_is_mine is the actual AC-3 fix: a same-session PEER with a
+  # different (or absent) actor must be BLOCKED below, not silently treated as "you already held
+  # it".
+  if fl_meta_is_mine "$_m"; then
+    # ws-165: a SAME-identity refresh must carry the stolen_* evidence forward (if this lock was
+    # ever stolen) — this is still the SAME tenure, just renewed. A stale-reclaim/fresh-acquire
+    # branch below is a DIFFERENT tenure and must NOT inherit it.
+    _new_meta=$(build_meta "$_me" "$_sess" "$_wt" "$_intent" "$_hl" "$(fl_now)" "$(fl_now)" "$TTL_DEFAULT" "$_actor" "$_actor_src")
+    _steal_suffix=$(meta_steal_suffix "$_m")
+    [ -z "$_steal_suffix" ] || _new_meta="${_new_meta%\}}${_steal_suffix}}"
+    lk_write_meta "$_agent" "$_new_meta"
+    printf 'refreshed: %s (%s)  [you already held it]\n' "$_agent" "$_hl"
+    return 0
+  fi
+
+  # Different holder — or same holder+session but a DIFFERENT agent identity (ws-127) — reclaim
+  # only if stale.
+  if meta_is_stale "$_m"; then
+    lk_rm "$_agent"
+    if lk_mkdir "$_agent"; then
+      lk_write_meta "$_agent" "$(build_meta "$_me" "$_sess" "$_wt" "$_intent" "$_hl" "$(fl_now)" "$(fl_now)" "$TTL_DEFAULT" "$_actor" "$_actor_src")"
+      printf 'acquired: %s (%s)  [reclaimed STALE lock from %s]\n' "$_agent" "$_hl" "$_cur_holder"
+      return 0
+    fi
+    fl_die "could not acquire '$_agent' after reclaiming stale lock (raced another session)"
+  fi
+
+  # Held, fresh, by someone else -> refuse. Remaining = time until reclaimable, measured from the
+  # holder's liveness heartbeat (falls back to acquired_at+ttl for legacy meta with no heartbeat).
+  _hb=$(printf '%s' "$_m" | json_get heartbeat_at)
+  if [ -n "$_hb" ]; then
+    _rem=$(( HEARTBEAT_TTL_DEFAULT - ( $(fl_now) - _hb ) ))
+  else
+    _acq=$(printf '%s' "$_m" | json_get acquired_at)
+    _ttl=$(printf '%s' "$_m" | json_get ttl_seconds); [ -n "$_ttl" ] || _ttl=$TTL_DEFAULT
+    _rem=$(( _ttl - ( $(fl_now) - ${_acq:-0} ) ))
+  fi
+  # Name the actor too when the holder+session are actually the SAME as ours (ws-127): that shape
+  # means a same-session peer holds it, not a "different holder" in the pre-ws-127 sense, and the
+  # plain message above would otherwise read as a confusing self-block ("held by you, session you").
+  _cur_actor=$(printf '%s' "$_m" | json_get actor)
+  if [ "$_cur_holder" = "$_me" ] && [ "$_cur_sess" = "$_sess" ]; then
+    printf 'fleet-lock: BLOCKED — %s is held by %s (session %s, agent %s) for %ss more — a same-session peer, not you (you are agent %s).\n' \
+      "$_agent" "$_cur_holder" "$_cur_sess" "${_cur_actor:-<none>}" "$_rem" "${_actor:-<none>}" >&2
+  else
+    printf 'fleet-lock: BLOCKED — %s is held by %s (session %s) for %ss more.\n' \
+      "$_agent" "$_cur_holder" "$_cur_sess" "$_rem" >&2
+  fi
+  printf '  their intent: %s\n' "$(printf '%s' "$_m" | json_get intent)" >&2
+  printf '  wait, or if it is clearly abandoned:  fleet-lock steal %s --force\n' "$_agent" >&2
+  exit 1
+}
+
+cmd_release() {
+  _agent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  [ -n "$_agent" ] || fl_die "usage: fleet-lock release <agent>"
+  fl_reject_flag_token "$_agent" "usage: fleet-lock release <agent>"
+  fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+  fl_require_transport_agent "$_agent"
+  # ws-166: was silently dropping any trailing token — loud usage error instead.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock release <agent> — unexpected extra argument(s): $*"
+
+  if ! lk_exists "$_agent"; then
+    printf 'release: %s was not locked (nothing to do)\n' "$_agent"
+    return 0
+  fi
+  _m=$(lk_read_meta "$_agent")
+
+  # ws-127: ownership is now holder+session+actor (fl_meta_is_mine), not just holder+session — a
+  # same-session peer with a different (or missing) agent identity must be refused here, loudly
+  # and by name (fl_refuse_ownership), exactly as a genuinely different holder always was.
+  # Preserve the pre-existing race tolerance: if $_m is EMPTY (lock dir exists but meta is
+  # missing — a mid-write race, see cmd_acquire's own comment on this), there is nothing to
+  # compare against, so this still falls through to release rather than refuse.
+  if [ -n "$_m" ] && ! fl_meta_is_mine "$_m"; then
+    fl_refuse_ownership release "$_agent" "$_m"
+  fi
+  lk_rm "$_agent"
+  printf 'released: %s\n' "$_agent"
+}
+
+# Renew a held lock's liveness. Holder-only (same identity check as release). Bumps ONLY
+# heartbeat_at — keeps holder/session/worktree/intent/acquired_at/ttl.
+#
+# NOTHING calls this automatically for you (see the header). The only built-in path to
+# automatic renewal is "hold", which loops this exact call for the scope of one operation.
+# Called by hand, this is the raw "renew right now" primitive underneath that.
+cmd_heartbeat() {
+  _agent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  [ -n "$_agent" ] || fl_die "usage: fleet-lock heartbeat <agent>"
+  fl_reject_flag_token "$_agent" "usage: fleet-lock heartbeat <agent>"
+  fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+  fl_require_transport_agent "$_agent"
+  # ws-166: was silently dropping any trailing token — loud usage error instead.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock heartbeat <agent> — unexpected extra argument(s): $*"
+
+  if ! lk_exists "$_agent"; then
+    # This USED to print a quiet "nothing to renew" and return 0 — a caller heartbeating a
+    # lock that had already vanished (reclaimed by a peer, released elsewhere, whatever) got
+    # a false "you're still fine" signal (exit 0). That silence was exactly the ws-70 defect:
+    # say it loudly and FAIL, so nothing relying on this exiting 0 can be fooled into
+    # believing it still holds a lock it does not.
+    printf 'fleet-lock: heartbeat: LOST — %s is not locked; your claim is gone. Re-acquire before proceeding.\n' "$_agent" >&2
+    exit 1
+  fi
+  _m=$(lk_read_meta "$_agent")
+  _cur_holder=$(printf '%s' "$_m" | json_get holder)
+  _cur_sess=$(printf '%s' "$_m" | json_get session)
+
+  # ws-127: same ownership check as release (fl_meta_is_mine) — a same-session peer with a
+  # different (or missing) actor is refused here too, not just a genuinely different holder.
+  if [ -n "$_m" ] && ! fl_meta_is_mine "$_m"; then
+    fl_refuse_ownership heartbeat "$_agent" "$_m"
+  fi
+  # Still recorded to us — but was it ALREADY heartbeat-stale before this renewal? A peer may
+  # have legitimately been entitled to reclaim it during that stale window (and could now be
+  # racing us). Renewing anyway is still the right call (refusing would just strand a live
+  # holder that was merely slow to renew) — but say so loudly instead of silently resurrecting
+  # it as if the gap never happened.
+  if meta_is_stale "$_m"; then
+    _hb=$(printf '%s' "$_m" | json_get heartbeat_at)
+    if [ -n "$_hb" ]; then
+      _since=$(( $(fl_now) - _hb - HEARTBEAT_TTL_DEFAULT ))
+    else
+      _since=0
+    fi
+    printf 'fleet-lock: heartbeat: LAPSED — %s had been reclaimable for %ss before this renew; a peer may have overlapped. Verify the box before continuing.\n' \
+      "$_agent" "$_since" >&2
+  fi
+  # Preserve everything; bump only heartbeat_at. actor/actor_source are the STORED values, never
+  # re-resolved — a heartbeat renews liveness, it must never silently re-attribute ownership.
+  _wt=$(printf '%s' "$_m" | json_get worktree)
+  _intent=$(printf '%s' "$_m" | json_get intent)
+  _host=$(printf '%s' "$_m" | json_get host)
+  _acq=$(printf '%s' "$_m" | json_get acquired_at); [ -n "$_acq" ] || _acq=$(fl_now)
+  _ttl=$(printf '%s' "$_m" | json_get ttl_seconds); [ -n "$_ttl" ] || _ttl=$TTL_DEFAULT
+  _actor=$(printf '%s' "$_m" | json_get actor)
+  _actor_src=$(printf '%s' "$_m" | json_get actor_source)
+  # ws-165: a heartbeat renews THIS SAME tenure — it must never silently erase the stolen_*
+  # evidence a prior steal wrote (that would be the exact regression this workstream exists to
+  # prevent: the record surviving the steal only to be wiped by the very next renewal).
+  _new_meta=$(build_meta "$_cur_holder" "$_cur_sess" "$_wt" "$_intent" "$_host" "$_acq" "$(fl_now)" "$_ttl" "$_actor" "$_actor_src")
+  _steal_suffix=$(meta_steal_suffix "$_m")
+  [ -z "$_steal_suffix" ] || _new_meta="${_new_meta%\}}${_steal_suffix}}"
+  lk_write_meta "$_agent" "$_new_meta"
+  printf 'heartbeat: %s renewed\n' "$_agent"
+}
+
+# Cheap, read-only "do I STILL hold this, right now?" gate. This is the fast check to run right
+# before a mutating step of a long operation — much cheaper than reasoning over a full `status`
+# sweep, and it distinguishes exactly WHY you don't hold it (never just a bare "no"), because
+# each reason implies a different response:
+#   - LOST + lock absent entirely      -> someone released it / it never existed -> re-acquire.
+#   - LOST + held by a different holder -> you were reclaimed; a peer now owns it -> STOP, do not
+#     proceed as though you still hold it.
+#   - LAPSED (still recorded to you, but heartbeat-stale) -> nobody has reclaimed it YET, but any
+#     peer legally could at any moment -> re-acquire (which just refreshes your own lock) before
+#     your next mutating step.
+# Exit codes: 0 = HELD (live, by you) · 1 = LOST or LAPSED (see stderr for which) ·
+#             3 = UNKNOWN/unreachable (never rendered as "you're fine" — same invariant as status).
+cmd_check() {
+  _agent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  [ -n "$_agent" ] || fl_die "usage: fleet-lock check <agent>"
+  fl_reject_flag_token "$_agent" "usage: fleet-lock check <agent>"
+  fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+  fl_require_transport_agent "$_agent"
+  # ws-166: was silently dropping any trailing token — loud usage error instead.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock check <agent> — unexpected extra argument(s): $*"
+
+  # Same reachability guard as status/acquire: a box we can't see is UNKNOWN, never "you're free
+  # of it" and never "you still hold it" — refuse to render either.
+  if ! fl_reachable "$_agent"; then
+    printf 'fleet-lock: check: UNKNOWN — cannot reach %s; refusing to say whether you still hold the lock (DO NOT PROCEED).\n' \
+      "$(host_label "$_agent")" >&2
+    exit 3
+  fi
+
+  _me=$(fl_holder); _sess=$(fl_session)
+
+  if ! lk_exists "$_agent"; then
+    printf 'fleet-lock: check: LOST — %s is not locked at all (your lock is gone)\n' "$_agent" >&2
+    exit 1
+  fi
+  _m=$(lk_read_meta "$_agent")
+  if [ -z "$_m" ]; then
+    printf 'fleet-lock: check: LOST — %s has a lock directory but no metadata (mid-race or corrupt) — treat your claim as gone\n' "$_agent" >&2
+    exit 1
+  fi
+  _cur_holder=$(printf '%s' "$_m" | json_get holder)
+  _cur_sess=$(printf '%s' "$_m" | json_get session)
+
+  # ws-127: LOST now also covers a same-session PEER — same holder+session, but a different (or
+  # missing) agent identity. This is the exact AC-2 case: "a lead that holds nothing is told it
+  # holds nothing", where before ws-127 it would have been told HELD (a same-session peer's
+  # acquire looked identical to its own).
+  if ! fl_meta_is_mine "$_m"; then
+    if [ "$_cur_holder" != "$_me" ] || [ "$_cur_sess" != "$_sess" ]; then
+      printf 'fleet-lock: check: LOST — %s is now held by %s (session %s) — you were reclaimed\n' \
+        "$_agent" "$_cur_holder" "$_cur_sess" >&2
+    else
+      _cur_actor=$(printf '%s' "$_m" | json_get actor)
+      _my_actor=$(fl_actor)
+      printf 'fleet-lock: check: LOST — %s is held under your holder/session but by a DIFFERENT agent (stored agent=%s, you are agent=%s) — a same-session peer holds this, not you\n' \
+        "$_agent" "${_cur_actor:-<none recorded>}" "${_my_actor:-<none>}" >&2
+    fi
+    exit 1
+  fi
+
+  if meta_is_stale "$_m"; then
+    _hb=$(printf '%s' "$_m" | json_get heartbeat_at)
+    if [ -n "$_hb" ]; then
+      _since=$(( $(fl_now) - _hb - HEARTBEAT_TTL_DEFAULT ))
+    else
+      _since=0
+    fi
+    printf 'fleet-lock: check: LAPSED — %s is still recorded to you but went stale %ss ago; a peer can reclaim it at any moment. Re-acquire before proceeding.\n' \
+      "$_agent" "$_since" >&2
+    exit 1
+  fi
+
+  _hb=$(printf '%s' "$_m" | json_get heartbeat_at)
+  if [ -n "$_hb" ]; then
+    _rem=$(( HEARTBEAT_TTL_DEFAULT - ( $(fl_now) - _hb ) ))
+  else
+    _acq=$(printf '%s' "$_m" | json_get acquired_at)
+    _ttl=$(printf '%s' "$_m" | json_get ttl_seconds); [ -n "$_ttl" ] || _ttl=$TTL_DEFAULT
+    _rem=$(( _ttl - ( $(fl_now) - ${_acq:-0} ) ))
+  fi
+  printf 'check: %s HELD by you — %ss until lapse\n' "$_agent" "$_rem"
+}
+
+print_one_status() { # agent -> prints one line; returns 3 if UNKNOWN/unreachable, else 0
+  _agent=$1
+  # CORE SAFETY INVARIANT: an unreachable box is UNKNOWN, not free. Gate the UNLOCKED branch on a
+  # reachability probe so "can't tell" is never rendered as "free" (operator.md:40-54). fl_reachable
+  # is consulted in BOTH modes: in sim it honors the FLEET_LOCK_SIM_UNREACHABLE test seam (so AC-1's
+  # deterministic UNKNOWN proof needs no network); in live it does the bounded ssh probe.
+  if ! fl_reachable "$_agent"; then
+    printf '%-6s  UNKNOWN    host=%s  (unreachable — DO NOT PROCEED)\n' "$_agent" "$(host_label "$_agent")"
+    return 3
+  fi
+  if ! lk_exists "$_agent"; then
+    printf '%-6s  UNLOCKED   host=%s\n' "$_agent" "$(host_label "$_agent")"
+    return 0
+  fi
+  _m=$(lk_read_meta "$_agent")
+  if [ -z "$_m" ]; then
+    printf '%-6s  LOCKED (no metadata — likely stale)  host=%s\n' "$_agent" "$(host_label "$_agent")"
+    return 0
+  fi
+  _holder=$(printf '%s' "$_m" | json_get holder)
+  _sess=$(printf '%s' "$_m" | json_get session)
+  _intent=$(printf '%s' "$_m" | json_get intent)
+  _acq=$(printf '%s' "$_m" | json_get acquired_at)
+  _hb=$(printf '%s' "$_m" | json_get heartbeat_at)
+  # ws-127: render the actor too, right after session= and before age=, so the enforce-fleet-lock
+  # hook (which greps this exact line) can require BOTH session= AND actor= to match. A stale
+  # meta.json with no actor field, or one whose actor genuinely resolved empty, must render a
+  # STABLE, non-empty literal ("-") here — an empty string would collapse "actor= age=" into what
+  # looks like one run of whitespace to any caller token-splitting the line, silently losing the
+  # field boundary.
+  _actor=$(printf '%s' "$_m" | json_get actor)
+  [ -n "$_actor" ] || _actor='-'
+  _now=$(fl_now)
+  _age=$(( _now - ${_acq:-0} ))
+  # Liveness + reclaim countdown are heartbeat-based when a heartbeat_at is present; STALE is
+  # decided by meta_is_stale (the single source of truth), not by a raw ttl countdown.
+  if [ -n "$_hb" ]; then
+    _hbage=$(( _now - _hb ))
+    _rem=$(( HEARTBEAT_TTL_DEFAULT - _hbage ))
+  else
+    _hbage=$_age
+    _ttl=$(printf '%s' "$_m" | json_get ttl_seconds); [ -n "$_ttl" ] || _ttl=$TTL_DEFAULT
+    _rem=$(( _ttl - _age ))
+  fi
+  _state=HELD
+  if meta_is_stale "$_m"; then _state="STALE(reclaimable)"; fi
+  printf '%-6s  %s  holder=%s session=%s actor=%s age=%ss hb_age=%ss reclaim_in=%ss host=%s\n' \
+    "$_agent" "$_state" "$_holder" "$_sess" "$_actor" "$_age" "$_hbage" "$_rem" "$(host_label "$_agent")"
+  printf '           intent: %s\n' "$_intent"
+  # ws-165: if this lock was stolen, say so — the whole point of carrying stolen_* forward is that
+  # `status` is where a human actually looks. Deliberately PROSE, not key=value: enforce-fleet-lock.sh
+  # greps this exact output for the tokens holder=/session=/actor=/HELD/UNLOCKED/UNKNOWN/STALE( on
+  # the FIRST (holder) line above — these two extra lines must never contain any of those tokens, or
+  # the hook's ownership match could pick up a stray field from the wrong line.
+  _stolen_at=$(printf '%s' "$_m" | json_get stolen_at)
+  if [ -n "$_stolen_at" ]; then
+    _sf_iso=$(printf '%s' "$_m" | json_get stolen_at_iso)
+    _sf_from=$(printf '%s' "$_m" | json_get stolen_from)
+    _sf_sess=$(printf '%s' "$_m" | json_get stolen_from_session)
+    _sf_actor=$(printf '%s' "$_m" | json_get stolen_from_actor)
+    _sf_liveness=$(printf '%s' "$_m" | json_get stolen_from_liveness)
+    _sf_hbage=$(printf '%s' "$_m" | json_get stolen_from_hb_age)
+    _sf_intent=$(printf '%s' "$_m" | json_get stolen_from_intent)
+    printf '           stolen at %s from holder %s, session %s, actor %s (they were %s, hb_age %ss)\n' \
+      "${_sf_iso:-$_stolen_at}" "${_sf_from:-<unknown>}" "${_sf_sess:-?}" "${_sf_actor:--}" "${_sf_liveness:-unknown}" "${_sf_hbage:--}"
+    printf '           their prior intent: %s\n' "${_sf_intent:-<none>}"
+  fi
+}
+
+cmd_status() {
+  _agent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  if [ -n "$_agent" ]; then
+    fl_reject_flag_token "$_agent" "usage: fleet-lock status [agent]"
+    fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+    fl_require_transport_agent "$_agent"
+  fi
+  # ws-166: was silently dropping any trailing token — loud usage error instead.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock status [agent] — unexpected extra argument(s): $*"
+  if fl_local && [ -z "$_agent" ]; then
+    fl_die2 "local transport requires status to name its exact configured agent ($FLEET_LOCK_LOCAL_AGENT)"
+  fi
+  if [ -n "$_agent" ]; then
+    _rc=0; print_one_status "$_agent" || _rc=$?
+    exit "$_rc"                 # propagate 3 (UNKNOWN) so callers that gate on exit see it
+  fi
+  # All-agents sweep: print each, remember the WORST code, exit 3 if any was UNKNOWN.
+  _worst=0
+  for a in $VALID_AGENTS; do
+    _rc=0; print_one_status "$a" || _rc=$?
+    if [ "$_rc" -gt "$_worst" ]; then _worst=$_rc; fi
+  done
+  exit "$_worst"
+}
+
+cmd_steal() {
+  _agent=${1:-}
+  [ -n "$_agent" ] || fl_die "usage: fleet-lock steal <agent> --force [--evict-live] [\"<intent>\"]"
+  # ws-166 × ws-165 MERGE — ONE line survives from ws-166 here, and only because ws-165's parser
+  # (below) genuinely does not cover this case. ws-165's order-insensitive parse ALREADY refuses an
+  # unrecognised `--*` and a second positional with exit 2, which is strictly better than ws-166's
+  # original `$# -gt 2` check — so that check was DROPPED rather than merged. What ws-165's parse
+  # cannot catch is a flag in the AGENT slot: `steal --force moxy` sets _agent='--force', which then
+  # falls through to the generic `unknown agent '--force'` (exit 1) — a misleading diagnosis (the
+  # agent isn't unknown, the arguments are transposed) where ws-166 requires a distinct usage error.
+  # Deliberately placed BEFORE fl_is_valid_agent so the flag-shaped token is named as a flag.
+  fl_reject_flag_token "$_agent" "usage: fleet-lock steal <agent> --force [--evict-live] [\"<intent>\"]"
+  fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+  fl_require_transport_agent "$_agent"
+  if [ $# -gt 0 ]; then shift; fi
+
+  # Order-insensitive arg parse (ws-165): --force / --evict-live are flags; the first non-flag
+  # argument is the intent (a SECOND one is a usage error, not silently ignored); any other --* is
+  # unrecognized.
+  # ws-166 NOTE — this parse SUPERSEDES ws-166's own `$# -gt 2` extra-argument check, which was
+  # dropped in the merge rather than stacked on top of it. Both close the same silence (`steal moxy
+  # --force --json` used to exit 0, EVICT THE LIVE HOLDER, and drop the unrecognised token); this
+  # one closes it better, because it is order-insensitive and names the offending token. Two
+  # overlapping guards on one argv surface would be a merge artifact, not defence in depth.
+  _force=0; _evict_live=0; _intent=""
+  for _sarg in "$@"; do
+    case "$_sarg" in
+      --force) _force=1 ;;
+      --evict-live) _evict_live=1 ;;
+      --*) fl_die2 "steal: unrecognized flag '$_sarg' (usage: fleet-lock steal <agent> --force [--evict-live] [\"<intent>\"])" ;;
+      *)
+        if [ -z "$_intent" ]; then
+          _intent=$_sarg
+        else
+          fl_die2 "steal: unexpected extra argument '$_sarg' (usage: fleet-lock steal <agent> --force [--evict-live] [\"<intent>\"])"
+        fi
+        ;;
+    esac
+  done
+  # Exit 1, not 2, and the message is byte-identical to the pre-ws-165/166 one: "asked to steal but
+  # didn't pass --force" is a refused REQUEST (same class as a BLOCKED acquire), not a malformed
+  # invocation. Both workstreams independently preserved this; keep it.
+  [ "$_force" -eq 1 ] || fl_die "steal requires --force (this evicts the current holder)"
+
+  # Resolve the stealer's own identity up front — every audit line below (refused or not) needs it.
+  _me=$(fl_holder); _sess=$(fl_session); _wt=$(fl_worktree); _hl=$(host_label "$_agent")
+  _actor=$(fl_actor); _actor_src=$(fl_actor_source)
+
+  # The loop must NEVER auto-evict a fresh holder: FLEET_LOCK_NO_FORCE hard-disables steal so an
+  # automated context can only ever reclaim a heartbeat-STALE lock via a normal acquire (AC-4).
+  # UNCHANGED from before ws-165, on purpose — this is a SEPARATE, independent gate from the
+  # default-deny check just below (NO_FORCE is not overridable by FLEET_LOCK_ALLOW_STEAL).
+  if [ -n "${FLEET_LOCK_NO_FORCE:-}" ]; then
+    printf 'fleet-lock: steal --force is disabled in this context (FLEET_LOCK_NO_FORCE) — the loop\n' >&2
+    printf '  must never auto-evict; reclaim happens only via a heartbeat-stale acquire, or a human\n' >&2
+    printf '  runs steal without that env.\n' >&2
+    fl_steal_audit_refused "$_agent" "no-force-env" "-" "$_me" "$_sess" "$_actor" "$_actor_src" "unknown"
+    exit 1
+  fi
+
+  # ws-165 DEFAULT-DENY for an automated caller. Why the polarity is inverted from the NO_FORCE
+  # check just above: NO_FORCE is opt-IN — something has to remember to SET it before running in an
+  # automated context, and the class of caller that most needs this guard (a loop, a script, an
+  # agent acting on its own) is exactly the class LEAST likely to be thinking about a safety flag on
+  # itself at the moment it reaches for --force. Default-deny with a human opt-out
+  # (FLEET_LOCK_ALLOW_STEAL=1) inverts that: nothing has to remember anything for the safe case (a
+  # human at a terminal) to keep working, while an automated caller that forgot gets refused instead
+  # of silently evicting. A context this cannot POSITIVELY prove is human — including "can't tell" —
+  # lands on DENY; "can't tell" is never treated as "assume human". `tty` is the "can't tell yet"
+  # case: fl_steal_context only proves a terminal is attached, not that a human is behind it (a pty
+  # held by tmux/screen/`ssh -tt`/expect/`docker -t` has neither an automation marker NOR anyone
+  # present) — so it earns a bounded, explicit confirmation on /dev/tty (fl_steal_confirm), never an
+  # automatic pass. FLEET_LOCK_ALLOW_STEAL=1 skips this ENTIRE block, prompt included — it is the
+  # documented human opt-out for a non-interactive context a human is deliberately driving.
+  if [ -z "${FLEET_LOCK_ALLOW_STEAL:-}" ]; then
+    _ctx=$(fl_steal_context)
+    case "$_ctx" in
+      automated:*)
+        printf 'fleet-lock: steal --force is disabled by default for an AUTOMATED caller (detected: %s).\n' "$_ctx" >&2
+        printf '  The right path for an automated context is a normal acquire — it reclaims a\n' >&2
+        printf '  heartbeat-stale lock on its own and refuses a genuinely live one on its own.\n' >&2
+        printf '  If a human deliberately intends this steal, re-run with FLEET_LOCK_ALLOW_STEAL=1 set.\n' >&2
+        fl_steal_audit_refused "$_agent" "automated-context" "$_ctx" "$_me" "$_sess" "$_actor" "$_actor_src" "unknown"
+        exit 1
+        ;;
+      tty)
+        if fl_steal_confirm "$_agent"; then
+          : # a human typed the agent's name on /dev/tty -- fall through to the steal itself.
+        else
+          printf 'fleet-lock: steal --force was NOT confirmed for %s (%s) — refusing.\n' "$_agent" "$FL_STEAL_REASON" >&2
+          printf '  The safe path: wait for the lock to lapse (it frees on its own once the holder\n' >&2
+          printf '  stops heartbeating), then run a plain acquire.\n' >&2
+          printf '  If you deliberately intend this steal, re-run with FLEET_LOCK_ALLOW_STEAL=1 set\n' >&2
+          printf '  (the deliberate-human opt-out — skips this prompt entirely).\n' >&2
+          fl_steal_audit_refused "$_agent" "$FL_STEAL_REASON" "$_ctx" "$_me" "$_sess" "$_actor" "$_actor_src" "unknown"
+          exit 1
+        fi
+        ;;
+    esac
+  fi
+
+  # Reachability guard: you cannot safely evict a holder on a box you cannot see.
+  if ! fl_sim && ! fl_reachable "$_agent"; then
+    printf 'fleet-lock: UNREACHABLE — cannot reach %s; refusing to evict a holder on a box you cannot see.\n' "$(host_label "$_agent")" >&2
+    fl_steal_audit_refused "$_agent" "unreachable" "-" "$_me" "$_sess" "$_actor" "$_actor_src" "unknown"
+    exit 3
+  fi
+
+  # A hardcoded intent describes the MECHANISM ("stolen (--force)"), not the WORK — the next person
+  # to run `status` cannot tell what the box is actually being used for. Keep it as the fallback (no
+  # existing caller breaks), but say so.
+  if [ -z "$_intent" ]; then
+    _intent="stolen (--force)"
+    printf 'fleet-lock: no intent given — storing the default "stolen (--force)". Next time pass a\n' >&2
+    printf '  real one:  fleet-lock steal %s --force "<what you are about to do>"\n' "$_agent" >&2
+  fi
+
+  # Read + classify the current holder (if any) BEFORE touching anything. meta_is_stale is the
+  # SAME single source of truth cmd_acquire itself uses — steal must never invent a second rule.
+  _victim=""; _vsess=""; _vactor=""; _vintent=""; _vliveness="none"; _vhbage="-"
+  if lk_exists "$_agent"; then
+    _m=$(lk_read_meta "$_agent")
+    _victim=$(printf '%s' "$_m" | json_get holder)
+    _vsess=$(printf '%s' "$_m" | json_get session)
+    _vactor=$(printf '%s' "$_m" | json_get actor)
+    _vintent=$(printf '%s' "$_m" | json_get intent)
+    _vhb=$(printf '%s' "$_m" | json_get heartbeat_at)
+    if meta_is_stale "$_m"; then _vliveness="STALE"; else _vliveness="FRESH"; fi
+    if [ -n "$_vhb" ]; then _vhbage=$(( $(fl_now) - _vhb )); else _vhbage="-"; fi
+
+    # ws-165 review — SELF-STEAL SHORT-CIRCUIT. If the CURRENT holder is US, this is not a steal
+    # at all — nothing is being displaced. Two things go wrong if this case falls through to the
+    # FRESH/--evict-live gate just below (measured live: exit 0 on origin/main, exit 1 here before
+    # this fix, for the identical `steal <agent> --force` on your OWN fresh lock):
+    #   1. Behaviour — a harmless self-refresh gets refused outright, on a path that carries zero
+    #      danger to anyone.
+    #   2. Prose (the more serious half) — the refusal you'd hit calls YOU "a genuinely live peer"
+    #      and instructs you to re-run with --evict-live: training an operator to reach for the
+    #      single most dangerous flag in this tool in the ONE case where nothing is at stake. That
+    #      is the "a safety instruction that is nearly right IS the defect" shape
+    #      (definition-of-done.md — judge prose by what a reader DOES with it, not by whether it is
+    #      technically true), and the same shape ws-127 already fixed once in the hook's own
+    #      peer-block message. Full reasoning: docs/reference/ws-165-steal-audit-design.md.
+    #
+    # This is fl_meta_is_mine — the file's OWN single source of truth for "is this lock mine?",
+    # already used by release/heartbeat/check/acquire's idempotent-refresh — NOT a new, hand-rolled
+    # holder+session rule. That matters: fl_meta_is_mine is holder+session+ACTOR positive equality,
+    # so a same-session PEER with a DIFFERENT (or missing) actor — the exact ws-127 case — is
+    # correctly NOT "mine" and still falls through to the gate below, refusable/evictable exactly
+    # as before. Widening this to a bare holder+session check would reopen that hole (see test [42],
+    # the negative control on this fix).
+    #
+    # Applies regardless of --evict-live and regardless of $_vliveness (FRESH or STALE): you can
+    # never displace yourself, so neither one changes the outcome — mirrors cmd_acquire's own
+    # idempotent-refresh branch, which likewise checks fl_meta_is_mine BEFORE meta_is_stale.
+    #
+    # Placement matters too: this sits AFTER the FLEET_LOCK_NO_FORCE and FLEET_LOCK_ALLOW_STEAL
+    # default-deny gates above (both already ran by the time execution reaches here) — a
+    # self-refresh must never become a side door around either one.
+    if [ -n "$_m" ] && fl_meta_is_mine "$_m"; then
+      _new_meta=$(build_meta "$_me" "$_sess" "$_wt" "$_intent" "$_hl" "$(fl_now)" "$(fl_now)" "$TTL_DEFAULT" "$_actor" "$_actor_src")
+      _steal_suffix=$(meta_steal_suffix "$_m")
+      [ -z "$_steal_suffix" ] || _new_meta="${_new_meta%\}}${_steal_suffix}}"
+      lk_write_meta "$_agent" "$_new_meta"
+      # SELF-REFRESH, not STOLEN — nobody was displaced, so a STOLEN line would be a false record.
+      # Same failure direction as fl_steal_audit_refused (best-effort, warn-loud-don't-refuse), for
+      # the same reason: fail-closed on the STOLEN write below exists because a REAL steal DESTROYS
+      # the prior holder's tenure and an unaudited destruction is unacceptable — a self-refresh
+      # destroys nothing, so there is nothing here that a failed log write needs to protect against.
+      _sr_line=$(printf '%s SELF-REFRESH agent=%s by_holder=%s by_session=%s by_actor=%s by_actor_source=%s new_intent="%s"' \
+        "$(fl_iso_now)" "$_agent" \
+        "$(fl_audit_field "$_me")" "$(fl_audit_field "$_sess")" "${_actor:--}" "${_actor_src:--}" \
+        "$(fl_audit_field "$_intent")")
+      fl_audit_write "$_sr_line" || \
+        printf 'fleet-lock: WARNING — could not append the SELF-REFRESH audit line to %s\n' "$(fl_audit_path)" >&2
+      printf 'steal: you already hold %s — nothing to evict; refreshed your own lock.\n' "$_agent"
+      return 0
+    fi
+
+    # AC-1/AC-5: --force alone is only ever enough against a STALE holder or an empty lock. A
+    # genuinely LIVE (heartbeating) holder additionally needs --evict-live — this is the decision
+    # surface, so print everything the caller needs to decide BEFORE they can act again.
+    if [ "$_vliveness" = "FRESH" ] && [ "$_evict_live" -ne 1 ]; then
+      printf 'fleet-lock: %s is held by a LIVE (heartbeating) holder — steal --force alone will not\n' "$_agent" >&2
+      printf '  evict it. holder %s, session %s, actor %s.\n' "${_victim:-<unknown>}" "${_vsess:-?}" "${_vactor:--}" >&2
+      printf '  heartbeat age: %ss.  their intent: %s\n' "$_vhbage" "${_vintent:-<none>}" >&2
+      printf '  either wait for it to lapse (past %ss of silence) and re-run a plain acquire, or if\n' "$HEARTBEAT_TTL_DEFAULT" >&2
+      printf '  evicting a genuinely live peer is deliberately intended, re-run with --evict-live.\n' >&2
+      fl_steal_audit_refused "$_agent" "live-holder-needs-evict-live" "-" "$_me" "$_sess" "$_actor" "$_actor_src" "$_vliveness"
+      exit 1
+    fi
+
+    printf 'steal: EVICTING %s (session %s) from %s.  their intent: %s\n' \
+      "${_victim:-<unknown>}" "${_vsess:-?}" "$_agent" "${_vintent:-<none>}"
+  else
+    printf 'steal: %s was not locked — acquiring fresh.\n' "$_agent"
+  fi
+
+  # ws-165: write the evidence BEFORE the destruction. An unauditable steal is exactly the state
+  # this workstream exists to eliminate, so "log or don't act" is the correct failure direction —
+  # and writing first means a crash between the log write and the lock rewrite still leaves a
+  # durable record on disk, rather than a completed eviction nobody can see happened.
+  _stolen_line=$(printf '%s STOLEN agent=%s by_holder=%s by_session=%s by_actor=%s by_actor_source=%s new_intent="%s" from_holder=%s from_session=%s from_actor=%s from_liveness=%s from_hb_age=%s from_intent="%s"' \
+    "$(fl_iso_now)" "$_agent" \
+    "$(fl_audit_field "$_me")" "$(fl_audit_field "$_sess")" "${_actor:--}" "${_actor_src:--}" \
+    "$(fl_audit_field "$_intent")" \
+    "$(fl_audit_field "${_victim:--}")" "$(fl_audit_field "${_vsess:--}")" "${_vactor:--}" "$_vliveness" "$_vhbage" \
+    "$(fl_audit_field "${_vintent:--}")")
+  if ! fl_audit_write "$_stolen_line"; then
+    printf 'fleet-lock: REFUSING to steal %s — could not write the audit record to %s\n' "$_agent" "$(fl_audit_path)" >&2
+    printf '  an unauditable steal is exactly what this tool exists to prevent. Point\n' >&2
+    printf '  FLEET_LOCK_AUDIT_LOG at a writable path and re-run.\n' >&2
+    fl_steal_audit_refused "$_agent" "audit-unwritable" "-" "$_me" "$_sess" "$_actor" "$_actor_src" "$_vliveness"
+    exit 1
+  fi
+
+  if lk_exists "$_agent"; then
+    lk_rm "$_agent"
+  fi
+  if lk_mkdir "$_agent"; then
+    lk_write_meta "$_agent" "$(meta_with_steal_fields \
+      "$(build_meta "$_me" "$_sess" "$_wt" "$_intent" "$_hl" "$(fl_now)" "$(fl_now)" "$TTL_DEFAULT" "$_actor" "$_actor_src")" \
+      "${_victim:-}" "${_vsess:-}" "${_vactor:-}" "${_vintent:-}" "$_vliveness" "$_vhbage")"
+    printf 'acquired (stolen): %s (%s)\n' "$_agent" "$_hl"
+    return 0
+  fi
+  fl_die "steal: reclaim raced another session; run status and retry"
+}
+
+# Wrap a live-box operation with automatic, BOUNDED renewal for its whole duration. This is the
+# actual fix for "nothing renews a fleet-lock during an op" — not a background daemon that
+# renews forever, but a renewer scoped tightly to one wrapped command:
+#   1. acquire (or refresh) the lock up front — refuse and do nothing if that fails.
+#   2. spawn a background loop that heartbeats on our behalf, on a much shorter cadence than
+#      HEARTBEAT_TTL, for as long as WE (the process that invoked `hold`) are still alive.
+#   3. run the wrapped command in the foreground.
+#   4. on exit (normal, or INT/TERM), stop the renewer and release the lock — but ONLY if this
+#      call is what created it; a `hold` nested inside an outer acquire must never drop a lock
+#      the outer scope is still relying on.
+#   5. propagate the wrapped command's own exit code.
+cmd_hold() {
+  _agent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  _intent=${1:-}; if [ $# -gt 0 ]; then shift; fi
+  [ -n "$_agent" ] || fl_die "usage: fleet-lock hold <agent> \"<intent>\" -- <command...>"
+  # ws-166 GAP-2: `hold`, unlike acquire/release/heartbeat/check/status, never got this check —
+  # `fleet-lock hold --json moxy "intent" -- cmd` fell straight through to fl_is_valid_agent's
+  # generic "unknown agent '--json'" (exit 1) instead of the distinct "unrecognised flag" usage
+  # error (exit 2) every other command already gives a flag-shaped agent slot. ONLY the agent slot
+  # is checked here — never $_intent (free text, may legitimately start with '-') and never
+  # anything after the literal `--` (the wrapped command's own flags are passthrough, untouched;
+  # see the `shift`+"$@"` handling below, deliberately unchanged from before this fix).
+  fl_reject_flag_token "$_agent" "usage: fleet-lock hold <agent> \"<intent>\" -- <command...>"
+  fl_is_valid_agent "$_agent" || fl_die "unknown agent '$_agent' (want: $VALID_AGENTS)"
+  fl_require_transport_agent "$_agent"
+  [ -n "$_intent" ] || fl_die "hold needs an intent, e.g. fleet-lock hold $_agent \"deploy approval-router\" -- ./deploy.sh"
+  [ "${1:-}" = "--" ] || fl_die2 "usage: fleet-lock hold <agent> \"<intent>\" -- <command...>  (missing the '--' before the command)"
+  shift
+  [ $# -ge 1 ] || fl_die2 "usage: fleet-lock hold <agent> \"<intent>\" -- <command...>  (missing the command to run)"
+
+  # Capture OUR OWN process id before anything is backgrounded. This is what the renewer polls
+  # with `kill -0` to know whether the shell that invoked `hold` is still alive — the whole
+  # safety argument for "it can never renew forever" rests on this one check.
+  HOLD_PID=$$
+
+  # Acquire (or refresh) up front. cmd_acquire is invoked through a command substitution so its
+  # own `exit` (on BLOCKED/UNREACHABLE refusal) only ends that subshell — we recover the real
+  # exit code via $? and propagate it ourselves, WITHOUT ever running the wrapped command.
+  _acq_rc=0
+  # (stdout+stderr are merged so we can classify acquired-vs-refreshed from the text; we re-emit on
+  # the correct stream — a refusal's message belongs on stderr, like every other refusal in this tool.)
+  _acq_out=$(cmd_acquire "$_agent" "$_intent" 2>&1) || _acq_rc=$?
+  if [ "$_acq_rc" -eq 0 ]; then
+    printf '%s\n' "$_acq_out"
+  else
+    printf '%s\n' "$_acq_out" >&2
+    exit "$_acq_rc"
+  fi
+
+  # Did WE create the lock, or did we just refresh one we already held (e.g. an outer `hold` or
+  # a manual `acquire` still in scope around us)? Only the creator releases it at the end —
+  # `hold` must never drop a lock some outer scope is still relying on.
+  #
+  # ws-127 note: this USED to be `case "$_acq_out" in acquired:*)`, anchored at the very START of
+  # the captured text. cmd_acquire can now ALSO print a leading "WARNING — no agent-distinct
+  # identity..." line (to stderr, merged into this same capture) before its "acquired:"/
+  # "refreshed:" line whenever no FLEET_LOCK_ACTOR/--agent-name signal resolves — exactly the
+  # common case for a plain `hold` invocation with neither set. A start-anchored case pattern
+  # would then NEVER match, misclassifying every such acquire as "we did not create it" and
+  # silently skipping the release this scope is responsible for. `grep -q '^acquired:'` finds the
+  # line ANYWHERE in the (possibly multi-line) capture while still requiring it be the FIRST word
+  # of its own line — so "refreshed: ... [you already held it]" still correctly does NOT match.
+  if printf '%s\n' "$_acq_out" | grep -q '^acquired:'; then
+    _we_created=1
+  else
+    _we_created=0
+  fi
+
+  # Renew far more often than the TTL requires: HEARTBEAT_TTL_DEFAULT/3 (100s) leaves two full
+  # missed-renewal windows of slack before the lock could ever go stale. Renewing MORE often
+  # than this is never unsafe — it only ever makes the lock look MORE alive, never less — so the
+  # only reason to override it is to make a TEST fast. FLEET_LOCK_RENEW_INTERVAL exists purely
+  # as that test seam; nothing else should ever need to set it.
+  RENEW_INTERVAL=${FLEET_LOCK_RENEW_INTERVAL:-$(( HEARTBEAT_TTL_DEFAULT / 3 ))}
+
+  # ⚠️ SCOPE LIMIT — say this plainly, because getting it wrong recreates the very bug `hold` fixes:
+  # `hold` protects for exactly as long as the wrapped command BLOCKS IN THE FOREGROUND. If the
+  # command daemonizes or detaches its real work and returns early (a remote `nohup … &`, a
+  # `launchctl kickstart` that returns immediately, anything that backgrounds), `hold` stops renewing
+  # and releases the moment the LAUNCHER returns — while the actual job keeps running unprotected.
+  # For that shape do NOT use `hold`: use the detached-poll pattern (operator.md) and call
+  # `fleet-lock heartbeat <agent>` / `fleet-lock check <agent>` on each poll instead.
+  printf 'hold: %s — auto-renewing every %ss while running: %s\n' "$_agent" "$RENEW_INTERVAL" "$*" >&2
+  printf 'hold: (renewal covers this command only while it blocks in the foreground — a command that\n' >&2
+  printf '       detaches its real work is NOT covered; poll with `fleet-lock heartbeat` instead.)\n' >&2
+
+  # The renewer. It can NEVER renew forever: every iteration, right before it goes back to
+  # sleep, it checks that the process which invoked `hold` (HOLD_PID) is still alive. If that
+  # process is gone — killed, crashed, laptop died — the renewer exits within one interval and
+  # the lock lapses normally: reclaimable again within HEARTBEAT_TTL of the last real renewal,
+  # exactly like any other abandoned lock. It also stops itself the moment a heartbeat call
+  # fails (lock gone / reclaimed by someone else) — cmd_heartbeat's own `exit 1` on those paths
+  # ends this subshell outright, it is not swallowed here.
+  (
+    # Run sleep as an explicit child and reap it on TERM. A bare foreground `sleep` can survive
+    # after this subshell is killed and keep inherited stdout/stderr pipes open for the entire
+    # 100-second default interval. That makes an already-finished `hold` appear hung to a caller
+    # using command substitution and leaves an orphan behind. The trap makes renewal shutdown
+    # bounded without changing heartbeat cadence or lock ownership.
+    _renew_sleep_pid=
+    fl_renew_stop() {
+      [ -z "$_renew_sleep_pid" ] || kill "$_renew_sleep_pid" 2>/dev/null || true
+      exit 0
+    }
+    trap 'fl_renew_stop' INT TERM
+    while :; do
+      sleep "$RENEW_INTERVAL" &
+      _renew_sleep_pid=$!
+      wait "$_renew_sleep_pid" || exit 0
+      _renew_sleep_pid=
+      # Liveness is checked BEFORE the renewal, deliberately. If the process that invoked `hold`
+      # is already gone, we exit WITHOUT renewing — so a dead operation never buys itself even
+      # one extra TTL window. (Checking after the renew instead would hand an already-dead holder
+      # one final heartbeat, pushing its lapse out by up to a further HEARTBEAT_TTL for no reason.)
+      kill -0 "$HOLD_PID" 2>/dev/null || exit 0
+      cmd_heartbeat "$_agent" >/dev/null
+    done
+  ) &
+  _renew_pid=$!
+
+  _cleanup_done=0
+  fl_hold_cleanup() {
+    [ "$_cleanup_done" -eq 0 ] || return 0
+    _cleanup_done=1
+    kill "$_renew_pid" 2>/dev/null || true
+    wait "$_renew_pid" 2>/dev/null || true
+    if [ "$_we_created" -eq 1 ]; then
+      cmd_release "$_agent" >&2 || true
+    else
+      printf 'hold: leaving %s locked (a scope outside this hold already held it)\n' "$_agent" >&2
+    fi
+    printf 'hold: renewal stopped for %s\n' "$_agent" >&2
+  }
+  trap 'fl_hold_cleanup' EXIT
+  trap 'fl_hold_cleanup; exit 130' INT
+  trap 'fl_hold_cleanup; exit 143' TERM
+
+  set +e
+  "$@"
+  _cmd_rc=$?
+  set -e
+  exit "$_cmd_rc"
+}
+
+# fleet-lock whoami (ws-127 §5) — the cheap "who does this tool think I am, right now?"
+# primitive. NEVER touches the network and NEVER reasons about any actual lock — it only
+# resolves and prints the THREE identity signals fl_meta_is_mine compares against, so a human or
+# an agent can audit, before ever acquiring anything, whether this box can actually tell them
+# apart from a same-session peer. Always exits 0: there is no failure mode here worth a non-zero
+# exit, since printing "you have no agent-distinct identity" IS the successful, correct answer in
+# that case, not an error.
+cmd_whoami() {
+  # ws-166 GAP-3: this used to silently ignore any trailing argument (`whoami extra-garbage`
+  # exited 0 as if nothing were wrong) — loud usage error instead, matching every other subcommand.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock whoami — takes no arguments (got: $*)"
+  _wa_holder=$(fl_holder); _wa_sess=$(fl_session)
+  _wa_actor=$(fl_actor); _wa_src=$(fl_actor_source)
+  _wa_distinct=no
+  [ "$_wa_src" = "none" ] || _wa_distinct=yes
+  printf 'holder: %s\n' "$_wa_holder"
+  printf 'session: %s\n' "$_wa_sess"
+  if fl_actor_env_is_invalid; then
+    # Never report a rejected value as merely "<none>" — that reads as "you set nothing", when in
+    # fact you set something and it was REFUSED. Two very different situations with two different
+    # fixes, and collapsing them is how someone concludes their identity is working when it is not.
+    printf 'actor: <none> — FLEET_LOCK_ACTOR was SET but REJECTED as invalid: "%s"\n' "$FLEET_LOCK_ACTOR"
+    printf '        allowed: letters, digits, . _ / - only, with at least one letter or digit.\n'
+    printf '        it is rejected WHOLLY, never cleaned up: stripping bad characters would map\n'
+    printf '        different identities onto one (e.g. "lead A" and "leadA").\n'
+  else
+    printf 'actor: %s\n' "${_wa_actor:-<none>}"
+  fi
+  printf 'actor-source: %s\n' "$_wa_src"
+  printf 'agent-distinct: %s\n' "$_wa_distinct"
+}
+
+# fleet-lock capabilities (ws-166) — machine-readable, one-per-line, stable/greppable: what THIS
+# copy actually honours, right now. This is what a brief or shared/scripts/fleet-tooling-check
+# asserts against instead of assuming — the whole point of this command is that its answer can
+# never drift from reality, because it is generated from FL_VERSION/FL_ENV_HONOURED/
+# FL_ENV_PASSTHROUGH/FL_COMMANDS, the SAME declarations fl_check_env_allowlist and main()'s
+# dispatch actually use. `env` = fleet-lock reads and acts on it; `env-passthrough` = a companion
+# tool's var that arrives in this env and is deliberately not refused, but is otherwise ignored
+# (see FL_ENV_PASSTHROUGH's comment for why). Never touches the network or a lock; always exits 0
+# — INCLUDING when handed a FLEET_LOCK_* var this copy doesn't recognise (ws-166 GAP-4: this is the
+# documented escape hatch, dispatched through fl_check_env_allowlist_soft instead of the strict
+# fl_check_env_allowlist every other command goes through — see main()).
+cmd_capabilities() {
+  # ws-166 GAP-3: was silently ignoring any trailing argument — loud usage error instead.
+  [ $# -eq 0 ] || fl_die2 "usage: fleet-lock capabilities — takes no arguments (got: $*)"
+  printf 'version %s\n' "$FL_VERSION"
+  for _e in $FL_ENV_HONOURED; do printf 'env %s\n' "$_e"; done
+  for _e in $FL_ENV_PASSTHROUGH; do printf 'env-passthrough %s\n' "$_e"; done
+  for _c in $FL_COMMANDS; do printf 'cmd %s\n' "$_c"; done
+  # ws-166 GAP-4: surface anything fl_check_env_allowlist_soft let through un-refused. main() only
+  # ever reaches this command via that soft path, so FL_UNKNOWN_ENV_VARS is always defined here —
+  # empty when the env was clean, one-name-per-line otherwise. This is what makes the exit-4
+  # refusal's "run capabilities" remedy actually preserve the information it would have reported
+  # itself, instead of the reader following the remedy and getting no mention of it at all.
+  for _e in ${FL_UNKNOWN_ENV_VARS:-}; do printf 'unknown-env %s\n' "$_e"; done
+}
+
+# print_usage — the informational text itself, to STDOUT, never exits. This is what -h/--help/help
+# print when EXPLICITLY requested (main()'s dispatch, exit 0 — see below): asking for help is not a
+# mistake, and per GAP-4 it is one of the three declaration-printers that must always work. `usage()`
+# below wraps this SAME text for the genuine-usage-ERROR case (missing args, unknown command).
+print_usage() {
+  cat <<EOF
+fleet-lock — per-agent live-box mutual exclusion (agents: $VALID_AGENTS)
+
+  fleet-lock acquire   <agent> "<intent>" grab the lock before touching a live box
+  fleet-lock release   <agent>            free the lock (holder only)
+  fleet-lock heartbeat <agent>            renew your held lock's liveness (holder only) —
+                                           nothing calls this for you; see "hold" below
+  fleet-lock check     <agent>            cheap read-only "do I still hold this?" gate
+  fleet-lock hold <agent> "<intent>" -- <command...>
+                                           acquire, auto-renew while <command> runs, release
+  fleet-lock status   [agent]             holder(s), intent, age, liveness, reclaim countdown
+  fleet-lock steal <agent> --force [--evict-live] ["<intent>"]
+                                           override a stale/abandoned lock; --evict-live is ALSO
+                                           needed to evict a genuinely LIVE holder. Audited +
+                                           default-denied for automated callers; a caller with a
+                                           bare TTY (not proof of a human) is asked to type the
+                                           agent's name on /dev/tty before it proceeds.
+  fleet-lock whoami                       print holder/session/actor/actor-source + whether this
+                                           box can tell you apart from a same-session peer
+  fleet-lock capabilities                 machine-readable: version + every FLEET_LOCK_* var and
+                                           subcommand THIS copy honours (ws-166) — see below
+  fleet-lock --version                    print the version and exit 0
+
+Exit codes:  0 ok · 1 blocked/refused/LOST/LAPSED · 2 usage · 3 UNKNOWN/unreachable (DO NOT PROCEED)
+             · 4 was handed a FLEET_LOCK_* var this copy doesn't honour (ws-166 — see capabilities)
+             (capabilities / --version / -h|--help|help never hit exit 4 themselves — they are the
+             escape hatch for it; see fl_check_env_allowlist's header comment)
+Simulation (no mini):  set FLEET_LOCK_ROOT=/tmp/fleet-lock-test
+Actual local mini:      set BOTH FLEET_LOCK_LOCAL_AGENT=<agent> and
+                        FLEET_LOCK_LOCAL_STATE_DIR=<absolute-agent-state-dir>; targets only that
+                        agent and writes <state-dir>/$LOCK_NAME without SSH
+Host map:              $(fl_hosts_file)
+Per-agent identity:    FLEET_LOCK_ACTOR=<name> (or --agent-name in \$CLAUDE_PID's argv) — see whoami
+Steal safety:          FLEET_LOCK_ALLOW_STEAL=1 (human opt-out of the automated-caller default-deny
+                        AND its /dev/tty confirmation prompt),
+                        FLEET_LOCK_AUDIT_LOG=<path> (override the steal audit log path),
+                        FLEET_LOCK_CONFIRM_TIMEOUT=<seconds> (default 30; how long the /dev/tty
+                        confirmation prompt waits before it denies as confirm-timeout)
+EOF
+}
+
+# usage — a genuine USAGE ERROR (missing args, unknown command): same text as print_usage, but to
+# STDERR and exit 2 (the documented "2 = usage" class), matching the pre-existing behaviour for
+# every one of those paths. Distinct from an EXPLICIT -h/--help/help request, which is not an error
+# — see main()'s dispatch, which calls print_usage directly for that case instead of this function.
+usage() {
+  print_usage >&2
+  exit 2
+}
+
+# ---------------------------------------------------------------------------
+main() {
+  # ws-166 GAP-4: peek at the command WITHOUT consuming it, so the strict-vs-soft choice below can
+  # be made before we've committed to the "$# -ge 1" usage-error path a few lines down (a bare
+  # invocation with an unknown var still goes through the strict check — it is not one of the three
+  # declaration-only commands, and there is nothing to "escape" to on a bare invocation anyway).
+  _peek_cmd=${1:-}
+
+  # `capabilities` / `--version` / `-h`|`--help`|`help` are pure DECLARATION-PRINTERS — they read no
+  # input, take no lock, touch no network, and act on nothing except printing a fixed string about
+  # the BUILD itself. They are ALSO the documented escape hatch fl_check_env_allowlist's own
+  # refusal points a reader at ("run fleet-lock capabilities"). Refusing them too, with the SAME
+  # exit 4, was "a nearly-right safety instruction IS the defect" (ws-109/ws-110) shipped INSIDE the
+  # fix for the silence defect this guard exists to close: the var that trips it is, by
+  # construction, one an agent exported from a brief or a shell profile — so it is STILL SET when
+  # the reader tries the remedy, and the remedy could not be followed. (Real-world residual: an
+  # operator's OWN shell profile carrying a stray FLEET_LOCK_* var nobody remembers exporting is
+  # exactly this scenario, and it is not discoverable by reading this repo — see the FL_ENV_HONOURED
+  # block comment above.)
+  #
+  # `whoami` is deliberately NOT exempted, even though it is ALSO diagnostic and network-free (see
+  # its own header comment). The distinction that matters: `whoami` reports a DERIVED answer —
+  # resolved holder/session/actor identity, COMPUTED FROM the very input this guard doesn't
+  # understand — which could be silently WRONG if a newer var this copy predates changes that
+  # computation. `capabilities`/`--version`/`--help` print a FIXED DECLARATION — facts about the
+  # build itself (its own version, its own honoured vars/commands) that no unrecognised input could
+  # possibly change. A wrong derived answer is worse than useless; a fixed declaration cannot be
+  # wrong, so refusing to print it protects nothing and only breaks the escape hatch.
+  case "$_peek_cmd" in
+    capabilities|--version|-h|--help|help) fl_check_env_allowlist_soft ;;
+    *)                                     fl_check_env_allowlist ;;
+  esac
+
+  [ $# -ge 1 ] || usage
+  _cmd=$1; shift
+
+  case "$_cmd" in
+    -h|--help|help) print_usage; exit 0 ;;
+    --version) printf 'fleet-lock version %s\n' "$FL_VERSION"; exit 0 ;;
+    capabilities) cmd_capabilities "$@"; exit 0 ;;
+  esac
+
+  # Real commands must resolve exactly one transport. Declaration-printers above intentionally
+  # remain available even when an exported transport value is bad, matching the env-allowlist
+  # escape-hatch rule: they describe the build and act on no lock.
+  fl_validate_transport
+
+  # ws-127 second review: refuse an explicitly-set-but-INVALID FLEET_LOCK_ACTOR before any command
+  # that acts on ownership can run. Gated here, in ONE place, rather than repeated in each cmd_*, so
+  # a future command cannot be added without inheriting it by default. `status` and `whoami` are
+  # deliberately NOT gated: they are how you DIAGNOSE a bad identity, and a diagnostic that dies
+  # instead of explaining is the dead-end failure this workstream already caught in its own text.
+  case "$_cmd" in
+    acquire|release|heartbeat|check|hold|steal) fl_require_valid_actor_env ;;
+  esac
+
+  # ws-166: dispatch by name through FL_COMMANDS (fl_is_known_command), the SAME declaration
+  # `capabilities` reads — a POSIX-safe dynamic function call ("$name" "$@" is ordinary command
+  # invocation, not eval), reachable only once $_cmd has matched a known, fixed word.
+  if fl_is_known_command "$_cmd"; then
+    "cmd_$_cmd" "$@"
+  else
+    fl_die "unknown command '$_cmd' (try: $FL_COMMANDS)"
+  fi
+}
+main "$@"

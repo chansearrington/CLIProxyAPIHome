@@ -4660,3 +4660,32 @@ DELETE query：
 | `provider` | string | 条件必填 | `channel` 的 alias。 |
 
 写入成功返回 `{ "status": "ok" }`。
+
+## Home 管理的节点维护
+
+Home 已在启动时及每三小时自动刷新模型定义。新增维护功能使用 Home 数据库存储策略、任务租约、
+节点结果及最近 100 条历史记录；不依赖操作员笔记本上的调度程序。以下接口均需要原有管理密钥，
+同时支持 `/v0/management` 和 `/v8/management`。
+
+- `GET /fleet`：读取策略、节点状态、已校验版本、当前任务及发布进度。管理响应不返回任务租约密钥。
+- `PUT /fleet/policy`：完整替换 `enabled`、`catalog_sync`、`patch_updates`、`interval_seconds`
+  和 `nodes`。检查间隔为 300–86400 秒；最多 64 个唯一证书 UUID。`nodes` 中包含 `id`、
+  `name`、`required`。必需节点按配置顺序逐个升级，首个为金丝雀；离线可选节点不阻止其他节点。
+  正在执行任务时返回 `409`。
+- `POST /fleet/releases/:version/approve`：批准当前已校验候选版本，包括跨主/次版本升级或重试失败版本。
+- `POST /fleet/releases/:version/hold`：禁止自动安装当前候选版本。版本不匹配或任务正在运行时返回 `409`。
+
+初始策略禁用。自动升级仅允许当前主/次版本内更高的稳定补丁版本；其他版本报告
+`release_requires_review`。Home 校验官方 GitHub 压缩包校验和及可执行文件 SHA256；节点再次校验，
+保留旧文件、原地重启并验证实际 Claude/Codex 请求。失败时按相反顺序回滚并锁定失败版本，
+不重置或绕过上游配额。
+
+节点本地执行器沿用现有 RESP/mTLS 证书，使用 `GET fleet-plan <inventory-json>` 获取自己的
+`catalog`、`upgrade` 或 `rollback` 任务，通过 `RPUSH fleet-status <result-json>` 上报任务 ID、
+私有租约令牌及 `running`、`success`、`failed`、`blocked` 状态。身份由证书决定，不能选择其他节点。
+任务租约为五分钟，过期任务必须由原节点对账，不能被视为成功。不会向执行器分发管理密钥，
+不支持任意命令。首个适配器支持 `darwin/arm64`；安装器位于 `tools/fleet-worker/install.py`。
+
+目录同步保留显式默认模型、回退链、别名和会话选择，不将私有 Copilot 模型添加到共享菜单。
+维护状态位于已有数据库 KV 表的受保护 `__home:fleet:` 命名空间，包含在数据库快照中；通用 RESP KV
+命令不能读写该命名空间。原有 CPA 协议及负载保持不变，无需替换现有 CPA 二进制文件。

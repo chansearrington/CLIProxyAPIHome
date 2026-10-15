@@ -7,6 +7,7 @@ func Register(reg *dispatch.Registry) {
 	if reg == nil {
 		return
 	}
+	_ = reg.RegisterDirect("GET", "fleet-plan", handleFleetPlan)
 	_ = reg.RegisterDirect("GET", "config", handleConfig)
 	_ = reg.RegisterDirect("GET", "plugin-tasks", handlePluginTasks)
 	_ = reg.RegisterDirect("GET", "plugin-sync", handlePluginSync)

@@ -4661,3 +4661,90 @@ DELETE query:
 | `provider` | string | conditionally | Alias of `channel`. |
 
 Successful writes return `{ "status": "ok" }`.
+
+## Home-managed fleet maintenance
+
+Home already refreshes provider model definitions on startup and every three hours. Fleet
+maintenance extends that control plane to registered node-local executors; it does not create a
+second model-definition downloader or place a coordinator on an operator laptop. All endpoints
+below require the existing Management API authentication and are available under both
+`/v0/management` and `/v8/management`.
+
+### GET `/fleet`
+
+Returns database-backed `schema`, `revision`, `policy`, per-certificate `nodes`, the verified
+`latest` CPA release, `last_check`, `check_error`, an optional `active` task, optional `rollout`,
+and the last 100 `history` events. Task lease tokens and catalog metadata are omitted/redacted
+from Management reads. Node IDs are the existing mTLS client certificate IDs.
+
+`check_error: "release_requires_review"` means the latest stable release is outside the current
+major/minor patch line. Network/verification failures retain the previous verified release and
+report `release_check_failed`. Offline or unregistered executors cannot be mistaken for proof.
+
+### PUT `/fleet/policy`
+
+Replaces the complete fleet policy without changing Home's inference configuration, API keys,
+credentials or selected agent models. Initial policy is disabled. Example:
+
+```json
+{
+  "enabled": true,
+  "catalog_sync": true,
+  "patch_updates": true,
+  "interval_seconds": 3600,
+  "nodes": [
+    {"id": "00000000-0000-4000-8000-000000000001", "name": "Always-on canary", "required": true},
+    {"id": "00000000-0000-4000-8000-000000000002", "name": "Second node", "required": true},
+    {"id": "00000000-0000-4000-8000-000000000003", "name": "Optional laptop", "required": false}
+  ]
+}
+```
+
+`interval_seconds` must be 300–86400; node IDs must be unique UUIDs, with at most 64 entries.
+Enabled patch updates require at least one required node. Required nodes roll out in policy
+order, beginning with the canary, with one active mutation across the fleet. Offline optional
+nodes catch up when they return and do not block required nodes. Changing policy while a task
+is active returns `409`; let that task complete or reconcile before changing ownership.
+
+Catalog tasks use Home's current model registry. The OpenClaw adapter adds shared models and
+fills missing metadata, preserves explicit defaults/fallbacks/aliases/session pins, retains older
+referenced rows and excludes private `copilot/` entries and the readiness canary.
+
+Patch tasks require uniform, recently reported required-node versions and a newer stable patch
+within that same major/minor line. Home verifies the official GitHub archive's published checksum,
+optional asset digest, and extracted executable hash before offering a task. Local workers verify
+those hashes again, preserve the previous binary, restart their node in place and complete native
+Claude/Codex probes. Failed upgrades queue reverse-order rollback; that release then remains
+latched until explicitly reviewed. Genuine upstream quota is never reset or bypassed.
+
+### POST `/fleet/releases/:version/approve`
+### POST `/fleet/releases/:version/hold`
+
+Records an explicit decision on the exact currently verified candidate. Approval permits its
+serial rollout, including a major/minor transition, or retries a previously failed candidate.
+Hold prevents automatic installation of that candidate. A mismatched candidate or an active
+operation returns `409`. These routes do not accept arbitrary URLs, shell commands or artifacts.
+
+### Node executor protocol
+
+A node-local executor uses the existing RESP/mTLS listener and certificate files. It never
+receives the Management secret and cannot select another node ID:
+
+- `GET fleet-plan <inventory-json>` reports `version`, executable `sha256`/`size`, `platform`
+  (`darwin/arm64` in this first adapter), and whether its local OpenClaw catalog is supported.
+  Home returns `enabled`, `poll_seconds`, `status` and at most one typed `job` for that certificate.
+- `RPUSH fleet-status <result-json>` acknowledges the exact task ID and private lease token with
+  `running`, `success`, `failed` or `blocked`. Successful binary reports must match the verified
+  task artifact. Heartbeats renew the five-minute task lease.
+
+Supported operations are `catalog`, `upgrade` and `rollback`; arbitrary command execution is not
+part of the protocol. An expired operation blocks fleet advancement until its owner reconciles
+its retained receipt. A dropped acknowledgement is safe to retry. Unrevoked certificate identity,
+policy registration, task ownership and lease token are checked independently. Home-only state
+uses the reserved `__home:fleet:` database KV namespace, inaccessible through general RESP KV commands.
+
+The worker installer is `tools/fleet-worker/install.py`. Its launchd job polls for this node's
+work; Home owns the policy, due times, release verification, order and results. Existing CPA
+binaries continue to use their unchanged RESP commands and payloads. No new CPA core binary is
+required for this additive executor protocol. Home stores fleet state in the existing snapshot-
+backed KV table, so database snapshots retain policy/history without a new schema format.

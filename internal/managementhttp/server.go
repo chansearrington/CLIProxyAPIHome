@@ -154,6 +154,9 @@ func registerClusterManagementRoutes(r *RouteRegistry, handler *clustermanagemen
 		return
 	}
 
+	r.Set(http.MethodPost, "/fleet/releases/:version/:action", handler.ReviewFleetRelease)
+	r.Set(http.MethodGet, "/fleet", handler.GetFleet)
+	r.Set(http.MethodPut, "/fleet/policy", handler.PutFleetPolicy)
 	r.Set(http.MethodGet, "/nodes", handler.ListNodes)
 	r.Set(http.MethodPatch, "/nodes/:node_id", handler.UpdateCPANodeName)
 	r.Set(http.MethodGet, "/topology", handler.GetTopology)

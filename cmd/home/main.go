@@ -20,6 +20,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPIHome/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/cluster"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/config"
+	"github.com/router-for-me/CLIProxyAPIHome/internal/fleet"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/home"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/logging"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/managementhttp"
@@ -571,6 +572,7 @@ func run() int {
 			go respSrv.HandleConn(runCtx, conn)
 		}, nil, clusterTLSConfig)
 	}()
+	go fleet.New(repo).Run(runCtx)
 	go runUsageDerivedColumnBackfillMaintenance(runCtx, repo)
 	go runUsageCacheReadBackfillMaintenance(runCtx, repo)
 	go runUsageTokenAccountingBackfillMaintenance(runCtx, repo)

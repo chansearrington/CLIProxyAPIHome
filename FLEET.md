@@ -172,3 +172,12 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   remains Enterprise. All ten CodexBar Claude display names and sync mapping labels are
   their email addresses. Account UUIDs, tokens, ordering, priorities and permissions are
   preserved. [Plan/label verification](docs/fleet/ws-0028-max20-email-labels.md).
+
+## Home-owned fleet maintenance
+
+The laptop fleet coordinator is superseded by Home's DB-backed `/fleet` control plane and
+certificate-bound node-local executors. See [Home-native migration](docs/fleet/ws-0031-home-native-fleet.md).
+The always-on canary/required nodes continue while the optional MacBook sleeps. Model defaults
+remain explicit operator choices; menu sync does not promote generations automatically.
+Before manual fleet maintenance, pause Home fleet policy and let any active task finish/reconcile,
+then follow the normal fleet-lock procedure. Do not install a competing laptop coordinator.

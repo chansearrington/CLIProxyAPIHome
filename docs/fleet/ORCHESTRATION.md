@@ -173,3 +173,8 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
 - 2026-10-15 — ws-0027: reviewed Home PR #17 merged; Home 1.1.1 fleet image, all five CPA 8.0.29 nodes, five Claude Code 2.1.300 clients and Mac CodexBar 0.75 deployed. Sol high/1M picker verified with actual 900,341-token request, recorded Bash call/result, all six scopes and all five nodes. Original settings/priorities/permissions and ten CodexBar accounts retained. Exact 539 build inputs and reproducible immutable image verified. Two guarded image rollbacks established the existing overview timeout and resolved a nonsemantic Go module annotation discrepancy; final image passes native acceptance and dashboard baseline parity. Fresh integrity/SHA backup retained, all four locks released. [Record](ws-0027-latest-sol-context.md) · [Plain-language guide](ws-0027-updates.artifact.html).
 
 - 2026-10-15 — ws-0028: refreshed provider-backed Max 20x badges for Vanderblooms and Hyper Rally after independent profile verification and fresh integrity/SHA-verified backup. Renamed all ten CodexBar Claude accounts and sync labels to their mapped email addresses, preserving UUIDs, tokens, selection, priorities and scopes. All ten usage reads, scheduled sync/follow and six-key native Claude requests pass; five nodes healthy; four locks released. [Record](ws-0028-max20-email-labels.md).
+
+- 2026-10-15 — ws-0031: moving fleet maintenance into Home after the user rejected laptop-owned
+  scheduling. Home's existing three-hour model registry refresh remains authoritative; new
+  DB-backed typed tasks and certificate-bound local workers own menu reconciliation and guarded
+  releases. The MacBook fleet schedulers are unloaded. Deployment/acceptance in progress.

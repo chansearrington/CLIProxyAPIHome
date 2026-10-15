@@ -139,6 +139,10 @@ func (r *Repository) KVCompareAndSwap(ctx context.Context, key string, expected 
 	if errKey != nil {
 		return false, errKey
 	}
+	return compareAndSwapKV(ctx, db, key, expected, expectedExists, value, ttl)
+}
+
+func compareAndSwapKV(ctx context.Context, db *gorm.DB, key string, expected []byte, expectedExists bool, value []byte, ttl time.Duration) (bool, error) {
 	copiedValue := cloneKVBytes(value)
 	expectedValue := cloneKVBytes(expected)
 	expiresAt := kvExpiresAt(ttl)
@@ -450,6 +454,9 @@ func normalizeKVKey(key string) (string, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return "", fmt.Errorf("kv key is required")
+	}
+	if strings.HasPrefix(key, "__home:fleet:") {
+		return "", fmt.Errorf("kv namespace is reserved for Home")
 	}
 	return key, nil
 }
