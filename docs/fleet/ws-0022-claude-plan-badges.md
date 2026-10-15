@@ -123,3 +123,12 @@ Follow-up: the earlier routing cooldown was cleared at 11:00:54 UTC during the s
 investigation. Real Sonnet/Opus requests then verified 82 is selected ahead of Microsoft;
 all six ordinary keys correctly selected higher-priority Gmail after its reset. See the
 [routing verification record](ws-0023-82-upgrade-routing-cooldown.md).
+
+## Vanderblooms and Hyper Rally upgrades — 2026-10-15
+
+Independent Anthropic profiles confirm both `the.vanderblooms@gmail.com` and
+`hyper.rally@outlook.com` are now `default_claude_max_20x`. Scoped on-demand quota collection
+updated their persisted badges to **Max 20x**, premium true, at 15:30:55–56 UTC. These
+badges are automatic; no manual override or code change was needed. All nine shared
+Claude subscriptions now have verified Max 20x plans; Microsoft remains Enterprise.
+See [ws-0028](ws-0028-max20-email-labels.md) for the backup and verification record.

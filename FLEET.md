@@ -166,3 +166,9 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   Plain-language [latest update guide](docs/fleet/ws-0027-updates.artifact.html).
   Claude Code now offers **GPT 6.1 Sol — High · 1M**, model `gpt-6.1-sol(high)[1m]`,
   with high reasoning and 900K automatic compaction. All five Claude Code clients are 2.1.300.
+
+- Since 2026-10-15 15:30 UTC, Vanderblooms and Hyper Rally also have fresh **Max 20x**
+  Home badges: all nine shared Claude subscriptions are verified Max 20x; private Microsoft
+  remains Enterprise. All ten CodexBar Claude display names and sync mapping labels are
+  their email addresses. Account UUIDs, tokens, ordering, priorities and permissions are
+  preserved. [Plan/label verification](docs/fleet/ws-0028-max20-email-labels.md).
