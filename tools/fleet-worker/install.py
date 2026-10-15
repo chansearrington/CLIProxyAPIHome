@@ -39,10 +39,19 @@ def main():
     settings_file=root/'settings.json'
     settings_file.write_text(json.dumps(settings,indent=2)+'\n');settings_file.chmod(0o600)
     state=Path(settings['state_dir']);state.mkdir(parents=True,exist_ok=True,mode=0o700)
+    # Resolve the node's existing CLI/runtime paths once; launchd does not run a login shell.
+    runtime_paths=[]
+    for tool in ['openclaw','node']:
+        found=subprocess.run(['/bin/zsh','-lc','command -v '+tool],capture_output=True,text=True,timeout=20)
+        lines=found.stdout.strip().splitlines()
+        if found.returncode==0 and lines and Path(lines[-1]).is_absolute():
+            runtime_paths.append(str(Path(lines[-1]).parent.resolve()))
+    runtime_paths.extend(['/opt/homebrew/bin','/usr/local/bin','/usr/bin','/bin','/usr/sbin','/sbin'])
+    runtime_path=':'.join(dict.fromkeys(runtime_paths))
     label='ai.openclaw.cpa-home-fleet-worker'
     config={'Label':label,'ProgramArguments':['/usr/bin/python3','-B',str(root/'current/worker.py'),'--settings',str(settings_file)],
             'RunAtLoad':True,'StartInterval':60,'ProcessType':'Background','LowPriorityIO':True,
-            'EnvironmentVariables':{'PATH':'/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'},
+            'EnvironmentVariables':{'PATH':runtime_path},
             'StandardOutPath':str(state/'launchd.out.log'),'StandardErrorPath':str(state/'launchd.err.log')}
     plist=Path.home()/'Library/LaunchAgents'/(label+'.plist')
     domain='gui/'+str(os.getuid())

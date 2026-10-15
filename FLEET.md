@@ -55,7 +55,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.29** (`5fc580b1`, since 2026-10-15 UTC, ws-0027). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.30** (`5be2cdab`, since 2026-10-15 UTC, ws-0030). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -93,10 +93,10 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0027 released fleet updates, 2026-10-15 UTC)
+## Current verified runtime (ws-0031 Home-owned maintenance, 2026-10-15 UTC)
 
-- Home is `cpa-home:1.1.1-claude-fleet-f6ebd63`, immutable image
-  `sha256:76499632b410686ec14a68abbd26360369bd82cbace1ed77bc4617a2c207ba72`.
+- Home is `cpa-home:1.1.1-claude-fleet-2800d59`, immutable image
+  `sha256:3f421772d8ddf859a9e29c415540c2bb97cd7de2d639688598309b6715c57122`.
   Source integrates released upstream 1.1.1 and preserves all deployed fleet patches, including Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
   The ws-0014 quota correction treats Claude utilization consistently as percentages, so

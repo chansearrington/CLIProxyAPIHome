@@ -175,6 +175,6 @@ streaming Claude proofs, 61/61 catalog checks passed across subsequent maintenan
 - 2026-10-15 — ws-0028: refreshed provider-backed Max 20x badges for Vanderblooms and Hyper Rally after independent profile verification and fresh integrity/SHA-verified backup. Renamed all ten CodexBar Claude accounts and sync labels to their mapped email addresses, preserving UUIDs, tokens, selection, priorities and scopes. All ten usage reads, scheduled sync/follow and six-key native Claude requests pass; five nodes healthy; four locks released. [Record](ws-0028-max20-email-labels.md).
 
 - 2026-10-15 — ws-0031: moving fleet maintenance into Home after the user rejected laptop-owned
-  scheduling. Home's existing three-hour model registry refresh remains authoritative; new
-  DB-backed typed tasks and certificate-bound local workers own menu reconciliation and guarded
-  releases. The MacBook fleet schedulers are unloaded. Deployment/acceptance in progress.
+  scheduling. Home's existing three-hour registry refresh remains authoritative. Native DB-backed
+  typed tasks and certificate-bound workers are deployed and verified on all four minis without
+  laptop coordination. Larger releases require Home approval. See ws-0031-home-native-fleet.md.

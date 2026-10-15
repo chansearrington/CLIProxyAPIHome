@@ -1,6 +1,6 @@
 # Fleet maintenance belongs to Home
 
-Status: staged — full Ark Go suite/compile pass, worker tests pass, backup verified; cutover pending.
+Status: complete — Home owns maintenance; all four minis completed Home-issued tasks with the laptop coordinators absent; inference/scopes/panel preserved; workers and policy verified.
 
 The user rejected the MacBook-owned coordinator and requested this become part of CPA Home.
 The previous deployment reused an older laptop release watcher. Home already refreshes its model
@@ -62,3 +62,50 @@ local token-sync jobs, the MacBook CPA node and native application logins are ou
 
 Private evidence: `/tmp/cpa-home-native-fleet/` on the Mac and
 `/mnt/user/appdata/cpa-home-build/ws0031/` on Ark. No secrets enter the repository or reports.
+
+## Completed cutover and acceptance
+
+- Deployed Home image `cpa-home:1.1.1-claude-fleet-2800d59`, immutable ID
+  `sha256:3f421772d8ddf859a9e29c415540c2bb97cd7de2d639688598309b6715c57122`.
+  Container started `2026-10-15T22:39:41.074068532Z`, zero restarts. An immediate first HTTP
+  check raced normal startup; the ready instance and all subsequent checks passed.
+- Before and after cutover, all six original client keys completed real Opus 5.5 and Sol 6.1
+  native requests. All five node memberships and required plugin reports are healthy.
+- All 15 credential settings, full client-key/configuration fingerprints, channel bindings,
+  model-group details and all 64 served panel assets match the pre-change baseline.
+- Home policy is enabled with a 3600-second periodic interval, catalog sync and guarded stable
+  patch updates. Moxy, Hyper, Lara and Chip are required, in that order; MacBook is optional.
+- Home itself fetched and verified CPA 8.0.30's official archive/binary hashes. No new CPA
+  release was available, so no artificial binary upgrade or downgrade was performed.
+- With all three laptop coordinator jobs unloaded and their plists removed from login startup,
+  Home issued and recorded successful catalog tasks: Moxy 22:43:42 UTC, Hyper 22:44:43,
+  Chip 22:45:46 and Lara 22:49:53. The optional MacBook executor was not installed until
+  after all four required nodes succeeded, proving the control plane does not require it.
+- Lara's first tasks reported a local adapter failure. Its OpenClaw CLI/runtime are managed by
+  fnm rather than the hardcoded Homebrew path. The installer now resolves real executable
+  directories and the catalog adapter uses the existing bounded login-shell CLI pattern.
+  Subsequent scheduled Home execution passed. Failures remain honestly recorded in history.
+- Node worker runtime bundle: `d7b02b0aa45205aa`. It contains no Management secret or cross-node
+  SSH coordinator. The MacBook worker reports `current` and only executes its own optional node.
+- Home's required-node acceptance attestation reached the MacBook's private worker receipt:
+  schema `home-fleet-accepted-core/v1`, CPA 8.0.30, all four required node IDs verified.
+  Agent-os enrollment now prefers this Home-attested hash, instead of a laptop coordinator pin.
+- Moxy/Chip Sol 6.1 and Lara/Hyper Opus 5.5 selections, matching fallbacks, librarian primary
+  tiers and active conversation pins remain preserved. Catalog synchronization does not promote
+  defaults automatically.
+
+The older laptop coordinator implementation and its picker-review wrapper are retired from
+agent-os; its installer exits with a Home handoff notice. Legacy plists are archived at
+`~/.local/state/cpa-home-fleet-migration/retired-launchagents/` for history, not in the login folder.
+Old one-tap/manual recovery tools remain historical; the Easy pilot remains disabled.
+
+Verification: full Go suite and compile on Ark; deterministic fleet state-machine, lease,
+identity, rollback, review, namespace and Management API tests; seven offline worker tests;
+25 focused agent-os enrollment/pin tests plus the Home-receipt case; workflow lint passed.
+No existing CPA payload shape changed and the live official CPA 8.0.30 clients passed after cutover.
+The node executor protocol is versioned/additive. Major/minor approval is exposed in Home's
+Management API; the existing panel bundle is preserved rather than claiming new frontend controls.
+
+For manual maintenance, pause Home policy and let active tasks finish/reconcile before taking
+normal fleet locks. A permanently unavailable task owner requires operator reconciliation;
+expired tasks never permit silent fleet advancement. Worker/config/binary receipts remain private.

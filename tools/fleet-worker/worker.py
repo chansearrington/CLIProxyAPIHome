@@ -240,7 +240,10 @@ def execute_job(settings, job, state):
     with Lease(settings, job) as lease:
         if job['operation'] == 'catalog':
             lease.check()
-            report = catalog_sync.reconcile(Path.home(), apply=True, metadata=job.get('metadata', {}))
+            try:
+                report = catalog_sync.reconcile(Path.home(), apply=True, metadata=job.get('metadata', {}))
+            except catalog_sync.SyncError as error:
+                raise WorkerError('catalog_'+str(error)) from None
             if report['status'] not in ('updated', 'current'):
                 raise WorkerError('catalog_not_verified')
         elif job['operation'] in ('upgrade', 'rollback'):

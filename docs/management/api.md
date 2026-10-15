@@ -4733,6 +4733,8 @@ receives the Management secret and cannot select another node ID:
 - `GET fleet-plan <inventory-json>` reports `version`, executable `sha256`/`size`, `platform`
   (`darwin/arm64` in this first adapter), and whether its local OpenClaw catalog is supported.
   Home returns `enabled`, `poll_seconds`, `status` and at most one typed `job` for that certificate.
+  When all required inventories match the verified release, it also returns `accepted_release`
+  and `verified_node_ids`, allowing enrollment tools to retain Home-attested artifact pins.
 - `RPUSH fleet-status <result-json>` acknowledges the exact task ID and private lease token with
   `running`, `success`, `failed` or `blocked`. Successful binary reports must match the verified
   task artifact. Heartbeats renew the five-minute task lease.

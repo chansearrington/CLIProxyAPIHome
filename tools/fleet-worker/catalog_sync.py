@@ -76,7 +76,7 @@ def cli(args, config=None):
     if config:
         env['OPENCLAW_CONFIG_PATH'] = str(config)
     try:
-        result = subprocess.run(['openclaw'] + args, env=env, capture_output=True, text=True, timeout=12)
+        result = subprocess.run(['/bin/zsh','-lc','exec openclaw "$@"','--'] + args, env=env, capture_output=True, text=True, timeout=12)
     except subprocess.TimeoutExpired:
         raise SyncError('openclaw_command_timeout') from None
     if result.returncode:
