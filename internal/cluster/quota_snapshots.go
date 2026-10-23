@@ -26,6 +26,13 @@ const (
 const (
 	quotaSnapshotFallbackFreshness = 30 * time.Minute
 	quotaProbeActivityWindow       = 30 * time.Minute
+	// quotaBlockedProbeInterval bounds how often an idle credential with an
+	// active quota routing block is re-checked. A blocked credential receives
+	// no traffic, so the activity rule alone would never check it again and a
+	// provider-side reset could only be noticed when the block timer expired.
+	// A check reads the provider's usage endpoint, spends no model tokens and
+	// never spends a reset credit; once an hour keeps that load negligible.
+	quotaBlockedProbeInterval = time.Hour
 )
 
 const (
@@ -632,6 +639,7 @@ func (r *Repository) claimQuotaProbe(ctx context.Context, credentialID string, o
 	errTransaction := db.WithContext(contextOrBackground(ctx)).Transaction(func(tx *gorm.DB) error {
 		targetCollectorVersion := quotaSnapshotSchemaVersion
 		var authRecord AuthRecord
+		var auth *coreauth.Auth
 		identityKey := ""
 		if requireEligible {
 			errAuth := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&authRecord, "uuid = ?", credentialID).Error
@@ -641,7 +649,8 @@ func (r *Repository) claimQuotaProbe(ctx context.Context, credentialID string, o
 			if errAuth != nil {
 				return errAuth
 			}
-			auth, errConvert := quotaAuthFromRecord(&authRecord)
+			var errConvert error
+			auth, errConvert = quotaAuthFromRecord(&authRecord)
 			if errConvert != nil {
 				return errConvert
 			}
@@ -683,7 +692,15 @@ func (r *Repository) claimQuotaProbe(ctx context.Context, credentialID string, o
 			if claimActivityAt == nil && recoverAbandonedProbe {
 				claimActivityAt = quotaUTC(record.ProbeActivityAt)
 			}
-			if claimActivityAt == nil {
+			blockedProbeDue := false
+			if claimActivityAt == nil && quotaRoutingBlockActive(auth, now) {
+				var lastAttemptAt *time.Time
+				if errFind == nil {
+					lastAttemptAt = record.LastAttemptAt
+				}
+				blockedProbeDue = lastAttemptAt == nil || !lastAttemptAt.UTC().After(now.Add(-quotaBlockedProbeInterval))
+			}
+			if claimActivityAt == nil && !blockedProbeDue {
 				// Forced claims may have no recoverable activity watermark. Clear an
 				// expired orphan instead of exposing collecting indefinitely.
 				if errFind == nil && record.CollectionStatus == "collecting" {
@@ -766,6 +783,20 @@ func (r *Repository) claimQuotaProbe(ctx context.Context, credentialID string, o
 		return nil
 	})
 	return claimed, errTransaction
+}
+
+// quotaRoutingBlockActive reports whether a persisted credential has an
+// unexpired model quota block that keeps routing away from it.
+func quotaRoutingBlockActive(auth *coreauth.Auth, now time.Time) bool {
+	if auth == nil {
+		return false
+	}
+	for _, state := range auth.ModelStates {
+		if state != nil && state.Quota.Exceeded && state.Quota.NextRecoverAt.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 func latestQuotaUsageActivityAt(ctx context.Context, db *gorm.DB, credentialID string, identityVersion int64, identityKey string, after time.Time) (*time.Time, error) {

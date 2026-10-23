@@ -135,6 +135,73 @@ func (m *Manager) ClearQuotaCooldown(ctx context.Context, credentialID, model st
 	return result, nil
 }
 
+// LiftQuotaCooldownObservedAt clears model quota cooldowns that were recorded
+// before observedAt, the start of a quota check that found the credential not
+// exhausted. It has the same semantics as ClearQuotaCooldown with an empty
+// model: only quota (429) state is lifted, and model blocks owned by other
+// errors such as 401/403/5xx are kept. A block recorded at or after observedAt
+// is newer evidence than the check and is kept as well.
+//
+// If the provider still refuses the credential after a lift, the next 429 goes
+// through the normal result path and re-blocks the model with the provider's
+// reported reset time, so an optimistic lift is corrected by the provider's
+// next refusal instead of leaving the credential blocked until its old timer.
+func (m *Manager) LiftQuotaCooldownObservedAt(ctx context.Context, credentialID string, observedAt time.Time) (CooldownClearResult, error) {
+	result := CooldownClearResult{}
+	if m == nil {
+		return result, errors.New("auth manager: nil manager")
+	}
+	credentialID = strings.TrimSpace(credentialID)
+	if credentialID == "" {
+		return result, errors.New("auth manager: missing auth id")
+	}
+	if observedAt.IsZero() {
+		return result, errors.New("auth manager: missing quota observation time")
+	}
+	result.CredentialID = credentialID
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// A 429 may already be applied locally while its persisted snapshot is
+	// still queued, so the newest local timestamp also counts as block time.
+	localUpdatedAt := make(map[string]time.Time)
+	m.mu.RLock()
+	if local := m.auths[credentialID]; local != nil {
+		for modelID, state := range local.ModelStates {
+			if state != nil {
+				localUpdatedAt[modelID] = state.UpdatedAt
+			}
+		}
+	}
+	m.mu.RUnlock()
+
+	now := time.Now().UTC()
+	transition := cooldownClearTransition{}
+	mutation, errMutate := m.mutateCooldownState(ctx, credentialID, now, false, func(auth *Auth) bool {
+		transition = clearQuotaCooldownStateMatching(auth, nil, now, false, func(modelID string, state *ModelState) bool {
+			if state == nil || !state.Quota.Exceeded {
+				return false
+			}
+			blockedAt := state.UpdatedAt
+			if local := localUpdatedAt[modelID]; local.After(blockedAt) {
+				blockedAt = local
+			}
+			return blockedAt.Before(observedAt)
+		})
+		return transition.changed()
+	})
+	if errMutate != nil {
+		return result, errMutate
+	}
+
+	result.Cleared = mutation.changed
+	if mutation.changed {
+		result.ClearedModels = append([]string(nil), transition.clearedModels...)
+	}
+	return result, nil
+}
+
 // ClearDisabledCooldownStates clears request-error and quota cooldown state
 // covered by the global or auth-scoped disable-cooling setting.
 // Cluster-backed stores are mutated through StateMutator so the persisted row
@@ -454,6 +521,13 @@ func isRequestErrorCooldownStatus(status int) bool {
 }
 
 func clearQuotaCooldownState(auth *Auth, models []string, now time.Time, clearCredentialQuota bool) cooldownClearTransition {
+	return clearQuotaCooldownStateMatching(auth, models, now, clearCredentialQuota, nil)
+}
+
+// clearQuotaCooldownStateMatching is clearQuotaCooldownState with an optional
+// filter. When models is empty and include is non-nil, only stored model keys
+// accepted by include are cleared.
+func clearQuotaCooldownStateMatching(auth *Auth, models []string, now time.Time, clearCredentialQuota bool, include func(modelID string, state *ModelState) bool) cooldownClearTransition {
 	transition := cooldownClearTransition{}
 	if auth == nil {
 		return transition
@@ -500,6 +574,9 @@ func clearQuotaCooldownState(auth *Auth, models []string, now time.Time, clearCr
 		sort.Strings(allModels)
 		for _, modelID := range allModels {
 			state := auth.ModelStates[modelID]
+			if include != nil && !include(modelID, state) {
+				continue
+			}
 			if !clearModelQuotaCooldown(state, now) {
 				continue
 			}

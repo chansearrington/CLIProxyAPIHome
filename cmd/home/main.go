@@ -431,7 +431,7 @@ func run() int {
 	userMailService := usermail.NewService(repo, func() *config.Config { return rt.Config() })
 	userMailService.Start(runCtx)
 	quotaHomeID := net.JoinHostPort(clusterClientAddr, strconv.Itoa(clusterAdvertisedPort))
-	quotaCollector := quotacollector.NewCollector(repo, quotacollector.Options{
+	quotaOptions := quotacollector.Options{
 		HomeID: quotaHomeID,
 		GlobalProxyURLProvider: func() string {
 			currentConfig := rt.Config()
@@ -440,7 +440,11 @@ func run() int {
 			}
 			return currentConfig.ProxyURL
 		},
-	})
+	}
+	if coreManager := rt.CoreManager(); coreManager != nil {
+		quotaOptions.CooldownLifter = coreManager
+	}
+	quotaCollector := quotacollector.NewCollector(repo, quotaOptions)
 	quotaCollector.Start(runCtx)
 
 	respSrv = respserver.New(addr, rt)

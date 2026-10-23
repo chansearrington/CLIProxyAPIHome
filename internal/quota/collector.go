@@ -71,6 +71,16 @@ type Options struct {
 	AntigravityURLs        []string
 	Now                    func() time.Time
 	HTTPClient             func(*coreauth.Auth, time.Duration) (*http.Client, error)
+	// CooldownLifter lifts quota routing blocks that a later successful check
+	// shows are stale. Nil leaves routing state untouched.
+	CooldownLifter QuotaCooldownLifter
+}
+
+// QuotaCooldownLifter clears quota-owned routing blocks recorded before a
+// quota check started. coreauth.Manager implements it through the same
+// persisted mutation path as the Management cooldown reset.
+type QuotaCooldownLifter interface {
+	LiftQuotaCooldownObservedAt(ctx context.Context, credentialID string, observedAt time.Time) (coreauth.CooldownClearResult, error)
 }
 
 type Collector struct {
@@ -325,6 +335,7 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 		return
 	}
 	auth = resolved
+	probeStartedAt := c.options.Now().UTC()
 	result, errProbe := c.probeCredential(ctx, auth)
 	if errProbe != nil {
 		c.failProbe(ctx, auth.ID, errProbe)
@@ -367,6 +378,68 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 			"observed_at":   observedAt,
 		}).Debug("quota collector: snapshot persisted")
 	}
+	c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt)
+}
+
+// liftStaleQuotaCooldown lifts quota routing blocks that were recorded before
+// this check started when the check shows the credential is not exhausted.
+// Without it a blocked credential stays unroutable until the 429's reset time
+// even after the provider has restored its quota. The comparison uses the
+// probe start so a 429 that lands while the probe is in flight is kept. If the
+// provider still refuses after a lift, the next 429 re-blocks the credential
+// with the provider's reported reset time.
+func (c *Collector) liftStaleQuotaCooldown(ctx context.Context, auth *coreauth.Auth, windows []cluster.QuotaWindow, probeStartedAt time.Time) {
+	if c.options.CooldownLifter == nil || auth == nil || !quotaWindowsNotExhausted(windows) || !authHasQuotaCooldown(auth) {
+		return
+	}
+	lifted, errLift := c.options.CooldownLifter.LiftQuotaCooldownObservedAt(ctx, auth.ID, probeStartedAt)
+	if errLift != nil {
+		log.WithError(errLift).WithField("credential_id", auth.ID).Warn("quota collector: lift stale quota cooldown failed")
+		return
+	}
+	for _, model := range lifted.ClearedModels {
+		log.WithFields(log.Fields{
+			"credential_id":    auth.ID,
+			"provider":         normalizedQuotaProvider(auth.Provider),
+			"model":            model,
+			"probe_started_at": probeStartedAt,
+		}).Info("quota collector: lifted stale quota cooldown after healthy quota check")
+	}
+}
+
+// quotaWindowsNotExhausted reports whether a successful check shows usable
+// quota: at least one window with measured remaining quota, and no window that
+// is exhausted, has nothing remaining, or failed to parse. Windows with an
+// unknown status and no remaining value are neutral.
+func quotaWindowsNotExhausted(windows []cluster.QuotaWindow) bool {
+	hasRemaining := false
+	for _, window := range windows {
+		if window.Status == "exhausted" || window.Status == "error" {
+			return false
+		}
+		if !window.IsUnlimited && window.Remaining != nil && *window.Remaining <= 0 {
+			return false
+		}
+		if window.Status == "healthy" || window.Status == "low" || window.IsUnlimited || (window.Remaining != nil && *window.Remaining > 0) {
+			hasRemaining = true
+		}
+	}
+	return hasRemaining
+}
+
+// authHasQuotaCooldown reports whether the persisted credential carries a
+// model quota block, so healthy checks of unblocked credentials do not take
+// the auth row write lock.
+func authHasQuotaCooldown(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	for _, state := range auth.ModelStates {
+		if state != nil && state.Quota.Exceeded {
+			return true
+		}
+	}
+	return false
 }
 
 type probeResult struct {
