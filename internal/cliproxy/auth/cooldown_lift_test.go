@@ -141,4 +141,14 @@ func TestLiftQuotaCooldownObservedAtKeepsNewerLocalQuotaBlock(t *testing.T) {
 	if got := store.persistedSnapshot().ModelStates["gpt-6.1-sol"]; got == nil || !got.Quota.Exceeded {
 		t.Fatalf("persisted state = %#v, want quota block kept", got)
 	}
+	local, ok := manager.GetByID("auth-lift-local-newer")
+	if !ok || local == nil {
+		t.Fatal("local auth missing")
+	}
+	if got := local.ModelStates["gpt-6.1-sol"]; got == nil || !got.Quota.Exceeded {
+		t.Fatalf("local state = %#v, want quota block kept", got)
+	}
+	if blocked, _, _ := isAuthBlockedForModel(local, "gpt-6.1-sol", now); !blocked {
+		t.Fatal("local auth no longer blocked, want newer local quota block to keep routing away")
+	}
 }

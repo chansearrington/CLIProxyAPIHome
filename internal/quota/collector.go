@@ -407,24 +407,32 @@ func (c *Collector) liftStaleQuotaCooldown(ctx context.Context, auth *coreauth.A
 	}
 }
 
-// quotaWindowsNotExhausted reports whether a successful check shows usable
-// quota: at least one window with measured remaining quota, and no window that
-// is exhausted, has nothing remaining, or failed to parse. Windows with an
-// unknown status and no remaining value are neutral.
+// quotaWindowsNotExhausted reports whether a successful check proves usable
+// quota: every window must positively show quota left (a healthy or low
+// status, unlimited, or a remaining amount or ratio above zero). A window that
+// is exhausted, has nothing left, failed to parse or carries no measurement
+// blocks the lift, so incomplete evidence never reopens routing.
 func quotaWindowsNotExhausted(windows []cluster.QuotaWindow) bool {
-	hasRemaining := false
+	if len(windows) == 0 {
+		return false
+	}
 	for _, window := range windows {
 		if window.Status == "exhausted" || window.Status == "error" {
 			return false
 		}
-		if !window.IsUnlimited && window.Remaining != nil && *window.Remaining <= 0 {
+		if window.IsUnlimited {
+			continue
+		}
+		if (window.Remaining != nil && *window.Remaining <= 0) || (window.RemainingRatio != nil && *window.RemainingRatio <= 0) {
 			return false
 		}
-		if window.Status == "healthy" || window.Status == "low" || window.IsUnlimited || (window.Remaining != nil && *window.Remaining > 0) {
-			hasRemaining = true
+		measured := window.Status == "healthy" || window.Status == "low" ||
+			(window.Remaining != nil && *window.Remaining > 0) || (window.RemainingRatio != nil && *window.RemainingRatio > 0)
+		if !measured {
+			return false
 		}
 	}
-	return hasRemaining
+	return true
 }
 
 // authHasQuotaCooldown reports whether the persisted credential carries a

@@ -163,8 +163,12 @@ func (m *Manager) LiftQuotaCooldownObservedAt(ctx context.Context, credentialID 
 		ctx = context.Background()
 	}
 
-	// A 429 may already be applied locally while its persisted snapshot is
-	// still queued, so the newest local timestamp also counts as block time.
+	// A repeated in-window 429 is applied locally and persisted asynchronously,
+	// so the newest local timestamp also counts as block time. A 429 that opens
+	// or extends a block is persisted synchronously through the same row lock
+	// as this mutation. The remaining gap (a repeated 429 landing between this
+	// snapshot and the mutation, or one queued on another Home) is accepted:
+	// it self-corrects on the next 429, like an operator reset.
 	localUpdatedAt := make(map[string]time.Time)
 	m.mu.RLock()
 	if local := m.auths[credentialID]; local != nil {

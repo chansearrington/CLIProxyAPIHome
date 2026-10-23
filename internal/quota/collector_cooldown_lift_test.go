@@ -149,10 +149,18 @@ func TestCollectorHealthyCheckSkipsLiftForUnblockedCredential(t *testing.T) {
 	if calls := lifter.recorded(); len(calls) != 0 {
 		t.Fatalf("lift calls = %+v, want none for an unblocked credential", calls)
 	}
+	// seedCollectorAuth records recent usage, so the healthy check really ran.
+	item, errGet := repo.GetQuotaCredential(context.Background(), "codex-unblocked", now)
+	if errGet != nil {
+		t.Fatalf("GetQuotaCredential() error = %v", errGet)
+	}
+	if item.CollectionStatus != "success" || item.QuotaStatus != "healthy" {
+		t.Fatalf("snapshot = status %q collection %q, want healthy/success", item.QuotaStatus, item.CollectionStatus)
+	}
 }
 
 func TestQuotaWindowsNotExhausted(t *testing.T) {
-	zero, half := 0.0, 50.0
+	zero, half, halfRatio := 0.0, 50.0, 0.5
 	tests := []struct {
 		name    string
 		windows []cluster.QuotaWindow
@@ -166,6 +174,10 @@ func TestQuotaWindowsNotExhausted(t *testing.T) {
 		{name: "unknown with nothing remaining", windows: []cluster.QuotaWindow{{Status: "unknown", Remaining: &zero}}},
 		{name: "unknown with remaining", windows: []cluster.QuotaWindow{{Status: "unknown", Remaining: &half}}, want: true},
 		{name: "unknown only", windows: []cluster.QuotaWindow{{Status: "unknown"}}},
+		{name: "unmeasured window beside healthy", windows: []cluster.QuotaWindow{{Status: "healthy", Remaining: &half}, {Status: "unknown"}}},
+		{name: "unmeasured window beside unlimited", windows: []cluster.QuotaWindow{{Status: "unknown", IsUnlimited: true}, {Status: "unknown"}}},
+		{name: "remaining ratio only", windows: []cluster.QuotaWindow{{Status: "unknown", RemainingRatio: &halfRatio}}, want: true},
+		{name: "remaining ratio zero", windows: []cluster.QuotaWindow{{Status: "unknown", RemainingRatio: &zero}}},
 		{name: "unlimited", windows: []cluster.QuotaWindow{{Status: "unknown", IsUnlimited: true, Remaining: &zero}}, want: true},
 	}
 	for _, test := range tests {
