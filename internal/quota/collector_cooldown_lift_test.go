@@ -188,3 +188,127 @@ func TestQuotaWindowsNotExhausted(t *testing.T) {
 		})
 	}
 }
+
+// repoMutatorStore backs a real coreauth.Manager with the test database row,
+// so the collector drives the production lift rule instead of a fake.
+type repoMutatorStore struct {
+	repo *cluster.Repository
+}
+
+func (s *repoMutatorStore) List(context.Context) ([]*coreauth.Auth, error) { return nil, nil }
+
+func (s *repoMutatorStore) Save(_ context.Context, auth *coreauth.Auth) (string, error) {
+	if auth == nil {
+		return "", nil
+	}
+	return auth.ID, nil
+}
+
+func (s *repoMutatorStore) Delete(context.Context, string) error { return nil }
+
+func (s *repoMutatorStore) MutateAuthState(ctx context.Context, id string, mutate func(auth *coreauth.Auth) bool) (*coreauth.Auth, error) {
+	auth, _, _, errMutate := s.repo.MutateAuth(ctx, id, "update", mutate)
+	return auth, errMutate
+}
+
+// advancingClock returns a later instant on every call, so the probe start,
+// anything recorded during the probe and the probe end are all distinct.
+type advancingClock struct {
+	mu   sync.Mutex
+	next time.Time
+}
+
+func (c *advancingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.next
+	c.next = c.next.Add(time.Minute)
+	return now
+}
+
+func TestCollectorLiftKeepsQuotaBlockRecordedDuringProbe(t *testing.T) {
+	const authID = "codex-block-during-probe"
+	repo := newCollectorTestRepository(t)
+	base := time.Now().UTC().Truncate(time.Second)
+	clock := &advancingClock{next: base}
+	recoverAt := base.Add(48 * time.Hour)
+	seedCollectorBlockedAuth(t, repo, authID, base.Add(-4*24*time.Hour), recoverAt)
+
+	seeded, _, errGet := repo.GetAuth(context.Background(), authID)
+	if errGet != nil || seeded == nil {
+		t.Fatalf("GetAuth() = %v, %v", seeded, errGet)
+	}
+	manager := coreauth.NewManager(&repoMutatorStore{repo: repo}, nil, nil)
+	if _, errRegister := manager.Register(context.Background(), seeded); errRegister != nil {
+		t.Fatalf("Register() error = %v", errRegister)
+	}
+
+	// While the usage request is in flight, another model on the credential
+	// gets a 429. The check cannot speak for that newer block.
+	var duringProbe time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/usage":
+			duringProbe = clock.Now()
+			_, _, _, errMutate := repo.MutateAuth(request.Context(), authID, "update", func(auth *coreauth.Auth) bool {
+				auth.ModelStates["gpt-6.1-codex"] = &coreauth.ModelState{
+					Status: coreauth.StatusError, Unavailable: true, NextRetryAfter: recoverAt,
+					LastError: &coreauth.Error{Message: "usage limit reached", HTTPStatus: http.StatusTooManyRequests},
+					Quota:     coreauth.QuotaState{Exceeded: true, Scope: "model", Reason: "quota", NextRecoverAt: recoverAt},
+					UpdatedAt: duringProbe,
+				}
+				return true
+			})
+			if errMutate != nil {
+				t.Errorf("record in-flight 429: %v", errMutate)
+			}
+			_, _ = w.Write([]byte(`{"plan_type":"pro","rate_limit":{` +
+				`"primary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_at":1792771200},` +
+				`"secondary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_at":1793318400}}}`))
+		case "/resets":
+			_, _ = w.Write([]byte(`{"available_count":0,"credits":[]}`))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	collector := NewCollector(repo, Options{
+		Owner: "home-a", HomeID: "home-a", CodexUsageURL: server.URL + "/usage", CodexResetCreditsURL: server.URL + "/resets",
+		Now: clock.Now, CooldownLifter: manager,
+	})
+	collector.collect(context.Background())
+
+	if duringProbe.IsZero() {
+		t.Fatal("usage endpoint was not called")
+	}
+	item, errItem := repo.GetQuotaCredential(context.Background(), authID, clock.Now())
+	if errItem != nil {
+		t.Fatalf("GetQuotaCredential() error = %v", errItem)
+	}
+	if item.ObservedAt == nil || !item.ObservedAt.After(duringProbe) {
+		t.Fatalf("snapshot observed_at = %v, want after the in-flight 429 at %s", item.ObservedAt, duringProbe)
+	}
+
+	persisted, _, errPersisted := repo.GetAuth(context.Background(), authID)
+	if errPersisted != nil || persisted == nil {
+		t.Fatalf("GetAuth() = %v, %v", persisted, errPersisted)
+	}
+	if got := persisted.ModelStates["gpt-6.1-sol"]; got == nil || got.Quota.Exceeded || got.Unavailable {
+		t.Fatalf("gpt-6.1-sol persisted state = %#v, want the block from before the check lifted", got)
+	}
+	// Comparing against the probe end instead of its start would lift this too.
+	if got := persisted.ModelStates["gpt-6.1-codex"]; got == nil || !got.Quota.Exceeded || !got.Unavailable || !got.NextRetryAfter.Equal(recoverAt) {
+		t.Fatalf("gpt-6.1-codex persisted state = %#v, want the 429 recorded during the probe kept", got)
+	}
+	local, ok := manager.GetByID(authID)
+	if !ok || local == nil {
+		t.Fatal("local auth missing after lift")
+	}
+	if got := local.ModelStates["gpt-6.1-sol"]; got == nil || got.Quota.Exceeded || got.Unavailable {
+		t.Fatalf("gpt-6.1-sol local state = %#v, want lifted", got)
+	}
+	if got := local.ModelStates["gpt-6.1-codex"]; got == nil || !got.Quota.Exceeded || !got.Unavailable {
+		t.Fatalf("gpt-6.1-codex local state = %#v, want the 429 recorded during the probe kept", got)
+	}
+}

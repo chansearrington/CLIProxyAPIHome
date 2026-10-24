@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -150,5 +151,46 @@ func TestLiftQuotaCooldownObservedAtKeepsNewerLocalQuotaBlock(t *testing.T) {
 	}
 	if blocked, _, _ := isAuthBlockedForModel(local, "gpt-6.1-sol", now); !blocked {
 		t.Fatal("local auth no longer blocked, want newer local quota block to keep routing away")
+	}
+}
+
+func TestLiftQuotaCooldownObservedAtKeepsLaterNonQuotaErrorOnQuotaBlockedModel(t *testing.T) {
+	now := time.Now().UTC()
+	blockedAt := now.Add(-time.Hour)
+	for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			authID := "auth-lift-quota-then-" + strconv.Itoa(status)
+			// The model hit a 429 first; a later 403/503 replaced LastError and the
+			// retry window but left the quota state in place.
+			state := quotaCooldownModelState(blockedAt, 48*time.Hour)
+			retryAt := now.Add(15 * time.Minute)
+			state.StatusMessage = http.StatusText(status)
+			state.NextRetryAfter = retryAt
+			state.LastError = &Error{Message: http.StatusText(status), HTTPStatus: status}
+			store := &fakeMutatorStore{persisted: quotaLiftTestAuth(authID, map[string]*ModelState{"gpt-6.1-sol": state})}
+			manager := newHomeNodeManager(t, store, authID)
+
+			result, errLift := manager.LiftQuotaCooldownObservedAt(context.Background(), authID, now)
+			if errLift != nil {
+				t.Fatalf("LiftQuotaCooldownObservedAt() error = %v", errLift)
+			}
+			if !result.Cleared || !reflect.DeepEqual(result.ClearedModels, []string{"gpt-6.1-sol"}) {
+				t.Fatalf("LiftQuotaCooldownObservedAt() result = %#v, want the quota state cleared", result)
+			}
+			persisted := store.persistedSnapshot().ModelStates["gpt-6.1-sol"]
+			if persisted == nil || persisted.Quota.Exceeded {
+				t.Fatalf("persisted state = %#v, want quota state cleared", persisted)
+			}
+			if !persisted.Unavailable || !persisted.NextRetryAfter.Equal(retryAt) || persisted.LastError == nil || persisted.LastError.HTTPStatus != status {
+				t.Fatalf("persisted state = %#v, want the %d retry window kept", persisted, status)
+			}
+			local, ok := manager.GetByID(authID)
+			if !ok || local == nil {
+				t.Fatal("local auth missing after lift")
+			}
+			if blocked, _, _ := isAuthBlockedForModel(local, "gpt-6.1-sol", now); !blocked {
+				t.Fatalf("local state = %#v, want the %d retry window to keep routing away", local.ModelStates["gpt-6.1-sol"], status)
+			}
+		})
 	}
 }
