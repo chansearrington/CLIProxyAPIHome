@@ -33,6 +33,18 @@ const (
 	// A check reads the provider's usage endpoint, spends no model tokens and
 	// never spends a reset credit; once an hour keeps that load negligible.
 	quotaBlockedProbeInterval = time.Hour
+	// quotaIdleProbeInterval bounds how often an idle credential without a
+	// quota routing block is re-checked. Without it a standby credential's
+	// saved reading only refreshes when traffic returns, so capacity decisions
+	// would use numbers that are days old. A check is a provider usage GET: it
+	// spends no model tokens and never spends a reset credit. Some providers
+	// rate-limit their usage endpoint (Anthropic has answered 429
+	// UPSTREAM_RATE_LIMITED), so this cadence stays deliberately slow.
+	quotaIdleProbeInterval = 6 * time.Hour
+	// quotaResetProbeGrace delays the one check after a saved window reset so
+	// a provider clock or a relative reset rounded a little early does not
+	// read the old window just before it rolls over.
+	quotaResetProbeGrace = time.Minute
 )
 
 const (
@@ -700,7 +712,15 @@ func (r *Repository) claimQuotaProbe(ctx context.Context, credentialID string, o
 				}
 				blockedProbeDue = lastAttemptAt == nil || !lastAttemptAt.UTC().After(now.Add(-quotaBlockedProbeInterval))
 			}
-			if claimActivityAt == nil && !blockedProbeDue {
+			idleProbeDue := false
+			if claimActivityAt == nil && !blockedProbeDue && errFind == nil {
+				var errIdle error
+				idleProbeDue, errIdle = quotaIdleRecheckDue(ctx, tx, record, now)
+				if errIdle != nil {
+					return errIdle
+				}
+			}
+			if claimActivityAt == nil && !blockedProbeDue && !idleProbeDue {
 				// Forced claims may have no recoverable activity watermark. Clear an
 				// expired orphan instead of exposing collecting indefinitely.
 				if errFind == nil && record.CollectionStatus == "collecting" {
@@ -797,6 +817,37 @@ func quotaRoutingBlockActive(auth *coreauth.Auth, now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// quotaIdleRecheckDue reports whether an idle credential's saved reading is due
+// for a scheduled check: either its last check is older than
+// quotaIdleProbeInterval, or a saved window reset has passed since that check.
+// The last check is the later of the last collection attempt and the saved
+// observation, so any attempt, even a failed one, consumes a passed reset and
+// the reset rule fires once per reset. A credential that was never collected
+// has no saved reading and stays on the activity rule.
+func quotaIdleRecheckDue(ctx context.Context, db *gorm.DB, record QuotaSnapshotRecord, now time.Time) (bool, error) {
+	lastCheckAt := quotaUTC(record.LastAttemptAt)
+	if record.ObservedAt != nil && (lastCheckAt == nil || record.ObservedAt.After(*lastCheckAt)) {
+		lastCheckAt = quotaUTC(record.ObservedAt)
+	}
+	if lastCheckAt == nil {
+		return false, nil
+	}
+	// A check time well ahead of the clock (for example after the clock was
+	// stepped back) would otherwise keep the credential unchecked until real
+	// time caught up; claim it so the existing future-observation repair runs.
+	if lastCheckAt.After(now.Add(quotaMaxFutureObservationSkew)) || !lastCheckAt.After(now.Add(-quotaIdleProbeInterval)) {
+		return true, nil
+	}
+	var passedResets int64
+	result := db.WithContext(contextOrBackground(ctx)).Model(&QuotaWindowRecord{}).
+		Where("credential_id = ? AND reset_at IS NOT NULL AND reset_at > ? AND reset_at <= ?", record.CredentialID, lastCheckAt.UTC(), now.Add(-quotaResetProbeGrace).UTC()).
+		Count(&passedResets)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return passedResets > 0, nil
 }
 
 func latestQuotaUsageActivityAt(ctx context.Context, db *gorm.DB, credentialID string, identityVersion int64, identityKey string, after time.Time) (*time.Time, error) {

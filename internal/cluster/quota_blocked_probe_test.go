@@ -81,7 +81,12 @@ func TestClaimEligibleQuotaProbeSkipsIdleCredentialWithoutActiveBlock(t *testing
 	repo, closeRepo := newBillingTestRepository(t, ctx)
 	defer closeRepo()
 	lastAttemptAt := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
-	now := lastAttemptAt.Add(48 * time.Hour)
+	// Past the hourly blocked cadence but inside the slower idle cadence, so
+	// only an active block could make these credentials due.
+	now := lastAttemptAt.Add(2 * quotaBlockedProbeInterval)
+	if !now.Before(lastAttemptAt.Add(quotaIdleProbeInterval)) {
+		t.Fatalf("test time %v must fall inside the idle cadence", now)
+	}
 
 	seedQuotaSnapshotAuth(t, repo, "unblocked-idle", "codex", "Unblocked", map[string]any{"type": "codex"})
 	seedQuotaLastAttempt(t, repo, "unblocked-idle", lastAttemptAt)
