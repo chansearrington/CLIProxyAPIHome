@@ -117,6 +117,30 @@ func TestClaimEligibleQuotaProbeRechecksBlockedCredentialAfterSavedReset(t *test
 	}
 }
 
+func TestClaimEligibleQuotaProbeIgnoresSavedResetOfAnotherCredential(t *testing.T) {
+	ctx := context.Background()
+	repo, closeRepo := newBillingTestRepository(t, ctx)
+	defer closeRepo()
+	now := time.Date(2026, 10, 24, 5, 0, 0, 0, time.UTC)
+
+	// A was last checked at 03:00 and its saved weekly reset (04:30) has passed.
+	seedQuotaSnapshotAuth(t, repo, "reset-passed-a", "codex", "Reset Passed A", map[string]any{"type": "codex"})
+	seedQuotaExhaustedReading(t, repo, "reset-passed-a", now.Add(-2*time.Hour), now.Add(-30*time.Minute))
+	// B was checked 1h ago, before A's reset, and has no saved window at all.
+	// Its own freshness has passed, so only a reset could make it due.
+	seedQuotaSnapshotAuth(t, repo, "no-reset-b", "codex", "No Reset B", map[string]any{"type": "codex"})
+	seedQuotaLastAttempt(t, repo, "no-reset-b", now.Add(-time.Hour))
+
+	claimed, errClaim := repo.ClaimEligibleQuotaProbe(ctx, "no-reset-b", "home-a", now, time.Minute)
+	if errClaim != nil || claimed {
+		t.Fatalf("claim for credential without a saved reset = %v, %v, want false, nil", claimed, errClaim)
+	}
+	claimed, errClaim = repo.ClaimEligibleQuotaProbe(ctx, "reset-passed-a", "home-a", now, time.Minute)
+	if errClaim != nil || !claimed {
+		t.Fatalf("claim for credential with a passed saved reset = %v, %v, want true, nil", claimed, errClaim)
+	}
+}
+
 func TestClaimEligibleQuotaProbeNeverRechecksDisabledIdleCredential(t *testing.T) {
 	ctx := context.Background()
 	repo, closeRepo := newBillingTestRepository(t, ctx)
