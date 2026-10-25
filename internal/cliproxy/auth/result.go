@@ -226,7 +226,7 @@ func (m *Manager) applyResultTransition(auth *Auth, result Result, resultModel s
 			auth.LastError = nil
 			auth.StatusMessage = ""
 			auth.Status = StatusActive
-		} else if latestBlockingModelErrorState(auth, now) == nil {
+		} else if !auth.Disabled && auth.Status != StatusDisabled && latestBlockingModelErrorState(auth, now) == nil {
 			auth.StatusMessage = ""
 			auth.Status = StatusActive
 		}

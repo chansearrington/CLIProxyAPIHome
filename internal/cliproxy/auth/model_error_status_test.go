@@ -174,6 +174,38 @@ func TestModelErrorDisplayChoosesLatestBlockingState(t *testing.T) {
 	}
 }
 
+func TestModelErrorDisplayPreservesDisabledAccount(t *testing.T) {
+	now := time.Date(2026, time.October, 25, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		disabled bool
+		status   Status
+	}{
+		{name: "disabled flag and status", disabled: true, status: StatusDisabled},
+		{name: "disabled flag", disabled: true, status: StatusError},
+		{name: "disabled status", status: StatusDisabled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth := &Auth{
+				ID: "fake-disabled-account", Disabled: tc.disabled, Status: tc.status,
+				StatusMessage: "account disabled", LastError: &Error{HTTPStatus: http.StatusNotFound, Message: "retired model"},
+				ModelStates: map[string]*ModelState{
+					"old-model": {Status: StatusError, LastError: &Error{HTTPStatus: http.StatusNotFound, Message: "retired model"}},
+				},
+			}
+			before := auth.Clone()
+			manager := NewManager(nil, nil, nil)
+			manager.applyResultTransition(auth, Result{Success: true, Model: "healthy-model"}, "healthy-model", now, false)
+			if auth.Disabled != before.Disabled || auth.Status != before.Status || auth.StatusMessage != before.StatusMessage || !reflect.DeepEqual(auth.LastError, before.LastError) {
+				t.Fatalf("late success changed disabled account status or diagnostics: %#v", auth)
+			}
+			if blocked, _, _ := isAuthBlockedForModel(auth, "healthy-model", now); !blocked {
+				t.Fatal("late success unblocked a disabled account")
+			}
+		})
+	}
+}
+
 func TestQuotaCooldownClearPreservesNonBlockingModelErrorBehavior(t *testing.T) {
 	now := time.Date(2026, time.October, 25, 12, 0, 0, 0, time.UTC)
 	stale := &ModelState{
