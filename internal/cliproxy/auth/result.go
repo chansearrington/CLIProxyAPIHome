@@ -226,6 +226,9 @@ func (m *Manager) applyResultTransition(auth *Auth, result Result, resultModel s
 			auth.LastError = nil
 			auth.StatusMessage = ""
 			auth.Status = StatusActive
+		} else if !auth.Disabled && auth.Status != StatusDisabled && latestBlockingModelErrorState(auth, now) == nil {
+			auth.StatusMessage = ""
+			auth.Status = StatusActive
 		}
 		applyRateLimitWarningTransition(auth, result, now)
 		auth.UpdatedAt = now
@@ -818,21 +821,7 @@ func (m *Manager) adoptPersistedResultState(result Result, resultModel string, p
 	if localRefreshBlocked && !persistedRefreshBlocked {
 		local.StatusMessage = ""
 		local.LastError = nil
-		var latestModelError *ModelState
-		for _, state := range local.ModelStates {
-			if state == nil {
-				continue
-			}
-			activeError := state.LastError != nil ||
-				(state.Status == StatusError && state.Unavailable && (state.NextRetryAfter.IsZero() || state.NextRetryAfter.After(now)))
-			if !activeError {
-				continue
-			}
-			if latestModelError == nil || state.UpdatedAt.After(latestModelError.UpdatedAt) {
-				latestModelError = state
-			}
-		}
-		if latestModelError != nil {
+		if latestModelError := latestBlockingModelErrorState(local, now); latestModelError != nil {
 			local.Status = StatusError
 			local.StatusMessage = latestModelError.StatusMessage
 			local.LastError = cloneError(latestModelError.LastError)
@@ -843,11 +832,15 @@ func (m *Manager) adoptPersistedResultState(result Result, resultModel string, p
 	}
 	// The persisted copy can report a clean active state even though this
 	// node still tracks a model error that was never persisted (for example a
-	// transient 5xx). Keep the local error view in that case.
+	// transient 5xx). Preserve its diagnostics, but only keep the error display
+	// while a local model remains blocked.
 	if persisted.Status != StatusActive || !hasModelError(local, now) {
 		local.Status = persisted.Status
 		local.StatusMessage = persisted.StatusMessage
 		local.LastError = cloneError(persisted.LastError)
+	} else if latestBlockingModelErrorState(local, now) == nil {
+		local.Status = StatusActive
+		local.StatusMessage = ""
 	}
 	if persistedRefreshBlocked {
 		local.Unavailable = true

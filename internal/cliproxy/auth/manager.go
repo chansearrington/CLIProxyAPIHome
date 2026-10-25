@@ -1931,7 +1931,7 @@ func clearRefreshDispatchBlock(auth *Auth, now time.Time) {
 	if preserveCredentialQuota {
 		auth.Quota = preservedQuota
 	}
-	modelError := latestModelErrorState(auth, now)
+	modelError := latestBlockingModelErrorState(auth, now)
 	switch {
 	case auth.Disabled || auth.Status == StatusDisabled:
 		auth.Status = StatusDisabled
@@ -1977,7 +1977,11 @@ func clearRefreshDispatchBlock(auth *Auth, now time.Time) {
 	}
 }
 
-func latestModelErrorState(auth *Auth, now time.Time) *ModelState {
+// latestBlockingModelErrorState keeps the account display aligned with the model
+// blocking rule in isAuthBlockedForModel, so retained diagnostics for usable
+// models do not make a healthy account appear broken. Behavioral callers must
+// keep using hasModelError, whose broader meaning also controls cooldown recovery.
+func latestBlockingModelErrorState(auth *Auth, now time.Time) *ModelState {
 	if auth == nil {
 		return nil
 	}
@@ -1986,9 +1990,8 @@ func latestModelErrorState(auth *Auth, now time.Time) *ModelState {
 		if state == nil {
 			continue
 		}
-		activeError := state.LastError != nil ||
-			(state.Status == StatusError && state.Unavailable && (state.NextRetryAfter.IsZero() || state.NextRetryAfter.After(now)))
-		if !activeError {
+		blocked := state.Status == StatusDisabled || (state.Unavailable && state.NextRetryAfter.After(now))
+		if !blocked {
 			continue
 		}
 		if latest == nil || state.UpdatedAt.After(latest.UpdatedAt) {
