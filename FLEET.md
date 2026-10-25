@@ -93,10 +93,13 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0031 Home-owned maintenance, 2026-10-15 UTC)
+## Current verified runtime (ws-0034 quota re-check deploy, 2026-10-25 UTC)
 
-- Home is `cpa-home:1.1.1-claude-fleet-2800d59`, immutable image
-  `sha256:3f421772d8ddf859a9e29c415540c2bb97cd7de2d639688598309b6715c57122`.
+- Home is `cpa-home:1.1.1-claude-fleet-c632a78`, immutable image
+  `sha256:fe690fc3094b17741ba6e7c96c693006cf99be39f9cff5accdbc15a1f60a4863` (ws-0034): blocked credentials are
+  re-checked hourly and a healthy check lifts the stale block; idle credentials are re-checked every 6 h and after
+  a saved reset; container log keep is 10 x 50 MB. Rollback target `cpa-home:1.1.1-claude-fleet-2800d59`
+  (`sha256:3f421772d8ddf859a9e29c415540c2bb97cd7de2d639688598309b6715c57122`).
   Source integrates released upstream 1.1.1 and preserves all deployed fleet patches, including Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
   The ws-0014 quota correction treats Claude utilization consistently as percentages, so
