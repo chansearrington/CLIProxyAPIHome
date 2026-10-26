@@ -8,8 +8,7 @@ Microsoft Claude retain their Chanse-only access.
 
 ## Finding and change
 
-The newly added credential is `the.lara.vance@gmail.com`, UUID
-`3e101de1-ae15-4b1d-9bb6-1ff0194936a2`. It was enabled, active, and priority 2, but had no
+The newly added credential is `acct-dec587` (label of its credential UUID). It was enabled, active, and priority 2, but had no
 channel-group binding. All six current client keys are scoped to channel group 1; without a
 binding, none could select the new credential.
 
@@ -18,10 +17,10 @@ needed:
 
 | Order | Account | Priority | Access |
 | --- | --- | --- | --- |
-| 1 | `chanse@hypesports.live` | 4 | Fleet shared |
-| 2 | `chanse.arrington@gmail.com` | 3 | Fleet shared |
-| 3 | `the.lara.vance@gmail.com` | 2 | Fleet shared |
-| 4 | `carringt@microsoft.com` | 1 | Chanse only |
+| 1 | `acct-d057c9` | 4 | Fleet shared |
+| 2 | `acct-3a57b5` | 3 | Fleet shared |
+| 3 | `acct-dec587` | 2 | Fleet shared |
+| 4 | `acct-63b680` | 1 | Chanse only |
 
 Under all four canonical fleet locks, created channel-group-detail **9**, binding the new UUID
 to group **1**, `Fleet shared — Claude, Codex, Antigravity, xAI`. This is the only configuration
@@ -72,9 +71,9 @@ All four locks were released and independently reported **UNLOCKED** after the c
 
 ## CodexBar addition
 
-Added **Lara** (`the.lara.vance@gmail.com`) as the third Claude token account, after Hype and
+Added **Lara** (`acct-dec587`) as the third Claude token account, after Hype and
 Gmail. Its CodexBar UUID is `69752A79-93D0-4F16-B36E-AE1E84ED8720`, pinned in the existing
-Mac helper settings to Home UUID `3e101de1-ae15-4b1d-9bb6-1ff0194936a2` and that exact email.
+Mac helper settings to Home UUID `acct-dec587` and that exact email.
 The existing helper supports multiple accounts; no source code or Home endpoint change was
 needed. The sync now checks all three accounts every 120 seconds.
 

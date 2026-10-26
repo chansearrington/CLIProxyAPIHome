@@ -3,8 +3,8 @@
 Status: configured and verified, 2026-10-14 19:17 UTC — all six keys and all five nodes selected The Vanderblooms; CodexBar is following it. All four fleet locks released.
 
 The user added **The Vanderblooms** and requested the established CPA/CodexBar setup.
-Independently verified Anthropic OAuth profile email **the.vanderblooms@gmail.com**;
-Home UUID **c714d247-5142-477d-9036-3e8b3fc88dbd**. The profile returned HTTP 200 and an active
+Independently verified Anthropic OAuth profile email **acct-03a662**;
+Home UUID **acct-03a662**. The profile returned HTTP 200 and an active
 **Pro** subscription (`claude_pro`, tier `default_claude_ai`); do not label it Max 20x.
 
 The credential is already enabled and active but has neither priority nor shared scope

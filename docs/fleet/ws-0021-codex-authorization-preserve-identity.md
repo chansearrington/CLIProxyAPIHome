@@ -7,7 +7,7 @@ its settings, history and permissions, and removing the duplicate.
 
 ## Identity and scope
 
-- Original credential: `b7c9be0e-2a23-4212-b61c-04e2bde5998d`, created September 8.
+- Original credential: `acct-126999`, created September 8.
 - New duplicate: `e91d9416-b199-45f0-bf99-6d7db879d8ac`, created October 13.
 - Both are Codex credentials for the same email, ChatGPT account ID and OAuth subject. These
   values were compared inside the Ark; token contents are never printed or saved in this repo.

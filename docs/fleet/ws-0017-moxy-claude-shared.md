@@ -2,9 +2,9 @@
 
 Status: Home and CodexBar configured and verified, 2026-10-12T15:41:00.281100+00:00. Fleet locks released after proof.
 
-Chanse added `moxy.kit@outlook.com` and requested the established shared setup, then explicitly
+Chanse added `acct-1edb83` and requested the established shared setup, then explicitly
 prioritized immediate activation in CPA Home. Home credential UUID:
-`3ed52fd4-9f8c-4be4-a766-b97b45a2e1d5`.
+`acct-1edb83`.
 
 ## Immediate Home activation
 

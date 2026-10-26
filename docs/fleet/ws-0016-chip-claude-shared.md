@@ -2,8 +2,8 @@
 
 Status: Home and CodexBar configured and verified, 2026-10-12 13:13 UTC. All fleet locks released.
 
-Chanse added `chip@byfca.org` and requested the established shared Claude setup in CPA and
-CodexBar. Home credential UUID: `5796155a-dd4e-4e41-a5c5-7acec13f5aaa`.
+Chanse added `acct-f0ee78` and requested the established shared Claude setup in CPA and
+CodexBar. Home credential UUID: `acct-f0ee78`.
 
 ## Findings and intended change
 
@@ -19,14 +19,14 @@ The existing priorities already put Chip ahead of the restricted Microsoft backu
 | 2 | Gmail | 5 | Fleet shared |
 | 3 | Lara | 4 | Fleet shared |
 | 4 | Developer | 3 | Fleet shared |
-| 5 | Chip (`chip@byfca.org`) | 2 | Fleet shared |
+| 5 | Chip (`acct-f0ee78`) | 2 | Fleet shared |
 | 6 | Microsoft | 1 | Chanse only |
 
 No priority changes are needed. Microsoft and Copilot retain scope 2, accessible only to
 Chanse's key. No Home build, node restart, key reassignment, or native Claude login change is
 part of this setup. Home alone retains ownership of rotating refresh tokens.
 
-Anthropic's live OAuth profile independently confirmed `chip@byfca.org`. Its usage endpoint
+Anthropic's live OAuth profile independently confirmed `acct-f0ee78`. Its usage endpoint
 returned HTTP 200 and 0% used for the session and weekly windows. The weekly reset was
 2026-10-13 21:00 UTC. The current access token expires 2026-10-12 20:55:30 UTC.
 
