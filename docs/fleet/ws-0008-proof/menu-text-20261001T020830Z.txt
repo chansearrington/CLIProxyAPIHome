@@ -16,7 +16,7 @@ Claude · ch***@hypesports.live
 Codex · ch***@hotmail.com (Pro 20x)
    Weekly                         ███░░░░░░░  30%  resets Sat 12:00 PM
    last 24 h: 1,216 requests, 60.8M tokens
-Copilot · carringt_microsoft (Enterprise)
+Copilot · acct-ece665 (Enterprise)
    Premium Requests               1 of 1.0M requests  resets Oct 31
    Chat                           unlimited  resets Oct 31
    Completions                    unlimited  resets Oct 31

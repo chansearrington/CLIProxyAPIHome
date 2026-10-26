@@ -178,10 +178,11 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   their email addresses. Account UUIDs, tokens, ordering, priorities and permissions are
   preserved. [Plan/label verification](docs/fleet/ws-0028-max20-email-labels.md).
 
-- Since 2026-10-18 06:01 UTC, shared Codex order is `acct-90c281` (Gmail, priority **4**, binding 23),
+- Since 2026-10-18 (about 05:55 UTC, ws-0033), shared Codex order is `acct-90c281` (Gmail, priority **4**, binding 23),
   `acct-f4ba26` (HypeSports, priority **3**, binding 24), `acct-fdfbfe` (Developer, priority **2**,
   binding 26), then `acct-126999` (Hotmail, priority **1**, original UUID/binding preserved); priorities
-  re-read from Home 2026-10-26. All six keys and five nodes passed native Codex requests on each account.
+  re-read from Home 2026-10-26. At each addition all six original keys passed native Codex requests (served by the
+  top account) and all five nodes passed with a temporary key bound only to the new account.
   At ws-0033 (2026-10-18) CodexBar monitored all four with Home-owned access-token sync, following successful
   MacBook/key-6 Codex usage every 120 seconds (not re-checked since). Home alone owns refresh tokens; native Codex auth and all ten Claude
   mappings remain intact. Verification and rollback:

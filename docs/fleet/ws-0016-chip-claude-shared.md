@@ -2,8 +2,8 @@
 
 Status: Home and CodexBar configured and verified, 2026-10-12 13:13 UTC. All fleet locks released.
 
-Chanse added `acct-f0ee78` and requested the established shared Claude setup in CPA and
-CodexBar. Home credential UUID: `acct-f0ee78`.
+Chanse added the Claude account `acct-f0ee78` (label of its Home credential UUID) and requested
+the established shared Claude setup in CPA and CodexBar.
 
 ## Findings and intended change
 

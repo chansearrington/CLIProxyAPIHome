@@ -73,7 +73,7 @@ All four locks were released and independently reported **UNLOCKED** after the c
 
 Added **Lara** (`acct-dec587`) as the third Claude token account, after Hype and
 Gmail. Its CodexBar UUID is `69752A79-93D0-4F16-B36E-AE1E84ED8720`, pinned in the existing
-Mac helper settings to Home UUID `acct-dec587` and that exact email.
+Mac helper settings to Home credential `acct-dec587` and its matching email.
 The existing helper supports multiple accounts; no source code or Home endpoint change was
 needed. The sync now checks all three accounts every 120 seconds.
 

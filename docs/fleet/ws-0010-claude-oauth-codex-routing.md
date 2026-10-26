@@ -51,7 +51,7 @@ Home's normal Add credential login creates a new UUID; it does not match an exis
 (`internal/cluster/management/oauth_login.go`, `internal/cluster/management/oauth.go:328`).
 An identity-preserving upload avoids creating a duplicate without the existing channel access.
 
-The original Gmail UUID `acct-3a57b5` was restored on 2026-10-08
+The original Gmail credential `acct-3a57b5` was restored on 2026-10-08
 at approximately 03:49:04 UTC. Its priority 2, filename, all routing attributes, channel details,
 and API-key channel groups are unchanged. There are still exactly three Claude credentials,
 including exactly one Gmail credential. No native login or Home/node service was restarted.

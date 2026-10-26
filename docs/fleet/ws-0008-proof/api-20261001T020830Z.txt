@@ -13,6 +13,6 @@ antigravity  ch***@gmail.com          status=healthy    freshness=stale  credent
 agent-os-home-canary agent-os-home-canary     status=unsupported freshness=never  credential=enabled
 codex        ch***@hotmail.com        status=healthy    freshness=fresh  credential=enabled
     codex-1-week                   unit=percentage used=30 limit=100 ratio=0.3 reset=2026-10-03T17:00:06Z
-copilot      carringt_microsoft       status=healthy    freshness=fresh  credential=enabled
+copilot      acct-ece665       status=healthy    freshness=fresh  credential=enabled
     copilot-premium-interactions   unit=requests   used=1 limit=1000000 ratio=1e-06 reset=2026-11-01T00:00:00Z
     copilot-chat                   unit=requests   used=None limit=None ratio=None reset=2026-11-01T00:00:00Z
