@@ -430,7 +430,7 @@ Design question, and the mapping proposal above, which stay as the record of wha
    plugin returns (login, parse, refresh), which also covers what upstream PR #1 fixes; (3) map
    upstream 402 to 429; (4) prefer `/v1/messages` for Claude-family ids; (5) darwin/arm64 build
    and release job (from upstream PR #2). Offer (1)-(4) back upstream as PRs.
-5. **Account: Chanse's Microsoft work seat**, GitHub account on that seat (Home credential `acct-ece665`)
+5. **Account: Chanse's Microsoft work seat**, its GitHub account, Home credential `acct-ece665`
    (enterprise-managed user), Copilot Enterprise assigned by the `my-copilot` enterprise,
    1,000,000 AI credits/month resetting on the 1st, internal-only models listed (e.g. "GPT-5.6 Sol
    Fast (internal only)", "GPT Daybreak Blue", "mai-experimental"). **The lead recommended a
