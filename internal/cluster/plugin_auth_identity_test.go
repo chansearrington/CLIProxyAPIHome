@@ -43,7 +43,7 @@ func TestEnsurePluginAuthIdentityAssignsStableUUID(t *testing.T) {
 }
 
 func TestEnsurePluginAuthIdentityKeepsExistingUUID(t *testing.T) {
-	const existing = "4d810cfd-47c8-420d-8687-05f68428caba"
+	const existing = "00000000-0000-4000-8000-000000000002"
 	auth := &coreauth.Auth{ID: existing, Provider: "copilot", FileName: "copilot-octo-user.json"}
 	EnsurePluginAuthIdentity(auth)
 	if auth.ID != existing || auth.Index != existing {
