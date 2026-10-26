@@ -430,7 +430,7 @@ Design question, and the mapping proposal above, which stay as the record of wha
    plugin returns (login, parse, refresh), which also covers what upstream PR #1 fixes; (3) map
    upstream 402 to 429; (4) prefer `/v1/messages` for Claude-family ids; (5) darwin/arm64 build
    and release job (from upstream PR #2). Offer (1)-(4) back upstream as PRs.
-5. **Account: Chanse's Microsoft work seat**, GitHub account `carringt_microsoft`
+5. **Account: Chanse's Microsoft work seat**, its GitHub account, Home credential `acct-ece665`
    (enterprise-managed user), Copilot Enterprise assigned by the `my-copilot` enterprise,
    1,000,000 AI credits/month resetting on the 1st, internal-only models listed (e.g. "GPT-5.6 Sol
    Fast (internal only)", "GPT Daybreak Blue", "mai-experimental"). **The lead recommended a
@@ -552,7 +552,7 @@ Steps, each verified before the next; every one reversible:
 3. `force-model-prefix: true` and the plugin store manifest from the task 5 record
    (`load-in-home: true`). Prove Home loaded it and every node reports `plugin-status` ok and
    stays healthy.
-4. Chanse logs in `carringt_microsoft` through Home's device-code flow.
+4. Chanse logs in the work-seat GitHub account through Home's device-code flow.
 5. New channel group "Copilot — Chanse only" = the Copilot credential; bind it to the MacBook
    key in addition to group 1. The Copilot credential is not added to group 1.
 6. Proof: `copilot/<model>` answered via the MacBook key and attributed to the Copilot
@@ -569,7 +569,7 @@ verified here: `quick_check` ok, 6 credentials, 6 API keys, 5 live users. **This
 point for everything below.**
 
 **Steps 1-2 — users.** The five users already existed (created 2026-09-09): Moxy 2, Chanse 3,
-Chip 4, Hyper 5, Lara 6 (user 1 `moxy.kit@outlook.com` is soft-deleted). No key was bound. Chip
+Chip 4, Hyper 5, Lara 6 (user 1, an earlier Home user, is soft-deleted). No key was bound. Chip
 had `credits_unlimited: false` with 0 credits, which would have blocked Chip's key the moment it
 was bound; set to `true` first (16:3xZ). Keys matched to machines by sha256 fingerprint prefix
 of each mini's OpenClaw `cpa-gui` key (no key printed). Bound one at a time, each followed by a
@@ -668,7 +668,7 @@ leaves existing UUIDs alone; called once before `UpsertAuth` in the plugin login
 Waiting on Chanse.
 
 **Step 4 done, and a second Home bug (2026-09-30).** Chanse approved code `250D-AE35`; Home saved
-credential **`e3b5f1d8-fe50-54e5-a0e6-a1526863d84e`** (label `carringt_microsoft`, provider
+credential **`acct-ece665`** (labelled with the work-seat GitHub account, provider
 `copilot`, prefix `copilot`, active) at 03:08:13Z, proving fix `9ba431f`. It then listed no models:
 `pluginhost: models for auth … failed: Copilot auth storage is empty`. Cause: in cluster mode Home's
 runtime keeps **minimal auths** (`internal/cluster/runtime.go:798`, `modelMetadataFromAuth` keeps
@@ -692,7 +692,7 @@ panel 64/3,919,143; Block 2 → **`cpa-home:1.0.73-claude-fleet-95ba2db`, ID
 request from every agent and the MacBook HTTP 200, 37 requests after the swap, 0 failed. Locks
 released. **Rollback = compose back to `cpa-home:1.0.73-claude-fleet-9ba431f` after re-verifying its ID.**
 
-**Step 5.** Credential `e3b5f1d8…` added to channel group 2 "Copilot — Chanse only" (03:23Z); it is
+**Step 5.** Credential `acct-ece665` added to channel group 2 "Copilot — Chanse only" (03:23Z); it is
 the group's only member and is in no other group. Key bindings: 1-5 `[1]`, 6 (MacBook Pro, user
 Chanse) `[1,2]`.
 
@@ -700,10 +700,10 @@ Chanse) `[1,2]`.
 
 | Request (key) | Model asked | Result | Served by |
 |---|---|---|---|
-| MacBook, OpenAI chat | `copilot/gpt-5-mini` | 200 (empty body, see below) | provider `copilot`, credential `e3b5f1d8…`, alias `copilot/gpt-5-mini` |
-| MacBook, OpenAI chat | `copilot/claude-haiku-4.5` | 200 (empty body, see below) | `copilot`, `e3b5f1d8…` |
-| MacBook, Anthropic `/v1/messages` | `copilot/claude-haiku-4.5` | 200 "ok" | `copilot`, `e3b5f1d8…` |
-| MacBook, OpenAI chat | `claude-haiku-4-5-20251001` (native name) | 200 "ok" | provider `claude`, `chanse.arrington@gmail.com` |
+| MacBook, OpenAI chat | `copilot/gpt-5-mini` | 200 (empty body, see below) | provider `copilot`, credential `acct-ece665`, alias `copilot/gpt-5-mini` |
+| MacBook, OpenAI chat | `copilot/claude-haiku-4.5` | 200 (empty body, see below) | `copilot`, `acct-ece665` |
+| MacBook, Anthropic `/v1/messages` | `copilot/claude-haiku-4.5` | 200 "ok" | `copilot`, `acct-ece665` |
+| MacBook, OpenAI chat | `claude-haiku-4-5-20251001` (native name) | 200 "ok" | provider `claude`, `acct-3a57b5` |
 | Lara's key, OpenAI chat | `copilot/gpt-5-mini` | **503 `auth_not_found: no auth available`** | none (refused) |
 
 Model list after the fix: **47 `copilot/…` ids, zero bare Copilot ids** (force-model-prefix). A native
@@ -767,7 +767,7 @@ so a Claude JSON body became an empty completion and `event:`-prefixed stream fr
 (2026-09-30)
 
 **Outcome.** GitHub Copilot is a working, separate provider on the whole fleet. Chanse's work
-Copilot seat (`carringt_microsoft`, credential `e3b5f1d8-fe50-54e5-a0e6-a1526863d84e`) serves 47
+Copilot seat (credential `acct-ece665`) serves 47
 models as `copilot/<GitHub id>`, reachable only through Chanse's MacBook key (channel group 2), in
 all three client formats. Native model names never route to Copilot. The agents are Home users
 (Moxy, Chip, Hyper, Lara, Chanse), so usage reports per agent by name.

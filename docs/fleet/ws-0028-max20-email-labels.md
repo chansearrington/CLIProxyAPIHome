@@ -12,8 +12,8 @@ Independent Anthropic OAuth profile reads through Home returned HTTP 200 for bot
 credential IDs and the expected email addresses. Both report organization type `claude_max`
 and rate-limit tier `default_claude_max_20x`:
 
-- `c714d247-5142-477d-9036-3e8b3fc88dbd` — `the.vanderblooms@gmail.com`.
-- `19dbc651-b64b-428c-9e74-e0517753e584` — `hyper.rally@outlook.com`.
+- `acct-03a662`: credential ID and email both matched.
+- `acct-c9c2c0`: credential ID and email both matched.
 
 Home's existing automatic plan collector already recognizes this tier; no code change or
 manual badge override is needed. At the first check, both stored snapshots still read
@@ -35,7 +35,7 @@ concurrent-change checks. Private pre-change backups are retained under
 
 The installed CodexBar CLI returns usage successfully for all ten accounts, each labeled
 with its email. The sync helper passes with all ten mappings and follows the latest
-successful Mac/key-6 request as `the.vanderblooms@gmail.com`. A subsequent scheduled sync
+successful Mac/key-6 request as `acct-03a662`. A subsequent scheduled sync
 also preserves the new names. CodexBar 0.75 has a config file watcher, so an app restart
 was not needed.
 
@@ -54,8 +54,8 @@ finished on Ark before the Home write:
 
 | Account | Plan | Successful collection (UTC) |
 | --- | --- | --- |
-| `the.vanderblooms@gmail.com` | Max 20x, premium | 2026-10-15 15:30:55.893 |
-| `hyper.rally@outlook.com` | Max 20x, premium | 2026-10-15 15:30:56.590 |
+| `acct-03a662` | Max 20x, premium | 2026-10-15 15:30:55.893 |
+| `acct-c9c2c0` | Max 20x, premium | 2026-10-15 15:30:56.590 |
 
 Both snapshots report fresh/success. Credential settings and stored priorities were
 independently compared with their pre-change values and matched. All six current client

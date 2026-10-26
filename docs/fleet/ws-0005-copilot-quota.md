@@ -7,7 +7,7 @@ Status: done 2026-10-01 — live in cpa-home:1.0.73-claude-fleet-16f609d; Copilo
 
 ## Goal
 
-Copilot (plugin provider `copilot`, credential `e3b5f1d8-…`) is missing from Home's quota page
+Copilot (plugin provider `copilot`, credential `acct-ece665`) is missing from Home's quota page
 because of a provider allowlist (`quota_snapshots.go`); usage and cost already work. Make the
 Copilot allowance visible on the quota page like the other accounts, using what Copilot actually
 reports (the plugin or GitHub's Copilot API — find out what quota data exists; don't invent it).
@@ -52,7 +52,7 @@ probed. The allowlist exists twice:
 - `internal/quota/collector.go:570` `quotaProbeEligible` (same five) and the dispatch in
   `probeCredential` (`collector.go:377`).
 Live DB before the change: five `quota_snapshot` rows (codex, antigravity, 2x claude, xai), none for
-copilot credential `e3b5f1d8-…` (`carringt_microsoft`, `auth_kind=oauth`).
+copilot credential `acct-ece665` (`auth_kind=oauth`).
 
 **What quota data Copilot exposes, and where.**
 - The plugin: none. It only calls `GET /copilot_internal/v2/token` to swap the GitHub token for a
@@ -141,7 +141,7 @@ pid file instead, and put a time limit on any loop that holds a fleet-lock.**
 - Re-checked by me at ~01:05: the empty gpt-5-mini answer is `finish_reason: length` with all 16
   `max_tokens` spent as `reasoning_tokens` (the proof's cap, not a defect); with `max_tokens: 400` the
   same request returns `'ok'`, `finish_reason: stop`.
-- `GET /v0/management/quota/credentials`: before = copilot `e3b5f1d8…` `unsupported`/`unsupported`/
+- `GET /v0/management/quota/credentials`: before = copilot `acct-ece665` `unsupported`/`unsupported`/
   `never`, 0 windows. **After = `healthy` / `success` / `fresh`, source `active_probe`, plan
   `Enterprise`, 3 windows; primary `copilot-premium-interactions` limit 1,000,000 remaining
   1,000,000 reset 2026-11-01T00:00:00Z, and `copilot-chat` unlimited** (`copilot-completions`

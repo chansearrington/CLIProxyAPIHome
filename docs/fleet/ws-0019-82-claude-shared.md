@@ -2,13 +2,13 @@
 
 Status: configured and verified, 2026-10-13 UTC. All fleet locks released.
 
-Chanse requested the established setup for **82**, `character82@gmail.com`: shared CPA access,
+Chanse requested the established setup for **82**, `acct-72bae8`: shared CPA access,
 CodexBar authorization, automatic token rotation and account following. A later screenshot
 showed that the account was absent from the visible stacked menu.
 
 ## CPA Home
 
-Home UUID `1f648cbe-96b5-4401-8062-1d7a462e483e` is enabled, active, and available at final verification.
+Home UUID `acct-72bae8` is enabled, active, and available at final verification.
 Final scope binding **15** connects it to shared group **1**. All six current client
 keys include this scope. Microsoft Claude and Copilot retain their private group 2 binding,
 limited to Chanse's key 6. No key ownership or existing scope was changed.

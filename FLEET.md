@@ -55,7 +55,8 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.30** (`5be2cdab`, since 2026-10-15 UTC, ws-0030). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.43** (Home's automatic patch rollout, phase complete; read from Home's `/fleet` API
+  2026-10-26 02:00 UTC). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -106,9 +107,10 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   1% used no longer appears 100% used and exhausted.
   The ws-0015 Linux subscription transport bound prevents unacknowledged heartbeat data
   from keeping a dead node's membership alive through the kernel's long retry window.
-- All five nodes have verified CPA 8.0.29 binaries, manifests and healthy membership;
-  Copilot 0.3.7 remains loaded/reported_ok. Restart-in-place rollout passed each node's native
-  Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
+- All five nodes report CPA 8.0.43 and healthy membership, with Copilot 0.3.7 loaded and `reported_ok`
+  (Home `/fleet` and `/nodes`, read 2026-10-26 02:00 UTC). Home's automatic patch rollout carried them there
+  from 8.0.29 (ws-0030, ws-0031); the last hand-verified restart-in-place rollout (8.0.29) passed each node's
+  native Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
 - Shared Claude order is Gmail (10), HypeSports (9), 82 (8), Chip (7), Developer (6), Moxy (5), Lara (4), The Vanderblooms (3), Hyper Rally (2); Microsoft (1)
   remains Chanse-only emergency fallback. All six keys and five nodes selected Hyper Rally in the ws-0025
   routing proof while higher-priority accounts were unavailable; native Opus also passed.
@@ -176,16 +178,21 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   their email addresses. Account UUIDs, tokens, ordering, priorities and permissions are
   preserved. [Plan/label verification](docs/fleet/ws-0028-max20-email-labels.md).
 
-- Since 2026-10-15 19:34 UTC, shared Codex order is `chanse.arrington@gmail.com`
-  (priority **2**, new shared binding 23), then `chansearrington@hotmail.com`
-  (priority **1**, original UUID/binding preserved). All six keys and five nodes pass
-  native Codex requests. CodexBar monitors both accounts with Home-owned access-token
-  sync and follows successful MacBook/key-6 Codex usage every 120 seconds.
-  Home alone owns refresh tokens; native Codex auth and all ten Claude mappings remain intact.
-  [Second Codex verification and rollback](docs/fleet/ws-0029-second-codex-account.md).
+- Since 2026-10-18 (after the 05:53 UTC backup, ws-0033), shared Codex order is `acct-90c281` (Gmail, priority **4**, binding 23),
+  `acct-f4ba26` (HypeSports, priority **3**, binding 24), `acct-fdfbfe` (Developer, priority **2**,
+  binding 26), then `acct-126999` (Hotmail, priority **1**, original UUID/binding preserved); priorities
+  re-read from Home 2026-10-26. At each addition all six original keys passed native Codex requests (served by the
+  top account); at the third and fourth additions all five nodes also passed with a temporary key
+  bound only to the new account.
+  At ws-0033 (2026-10-18) CodexBar monitored all four with Home-owned access-token sync, following successful
+  MacBook/key-6 Codex usage every 120 seconds (not re-checked since). Home alone owns refresh tokens; native Codex auth and all ten Claude
+  mappings remain intact. Verification and rollback:
+  [second](docs/fleet/ws-0029-second-codex-account.md),
+  [third](docs/fleet/ws-0032-third-codex-account.md),
+  [fourth](docs/fleet/ws-0033-fourth-codex-account.md) Codex account.
 
 - Current model-menu/node currency: all four OpenClaw gateways expose the 55 shared current
-  CPA models, including Opus 5.5 and Sol 6.1. All five nodes run verified CPA 8.0.30.
+  CPA models, including Opus 5.5 and Sol 6.1. All five nodes run CPA 8.0.43 (Home-reported, 2026-10-26).
   Home now owns catalog sync and guarded patch rollout through its DB-backed `/fleet` API;
   the initial laptop coordinator from ws-0030 is retired.
   User-confirmed defaults are Sol 6.1 for Moxy/Chip and Opus 5.5 for Lara/Hyper;

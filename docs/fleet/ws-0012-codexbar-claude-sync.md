@@ -22,8 +22,8 @@ The exact bindings are:
 
 | CodexBar label | CodexBar account ID | Home credential ID | Verified provider email |
 | --- | --- | --- | --- |
-| Hype | `C69AAD18-BC24-4086-9BE6-68D19ADBE049` | `24e5779d-cd29-4f9f-89c7-45a577e9d70e` | `chanse@hypesports.live` |
-| Gmail | `93B30590-2F05-4BA2-86B5-CD69538EF3E2` | `d95b7988-e30a-446b-8b8b-61dabed87d2e` | `chanse.arrington@gmail.com` |
+| Hype | `C69AAD18-BC24-4086-9BE6-68D19ADBE049` | `acct-d057c9` | verified (same account) |
+| Gmail | `93B30590-2F05-4BA2-86B5-CD69538EF3E2` | `acct-3a57b5` | verified (same account) |
 
 Every changed token is independently verified against Anthropic's OAuth profile before an
 atomic mode-0600 config update. Only those two token fields change. The global Web/Manual

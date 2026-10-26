@@ -2,14 +2,14 @@
 
 Status: shared access, CodexBar, and the Home quota correction deployed and verified, 2026-10-10 03:24 UTC. All fleet locks released.
 
-Chanse added `developer@hypesports.live`, requested access for every user and the usual
+Chanse added `acct-f44a1f`, requested access for every user and the usual
 CodexBar integration, and chose the priority order below. The initial restricted session
 could not reach Home or edit the app's settings. Chanse restored unrestricted access, and
 live verification and configuration then completed.
 
 ## Shared access
 
-The credential is `01e7d73e-7783-41a1-a84c-1fed7a005257`, built-in Claude OAuth. It was enabled
+The credential is `acct-f44a1f`, built-in Claude OAuth. It was enabled
 and active but had no channel-group binding. Each of the six active client keys already
 included group 1. Without a credential binding, none of those scoped keys could select it.
 Anthropic's live OAuth profile independently confirmed its exact email.
@@ -23,11 +23,11 @@ that scope. No token refresh was forced and no node was restarted.
 
 | Order | Claude account | Priority | Scope |
 | --- | --- | --- | --- |
-| 1 | `chanse@hypesports.live` | 5 | Fleet shared |
-| 2 | `chanse.arrington@gmail.com` | 4 | Fleet shared |
-| 3 | `the.lara.vance@gmail.com` | 3 | Fleet shared |
-| 4 | `developer@hypesports.live` | 2 | Fleet shared |
-| 5 | `carringt@microsoft.com` | 1 | Chanse only |
+| 1 | `acct-d057c9` | 5 | Fleet shared |
+| 2 | `acct-3a57b5` | 4 | Fleet shared |
+| 3 | `acct-dec587` | 3 | Fleet shared |
+| 4 | `acct-f44a1f` | 2 | Fleet shared |
+| 5 | `acct-63b680` | 1 | Chanse only |
 
 Between 02:55:46 and 02:57:03 UTC, all six keys completed native streaming
 `claude-sonnet-5-5` requests through the MacBook CPA node: HTTP 200, `message_stop`, and `ok`.

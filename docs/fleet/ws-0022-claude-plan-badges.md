@@ -102,13 +102,13 @@ independent of quota exhaustion, and updated by Home's regular quota/profile col
 
 ## Account 82 upgrade — 2026-10-14
 
-After the user upgraded `character82@gmail.com`, Home's automatic collection at
+After the user upgraded `acct-72bae8`, Home's automatic collection at
 `2026-10-14T10:51:27.700888622Z` persisted **Max 20x**, premium true. An independent live
 Anthropic profile read returned HTTP 200, organization `claude_max`, rate-limit tier
 `default_claude_max_20x`, and subscription status `active`. No manual plan override, new
 credential, configuration write or restart was needed.
 
-The original UUID `1f648cbe-96b5-4401-8062-1d7a462e483e` remains enabled at priority **8**;
+The original UUID `acct-72bae8` remains enabled at priority **8**;
 binding **15** still connects it to shared group **1**, included by all six current client
 keys. Independent current profile reads returned HTTP 200 and active subscriptions for
 all eight accounts. The current plan list is seven **Max 20x** accounts and Microsoft's **Enterprise**.
@@ -126,8 +126,8 @@ all six ordinary keys correctly selected higher-priority Gmail after its reset. 
 
 ## Vanderblooms and Hyper Rally upgrades — 2026-10-15
 
-Independent Anthropic profiles confirm both `the.vanderblooms@gmail.com` and
-`hyper.rally@outlook.com` are now `default_claude_max_20x`. Scoped on-demand quota collection
+Independent Anthropic profiles confirm both `acct-03a662` and
+`acct-c9c2c0` are now `default_claude_max_20x`. Scoped on-demand quota collection
 updated their persisted badges to **Max 20x**, premium true, at 15:30:55–56 UTC. These
 badges are automatic; no manual override or code change was needed. All nine shared
 Claude subscriptions now have verified Max 20x plans; Microsoft remains Enterprise.

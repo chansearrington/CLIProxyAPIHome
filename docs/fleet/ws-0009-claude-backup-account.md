@@ -4,8 +4,8 @@ Status: **done** — AC1–5 proven (switch-back 2026-10-06 21:07Z, sequential o
 
 ## Ask (Chanse, 2026-10-06)
 
-Three Claude accounts in Home: (1) `chanse@hypesports.live`, (2) `chanse.arrington@gmail.com`,
-(3) `carringt@microsoft.com`. #3 must be usable only by Chanse on his MacBook Pro ("or you can lock
+Three Claude accounts in Home: (1) `acct-d057c9`, (2) `acct-3a57b5`,
+(3) `acct-63b680`. #3 must be usable only by Chanse on his MacBook Pro ("or you can lock
 it to just my user"), and only while #1 and #2 are both exhausted; once either resets, traffic goes
 back to it and #3 is idle again.
 
@@ -78,15 +78,15 @@ account is promoted back on the next pick.
   key 6 `[1, 2]` (unchanged).
 - **AC3 (MacBook on #3):** MacBook key 6 → `claude-sonnet-5-5` HTTP 200 at 15:44:31Z. Ledger since
   15:44:05Z: every Claude row is node `1e3ea42b…` (MacBook, 100.88.81.10) with source
-  `carringt@microsoft.com` (5 opus + 5 sonnet, 0 failed).
+  `acct-63b680` (5 opus + 5 sonnet, 0 failed).
 - **AC1 (agents fenced):** Chip's own `cpa-gui` key (read on the box, not printed) at 15:45Z →
   `claude-sonnet-5-5` HTTP 429 `model_cooldown: All credentials for model claude-sonnet-5-5 are
   cooling down` (only the exhausted #1/#2 are visible to it); same key → `gpt-5.6-sol` HTTP 200.
 - **AC2:** priority `-1` confirmed in the listing; behavioural proof is AC4.
 - **AC4 (switch-back) — PASS, 21:07Z.** Ledger (read-only SQL on the Ark): 20:30:05–20:59:58Z the
-  MacBook's Claude traffic was 606 rows on `carringt@microsoft.com`; the first Hype row is
+  MacBook's Claude traffic was 606 rows on `acct-63b680`; the first Hype row is
   21:00:04Z, 4 s after its reset, and every Claude row since (21:00:04–21:07:10Z, 205 rows incl. a
-  proof request, HTTP 200) is `chanse@hypesports.live`, 0 failed, **0 on Microsoft**. No restart or
+  proof request, HTTP 200) is `acct-d057c9`, 0 failed, **0 on Microsoft**. No restart or
   config change was involved. `auth` at 21:07Z: Hype `active`, no retry time; Gmail `error`,
   unavailable until `2026-10-07 01:00Z`; Microsoft `active` (idle).
 - **Step 4 applied 20:07Z** under all four fleet-locks (released, all UNLOCKED): PATCH `ok`;
@@ -94,7 +94,7 @@ account is promoted back on the next pick.
   on Microsoft, as both others are benched).
 - **AC5 (sequential) — PASS, 2026-10-07 01:07Z.** Gmail's retry time (`01:00Z`) had passed, so
   Hype (1) and Gmail (0) were both eligible. Three MacBook requests HTTP 200; every Claude row since
-  01:00:30Z (6, 01:01:53–01:07:16Z, all MacBook, 0 failed) is `chanse@hypesports.live` — none on
+  01:00:30Z (6, 01:01:53–01:07:16Z, all MacBook, 0 failed) is `acct-d057c9` — none on
   Gmail, none on Microsoft. Under the old equal-priority round-robin about half would have gone to
   Gmail. Note: Gmail's DB row still reads `error`/unavailable with the past retry time; the
   scheduler re-admits it in memory, and the DB row only refreshes once Gmail serves a request
@@ -112,7 +112,7 @@ survive a reboot. The Ark's `/tmp/ws0009/` (mgmt.sh, before-*.json) does.
    `http://127.0.0.1:18317/v1/messages`, `claude-sonnet-5-5`), then on the Ark run (SQL from a
    file, read-only): `select source, count(*) from usage where
    cpa_node_id='1e3ea42b-169e-474c-9c4e-4527c72654fe' and provider='claude' and timestamp >
-   '2026-10-06 21:00:30' group by 1;` Pass = `chanse@hypesports.live`, zero
-   `carringt@microsoft.com`. Also read `auth.next_retry_after` for the three Claude auths.
+   '2026-10-06 21:00:30' group by 1;` Pass = `acct-d057c9`, zero
+   `acct-63b680`. Also read `auth.next_retry_after` for the three Claude auths.
    Before 21:00Z: schedule the same check for 21:07Z.
 3. Record the result here, flip the Status line, update the ORCHESTRATION row, commit to `fleet`.

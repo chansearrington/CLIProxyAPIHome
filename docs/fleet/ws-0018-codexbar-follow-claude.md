@@ -36,9 +36,8 @@ required for read-only Home access and local app configuration.
 ## Private Microsoft fallback
 
 To follow all credentials this Mac can use, added **Microsoft** as the seventh local Claude
-account after the six shared subscriptions. Home UUID `ca0b50b9-afca-4dd6-bd99-a2f7dc549295`,
-CodexBar UUID `9D306A4E-A8B9-4093-A80C-9665E334A976`, verified email
-`carringt@microsoft.com`. The existing private Home scope remains Chanse-only. Anthropic's
+account after the six shared subscriptions. Home credential `acct-63b680`,
+CodexBar UUID `9D306A4E-A8B9-4093-A80C-9665E334A976`, email verified to match. The existing private Home scope remains Chanse-only. Anthropic's
 profile independently verified the exact identity, and CodexBar's staged all-seven-account
 OAuth usage succeeded. Only the access token is copied; the refresh token stays on the Ark.
 

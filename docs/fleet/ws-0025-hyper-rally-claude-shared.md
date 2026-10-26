@@ -2,9 +2,9 @@
 
 Status: configured and verified, 2026-10-14 22:45 UTC — all six keys and all five nodes selected Hyper Rally; CodexBar is following it. All four fleet locks released.
 
-The user added **hyper.rally@outlook.com** and requested the same setup as the other shared
-Claude subscriptions. Home has already completed the login and stored credential UUID
-**19dbc651-b64b-428c-9e74-e0517753e584**. An independent Anthropic profile request returned
+The user added a Claude account and requested the same setup as the other shared
+Claude subscriptions. Home has already completed the login and stored it as credential
+**acct-c9c2c0**. An independent Anthropic profile request returned
 HTTP 200, the exact expected email, an active `claude_max` organization and rate-limit tier
 `default_claude_max_5x`: **Max 5x**. Do not replay the completed OAuth callback or copy its code
 into logs, files or this repository.

@@ -5,8 +5,8 @@ Status: complete — Gmail priority 2/shared, Hotmail priority 1; six-key and fi
 The user added a second Codex account and requested priority 2 above the original account,
 with both CPA Home and CodexBar updated.
 
-- New: `chanse.arrington@gmail.com`, Home `385a81d7-7477-4384-b54d-f92d0b7644c3`.
-- Original: `chansearrington@hotmail.com`, Home `b7c9be0e-2a23-4212-b61c-04e2bde5998d`.
+- New: `acct-90c281` (label of its Home credential UUID).
+- Original: `acct-126999` (label of its Home credential UUID).
 
 Home's higher numeric priority runs first. Initially Gmail was 1 and Hotmail 2;
 Gmail also had no channel binding. Requested state is Gmail 2, Hotmail 1,

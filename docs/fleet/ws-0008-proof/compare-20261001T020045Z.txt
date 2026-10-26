@@ -6,6 +6,6 @@ OK  claude ch***@gmail.com claude-seven-day percentage api used 52 / 100 | menu:
 OK  antigravity ch***@gmail.com antigravity-gemini-5h percentage api used 0 / 100 | menu: Gemini Models, 5-hour          ░░░░░░░░░░   0%
 OK  antigravity ch***@gmail.com antigravity-3p-5h percentage api used 1.1099999999999999 / 100 | menu: Claude and GPT models, 5-hour  ░░░░░░░░░░   1%
 OK  codex ch***@hotmail.com codex-1-week percentage api used 30 / 100 | menu: Weekly                         ███░░░░░░░  30%  resets Sat 12:00 PM
-OK  copilot carringt_microsoft copilot-premium-interactions requests api used 1 / 1000000 | menu: Premium Requests               1 of 1.0M  resets Oct 31
-OK  copilot carringt_microsoft copilot-chat requests api used None / None | menu: Chat                           unlimited  resets Oct 31
+OK  copilot acct-ece665 copilot-premium-interactions requests api used 1 / 1000000 | menu: Premium Requests               1 of 1.0M  resets Oct 31
+OK  copilot acct-ece665 copilot-chat requests api used None / None | menu: Chat                           unlimited  resets Oct 31
 10 windows match, 0 mismatches
