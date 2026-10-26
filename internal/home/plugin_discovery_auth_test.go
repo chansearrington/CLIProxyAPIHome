@@ -33,12 +33,12 @@ func (a *pluginDiscoveryTestAdapter) GetFullAuth(_ context.Context, uuid string)
 }
 
 func minimalPluginAuth() *coreauth.Auth {
-	return &coreauth.Auth{ID: "e3b5f1d8-fe50-54e5-a0e6-a1526863d84e", Provider: "copilot", Prefix: "copilot"}
+	return &coreauth.Auth{ID: "00000000-0000-4000-8000-000000000001", Provider: "copilot", Prefix: "copilot"}
 }
 
 func TestPluginDiscoveryAuthLoadsFullAuthInClusterMode(t *testing.T) {
 	adapter := &pluginDiscoveryTestAdapter{enabled: true, full: &coreauth.Auth{
-		ID:       "e3b5f1d8-fe50-54e5-a0e6-a1526863d84e",
+		ID:       "00000000-0000-4000-8000-000000000001",
 		Provider: "copilot",
 		Metadata: map[string]any{"type": "copilot", "github_access_token": "gho_fake_test_token"},
 	}}
