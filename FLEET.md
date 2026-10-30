@@ -94,13 +94,18 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
   key, or an OAuth token. Test fixtures use obviously fake values.
 
-## Current verified runtime (ws-0034 quota re-check deploy, 2026-10-25 UTC)
+## Current verified runtime (ws-0037 account-status deploy, 2026-10-30 UTC)
 
-- Home is `cpa-home:1.1.1-claude-fleet-c632a78`, immutable image
-  `sha256:fe690fc3094b17741ba6e7c96c693006cf99be39f9cff5accdbc15a1f60a4863` (ws-0034): blocked credentials are
+- Home is `cpa-home:1.1.1-claude-fleet-897d9c6`, immutable image
+  `sha256:c0bd56efb239136db6f2fad35235b59470e147dda48480d1a24fdae5fe925766` (ws-0037): non-blocking model errors
+  no longer make an otherwise active account show error. The enabled quota-healthy account status data, all five
+  nodes, both model families' real traffic and all 64 unchanged panel assets were verified after cutover. See
+  [deployment evidence and limits](docs/fleet/ws-0037-account-status-deploy.md). The prior ws-0034 behavior remains:
+  blocked credentials are
   re-checked hourly and a healthy check lifts the stale block; idle credentials are re-checked every 6 h and after
-  a saved reset; container log keep is 10 x 50 MB. Rollback target `cpa-home:1.1.1-claude-fleet-2800d59`
-  (`sha256:3f421772d8ddf859a9e29c415540c2bb97cd7de2d639688598309b6715c57122`).
+  a saved reset; container log keep is 10 x 50 MB. Current image-only rollback target is the immediately preceding
+  `cpa-home:1.1.1-claude-fleet-c632a78`
+  (`sha256:fe690fc3094b17741ba6e7c96c693006cf99be39f9cff5accdbc15a1f60a4863`).
   Source integrates released upstream 1.1.1 and preserves all deployed fleet patches, including Claude refresh safety,
   serialized SQLite configuration updates and four read-only dashboard connections.
   The ws-0014 quota correction treats Claude utilization consistently as percentages, so
@@ -136,7 +141,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   overview passes, and 24-hour aggregates, usage records and request events pass. This existing
   scaling limit remains a separate optimization follow-up, not a claimed update regression or fix.
 - Retain the verified fresh production backup and each node's `cli-proxy-api.8.0.7.bak`.
-  Current image-only Home rollback targets immutable ID
+  The historical ws-0011 image-only Home rollback target is immutable ID
   `sha256:76499632b410686ec14a68abbd26360369bd82cbace1ed77bc4617a2c207ba72`.
   The earlier major-upgrade rollback is recorded in ws-0011.
   Do not restore a stale database over newer rotating OAuth authorizations.
