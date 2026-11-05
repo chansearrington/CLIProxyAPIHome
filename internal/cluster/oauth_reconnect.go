@@ -52,6 +52,15 @@ func (r *Repository) completeOAuthReconnect(ctx context.Context, session *OAuthS
 		keys := []string{"access_token", "refresh_token", "expired", "last_refresh"}
 		if provider == "codex" {
 			keys = append(keys, "id_token")
+			// The synthesizer derives the current subscription tier from the fresh ID token.
+			if plan := strings.TrimSpace(fresh.Attributes["plan_type"]); plan != "" {
+				if current.Attributes == nil {
+					current.Attributes = make(map[string]string)
+				}
+				current.Attributes["plan_type"] = plan
+			} else {
+				delete(current.Attributes, "plan_type")
+			}
 		}
 		for _, key := range keys {
 			current.Metadata[key] = fresh.Metadata[key]

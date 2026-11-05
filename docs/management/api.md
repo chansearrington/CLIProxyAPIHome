@@ -2408,7 +2408,8 @@ targets return 400; missing targets return 404. The equivalent legacy Claude/Cod
 routes also accept this parameter.
 
 Home stores the target and expected account identity in the DB-backed login session. On
-successful sign-in it atomically updates only OAuth token material on the original credential,
+successful sign-in it atomically updates OAuth token material and the token-derived Codex
+subscription tier on the original credential,
 reenables it, clears authentication/refresh failures, and completes the session. It preserves
 the credential UUID, creation time, labels, routing metadata, channel bindings, quota history,
 usage history and valid quota cooldowns. A different email or Codex workspace is rejected with

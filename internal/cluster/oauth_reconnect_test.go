@@ -9,8 +9,12 @@ import (
 )
 
 func TestOAuthReconnectPreservesIdentityRoutingAndHistory(t *testing.T) {
-	for _, provider := range []string{"claude", "codex"} {
-		t.Run(provider, func(t *testing.T) {
+	for _, scenario := range []struct{ provider, oldPlan, newPlan string }{
+		{"claude", "free", "promax"}, {"codex", "free", "promax"},
+		{"codex", "promax", "free"}, {"codex", "promax", ""},
+	} {
+		t.Run(scenario.provider+"-"+scenario.oldPlan+"-"+scenario.newPlan, func(t *testing.T) {
+			provider := scenario.provider
 			repo, ctx := newOAuthSessionTestRepository(t)
 			id := "11111111-1111-4111-8111-111111111111"
 			original := &coreauth.Auth{ID: id, Index: id, Provider: provider, FileName: "original.json", Label: "Original",
@@ -18,7 +22,7 @@ func TestOAuthReconnectPreservesIdentityRoutingAndHistory(t *testing.T) {
 				StatusMessage: "unauthorized", LastError: &coreauth.Error{Code: "unauthorized", HTTPStatus: 401},
 				LastRefreshError: &coreauth.Error{Code: "authentication_error", HTTPStatus: 401},
 				CreatedAt:        time.Now().UTC().Add(-time.Hour),
-				Attributes:       map[string]string{"source": "oauth:original", refreshLeaseAttribute: "stale-lease", "note": "keep"},
+				Attributes:       map[string]string{"source": "oauth:original", refreshLeaseAttribute: "stale-lease", "note": "keep", "plan_type": scenario.oldPlan},
 				Metadata: map[string]any{"uuid": id, "type": provider, "email": "owner@example.com", "account_id": "workspace",
 					"access_token": "old", "refresh_token": "old", "priority": 10, "filename": "original.json"}}
 			if _, errUpsert := repo.UpsertAuth(ctx, original, "create"); errUpsert != nil {
@@ -48,7 +52,7 @@ func TestOAuthReconnectPreservesIdentityRoutingAndHistory(t *testing.T) {
 			if errStore := repo.UpsertOAuthSession(ctx, session); errStore != nil {
 				t.Fatal(errStore)
 			}
-			fresh := &coreauth.Auth{ID: "22222222-2222-4222-8222-222222222222", Provider: provider, Metadata: map[string]any{
+			fresh := &coreauth.Auth{ID: "22222222-2222-4222-8222-222222222222", Provider: provider, Attributes: map[string]string{"plan_type": scenario.newPlan}, Metadata: map[string]any{
 				"type": provider, "email": "owner@example.com", "account_id": "workspace", "access_token": "fresh-access",
 				"refresh_token": "fresh-refresh", "id_token": "fresh-id", "last_refresh": time.Now().Format(time.RFC3339),
 				"expired": time.Now().Add(time.Hour).Format(time.RFC3339), "priority": 999}}
@@ -69,6 +73,13 @@ func TestOAuthReconnectPreservesIdentityRoutingAndHistory(t *testing.T) {
 			}
 			if after.Attributes[refreshLeaseAttribute] != "" {
 				t.Fatal("reconnect retained stale refresh lease")
+			}
+			wantPlan := scenario.oldPlan
+			if provider == "codex" {
+				wantPlan = scenario.newPlan
+			}
+			if after.Attributes["plan_type"] != wantPlan || after.Attributes["note"] != "keep" {
+				t.Fatal("reconnect failed to update the account plan while preserving routing attributes")
 			}
 			var savedBinding ChannelGroupDetailRecord
 			if errBinding := db.First(&savedBinding, binding.ID).Error; errBinding != nil || savedBinding.AuthID != id {
