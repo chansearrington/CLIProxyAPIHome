@@ -9,6 +9,11 @@ import (
 
 // StartOAuthV8 dispatches login using the provider query parameter.
 func (h *Handler) StartOAuthV8(c *gin.Context) {
+	provider := strings.ToLower(strings.TrimSpace(c.Query("provider")))
+	if strings.TrimSpace(c.Query("credential_id")) != "" && provider != "claude" && provider != "codex" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reconnect is supported for Claude and Codex OAuth only"})
+		return
+	}
 	switch strings.ToLower(strings.TrimSpace(c.Query("provider"))) {
 	case "":
 		c.JSON(http.StatusBadRequest, gin.H{"error": "provider is required"})

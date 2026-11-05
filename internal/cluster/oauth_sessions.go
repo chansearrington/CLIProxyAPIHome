@@ -223,10 +223,24 @@ func (r *Repository) CompleteOAuthSessionWithAuths(ctx context.Context, state st
 		return fmt.Errorf("oauth credentials are required")
 	}
 	return db.WithContext(contextOrBackground(ctx)).Transaction(func(tx *gorm.DB) error {
+		var session OAuthSessionRecord
+		if errSession := tx.Where("state = ?", strings.TrimSpace(state)).First(&session).Error; errSession != nil {
+			return errSession
+		}
+		data, errData := OAuthSessionData(&session)
+		if errData != nil {
+			return errData
+		}
 		if errComplete := completePendingOAuthSession(ctx, tx, state); errComplete != nil {
 			return errComplete
 		}
 		txRepo := NewRepository(tx)
+		if target, _ := data["reconnect_credential_id"].(string); target != "" {
+			if len(auths) != 1 {
+				return fmt.Errorf("reconnect requires exactly one credential")
+			}
+			return txRepo.completeOAuthReconnect(ctx, &session, data, auths[0])
+		}
 		for _, auth := range auths {
 			if auth == nil {
 				return fmt.Errorf("oauth credential is nil")

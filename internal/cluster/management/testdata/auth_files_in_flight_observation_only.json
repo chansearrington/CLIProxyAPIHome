@@ -34,7 +34,9 @@
         "aggregates_complete": true,
         "details_truncated": false
       },
-      "limiter": null
+      "limiter": null,
+      "reconnect_supported": false,
+      "reauth_required": false
     }
   ]
 }
