@@ -2912,6 +2912,21 @@ func ApplyRefreshSuccessState(auth *Auth, now time.Time) []string {
 	return applyRefreshSuccessState(auth, now)
 }
 
+// ApplyReauthenticationSuccessState reenables an explicitly reconnected account while
+// retaining non-authentication errors and live model or credential quota cooldowns.
+func ApplyReauthenticationSuccessState(auth *Auth, now time.Time) []string {
+	if auth == nil {
+		return nil
+	}
+	auth.Disabled = false
+	if auth.Status == StatusDisabled {
+		auth.Status = StatusActive
+	}
+	resumed := applyRefreshSuccessState(auth, now)
+	clearRefreshDispatchBlock(auth, now)
+	return resumed
+}
+
 // applyRefreshSuccessState clears only refresh errors and unauthorized execution state.
 func applyRefreshSuccessState(auth *Auth, now time.Time) []string {
 	if auth == nil {

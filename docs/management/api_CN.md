@@ -2397,6 +2397,23 @@ Kimi、Kimi AI 和 Meta 返回验证 URL，由 Home 后台设备授权任务完�
 
 插件需在 `/plugins` 中满足 `supports_oauth: true`、`effective_enabled: true` 且 `oauth_provider` 非空。插件 provider key 由小写字母、数字、连字符组成；v8 插件收到的回调路由为 `/v8/management/oauth/callback`。缺少 provider 返回 `400 {"error":"provider is required"}`，未知或不可用 provider 返回 `404 {"error":"provider_not_found"}`。
 
+
+重新连接现有 Claude 或 Codex OAuth 凭据时，可在
+`/oauth/auth-url?provider=claude|codex` 中传入可选查询参数 `credential_id`。
+省略该参数仍创建新凭据。目标必须存在、属于对应提供商的 OAuth 凭据，且具有已知邮箱；
+Codex 还必须有工作区/账户 ID。不支持或不匹配的目标返回 400；不存在的目标返回 404。
+对应的旧版 Claude/Codex 授权 URL 路由也支持此参数。
+
+Home 将目标凭据及预期账户身份保存到数据库登录会话。授权成功后，在同一事务中仅更新原凭据的
+OAuth 令牌，重新启用凭据、清除认证和刷新错误并完成会话。凭据 UUID、创建时间、标签、路由元数据、
+通道绑定、配额历史、用量历史及有效的配额冷却状态均保留。邮箱或 Codex 工作区不匹配时返回明确的
+登录错误，原凭据保持不变。已删除或身份发生变化的目标不会被延迟回调重新创建。
+已取消、过期或完成的会话不能更新令牌；较早的刷新任务也不能覆盖已完成的重新授权。
+
+`GET /credentials` 包含布尔字段 `reconnect_supported` 和 `reauth_required`，分别表示是否支持
+重新连接以及是否存在需要重新登录的认证错误。配额耗尽和手动禁用不被视为需要重新登录。
+客户端发送目标凭据前必须检查此能力，避免旧服务将请求当作普通新增授权。
+
 ### DELETE `/oauth/session`
 
 必填查询参数 `state`。取消数据库中待完成的登录会话，阻止后续回调或轮询保存该会话的凭证，包括在其他 Home 节点上完成的操作。不会删除已完成登录或已有凭证。

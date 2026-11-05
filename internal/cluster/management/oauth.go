@@ -554,22 +554,25 @@ func applyAuthDisabledStatus(auth *coreauth.Auth, disabled bool) {
 func authFileEntry(auth *coreauth.Auth) gin.H {
 	// Validate request inputs before mutating persisted state.
 	entry := gin.H{
-		"id":             auth.ID,
-		"auth_index":     auth.ID,
-		"name":           authFileDisplayName(auth),
-		"file_name":      authFileName(auth),
-		"type":           auth.Provider,
-		"provider":       auth.Provider,
-		"label":          auth.Label,
-		"status":         auth.Status,
-		"status_message": auth.StatusMessage,
-		"disabled":       auth.Disabled,
-		"unavailable":    auth.Unavailable,
-		"runtime_only":   auth.Attributes != nil && strings.EqualFold(auth.Attributes["runtime_only"], "true"),
-		"source":         "db",
-		"prefix":         prefixFromAuth(auth),
-		"proxy_url":      proxyURLFromAuth(auth),
-		"websockets":     websocketsFromAuth(auth),
+		"id":                  auth.ID,
+		"auth_index":          auth.ID,
+		"name":                authFileDisplayName(auth),
+		"file_name":           authFileName(auth),
+		"type":                auth.Provider,
+		"provider":            auth.Provider,
+		"label":               auth.Label,
+		"status":              auth.Status,
+		"status_message":      auth.StatusMessage,
+		"disabled":            auth.Disabled,
+		"unavailable":         auth.Unavailable,
+		"runtime_only":        auth.Attributes != nil && strings.EqualFold(auth.Attributes["runtime_only"], "true"),
+		"source":              "db",
+		"reconnect_supported": reconnectSupported(auth),
+		"reauth_required": strings.EqualFold(strings.TrimSpace(auth.StatusMessage), "unauthorized") ||
+			(auth.LastRefreshError != nil && auth.LastRefreshError.Code == "authentication_error"),
+		"prefix":     prefixFromAuth(auth),
+		"proxy_url":  proxyURLFromAuth(auth),
+		"websockets": websocketsFromAuth(auth),
 	}
 	if email := stringFromAny(auth.Metadata["email"]); email != "" {
 		entry["email"] = email

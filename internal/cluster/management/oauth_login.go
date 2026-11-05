@@ -73,6 +73,9 @@ type oauthCallbackRequest struct {
 
 // RequestAnthropicToken handles request anthropic token.
 func (h *Handler) RequestAnthropicToken(c *gin.Context) {
+	if !h.prepareOAuthReconnect(c, "claude") {
+		return
+	}
 	// Resolve credential context before calling upstream OAuth services.
 	pkce, errPKCE := generatePKCECodes()
 	if errPKCE != nil {
@@ -99,6 +102,9 @@ func (h *Handler) RequestAnthropicToken(c *gin.Context) {
 
 // RequestCodexToken handles request codex token.
 func (h *Handler) RequestCodexToken(c *gin.Context) {
+	if !h.prepareOAuthReconnect(c, "codex") {
+		return
+	}
 	// Resolve credential context before calling upstream OAuth services.
 	pkce, errPKCE := generatePKCECodes()
 	if errPKCE != nil {
@@ -635,6 +641,15 @@ func (h *Handler) waitForMetaAuthorization(state string, metaAuth *metaauth.Meta
 func (h *Handler) registerOAuthSession(c *gin.Context, provider, state string, data map[string]any) error {
 	ctx, cancel := h.requestContext(c)
 	defer cancel()
+	if reconnect, ok := c.Get(oauthReconnectContextKey); ok {
+		fields, valid := reconnect.(map[string]any)
+		if !valid {
+			return fmt.Errorf("invalid reconnect session context")
+		}
+		for key, value := range fields {
+			data[key] = value
+		}
+	}
 	record, errRecord := cluster.NewOAuthSessionRecord(provider, state, data, time.Now().UTC())
 	if errRecord != nil {
 		return errRecord
@@ -1336,6 +1351,9 @@ func normalizeOAuthProvider(provider string) (string, error) {
 func authStatusMessage(provider string, err error) string {
 	if err == nil {
 		return ""
+	}
+	if errors.Is(err, cluster.ErrOAuthReconnectIdentity) || errors.Is(err, cluster.ErrOAuthReconnectTargetChanged) {
+		return err.Error()
 	}
 	switch provider {
 	case "anthropic", "codex", "xai", "devin":

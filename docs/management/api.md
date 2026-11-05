@@ -2399,6 +2399,28 @@ Kimi, Kimi AI, and Meta return a verification URL and complete in Home's backgro
 
 Plugin providers must appear in `/plugins` with `supports_oauth: true`, `effective_enabled: true`, and a non-empty `oauth_provider`. Plugin provider keys are lowercase letters, digits, or hyphens; v8 plugins receive `/v8/management/oauth/callback` as their callback route. Missing provider returns `400 {"error":"provider is required"}`; unknown/unavailable providers return `404 {"error":"provider_not_found"}`.
 
+
+Reconnect an existing Claude or Codex OAuth credential by supplying optional query
+`credential_id` to `/oauth/auth-url?provider=claude|codex`. Omitting it keeps the existing
+add-credential behavior. The target must exist, be OAuth-backed, match the provider, and
+have a known email (Codex also requires its workspace/account ID). Unsupported/mismatched
+targets return 400; missing targets return 404. The equivalent legacy Claude/Codex auth-URL
+routes also accept this parameter.
+
+Home stores the target and expected account identity in the DB-backed login session. On
+successful sign-in it atomically updates only OAuth token material on the original credential,
+reenables it, clears authentication/refresh failures, and completes the session. It preserves
+the credential UUID, creation time, labels, routing metadata, channel bindings, quota history,
+usage history and valid quota cooldowns. A different email or Codex workspace is rejected with
+a clear sign-in error and leaves the existing credential untouched. Deleted or identity-changed
+targets cannot be recreated by a late callback. Cancelled/expired/completed sessions cannot
+update tokens; an older in-flight token refresh cannot overwrite a completed reconnect.
+
+`GET /credentials` includes `reconnect_supported` and `reauth_required` booleans. The first
+advertises eligibility for this operation; the second identifies a terminal sign-in failure,
+rather than a quota exhaustion or a manual disable. Clients must require the capability before
+sending a reconnect selector to avoid older servers treating the flow as an ordinary add.
+
 ### DELETE `/oauth/session`
 
 Requires query `state`. Cancels a pending DB-backed login session and prevents a subsequent callback or poll from saving its credentials, including on another Home node. Completed logins and existing credentials are not deleted.
