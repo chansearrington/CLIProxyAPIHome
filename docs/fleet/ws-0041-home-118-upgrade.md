@@ -22,6 +22,8 @@ The live MacBook/key-6 model menu contained **92** entries before the change, in
 - Preserve Home-owned maintenance, scoped mTLS worker commands, quota cooldown lifting,
   hourly blocked/6-hour idle/reset-triggered probes, private account fences, identity-preserving
   plugin OAuth and Reconnect, and SQLite writer/read-pool protections.
+- Healthy quota checks must also remain current at their reset/expiry boundary before lifting
+  a routing block. Boundary regression tests reject ended observations.
 - Reconcile upstream structured stream-truncation classification with the fleet's Claude
   unified quota headers. A combined result constructor preserves both instead of dropping
   one at the Home ingestion boundary; regression coverage verifies the composed metadata.

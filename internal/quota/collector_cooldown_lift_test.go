@@ -189,6 +189,32 @@ func TestQuotaWindowsNotExhausted(t *testing.T) {
 	}
 }
 
+func TestQuotaLiftRejectsObservationThatEndsDuringProbe(t *testing.T) {
+	observedAt := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	for _, field := range []string{"expiry", "reset"} {
+		for _, offset := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
+			t.Run(field+offset.String(), func(t *testing.T) {
+				lifter := &recordingCooldownLifter{}
+				collector := &Collector{options: Options{CooldownLifter: lifter}}
+				auth := &coreauth.Auth{ID: "boundary", ModelStates: map[string]*coreauth.ModelState{
+					"model": {Quota: coreauth.QuotaState{Exceeded: true}},
+				}}
+				deadline := observedAt.Add(offset)
+				window := cluster.QuotaWindow{Status: "healthy"}
+				if field == "expiry" {
+					window.ExpiresAt = &deadline
+				} else {
+					window.ResetAt = &deadline
+				}
+				collector.liftStaleQuotaCooldown(context.Background(), auth, []cluster.QuotaWindow{window}, observedAt.Add(-time.Second), observedAt)
+				if lifted := len(lifter.recorded()) == 1; lifted != (offset > 0) {
+					t.Fatal("expired/reset observation incorrectly changed routing eligibility")
+				}
+			})
+		}
+	}
+}
+
 // repoMutatorStore backs a real coreauth.Manager with the test database row,
 // so the collector drives the production lift rule instead of a fake.
 type repoMutatorStore struct {

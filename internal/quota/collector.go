@@ -428,7 +428,7 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 			"observed_at":   observedAt,
 		}).Debug("quota collector: snapshot persisted")
 	}
-	c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt)
+	c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt, observedAt)
 }
 
 // liftStaleQuotaCooldown lifts quota routing blocks that were recorded before
@@ -438,9 +438,17 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 // probe start so a 429 that lands while the probe is in flight is kept. If the
 // provider still refuses after a lift, the next 429 re-blocks the credential
 // with the provider's reported reset time.
-func (c *Collector) liftStaleQuotaCooldown(ctx context.Context, auth *coreauth.Auth, windows []cluster.QuotaWindow, probeStartedAt time.Time) {
+func (c *Collector) liftStaleQuotaCooldown(ctx context.Context, auth *coreauth.Auth, windows []cluster.QuotaWindow, probeStartedAt, observedAt time.Time) {
 	if c.options.CooldownLifter == nil || auth == nil || !quotaWindowsNotExhausted(windows) || !authHasQuotaCooldown(auth) {
 		return
+	}
+	for _, window := range windows {
+		// A reset can pass while the provider request is in flight. An ended
+		// observation must not reopen routing, even if its remaining value is positive.
+		if (window.ExpiresAt != nil && !window.ExpiresAt.After(observedAt)) ||
+			(window.ResetAt != nil && !window.ResetAt.After(observedAt)) {
+			return
+		}
 	}
 	lifted, errLift := c.options.CooldownLifter.LiftQuotaCooldownObservedAt(ctx, auth.ID, probeStartedAt)
 	if errLift != nil {
