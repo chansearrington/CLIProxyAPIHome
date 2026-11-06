@@ -428,7 +428,11 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 			"observed_at":   observedAt,
 		}).Debug("quota collector: snapshot persisted")
 	}
-	c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt, observedAt)
+	// Partial quota families can preserve an exhausted window that is absent from
+	// this response. Metadata-only failures do not make the amounts incomplete.
+	if result.replaceWindows && len(result.preserveWindowPrefixes) == 0 {
+		c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt, observedAt)
+	}
 }
 
 // liftStaleQuotaCooldown lifts quota routing blocks that were recorded before
