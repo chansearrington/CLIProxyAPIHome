@@ -3,6 +3,8 @@ package quota
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -33,16 +35,21 @@ const (
 	codexResetCreditsURL       = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	claudeUsageURL             = "https://api.anthropic.com/api/oauth/usage"
 	claudeProfileURL           = "https://api.anthropic.com/api/oauth/profile"
+	devinQuotaURL              = "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus"
 	kimiUsageURL               = "https://api.kimi.com/coding/v1/usages"
 	xaiBillingURL              = "https://cli-chat-proxy.grok.com/v1/billing"
 	copilotUserURL             = "https://api.github.com/copilot_internal/user"
+	metaQuotaURL               = "https://api.meta.ai/muse-code/key"
 	codexUserAgent             = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
-	antigravityUserAgent       = "antigravity/1.11.5 windows/amd64"
 	xaiTokenAuthHeader         = "X-XAI-Token-Auth"
 	xaiTokenAuthValue          = "xai-grok-cli"
 	xaiClientVersionHeader     = "x-grok-client-version"
-	xaiClientVersionValue      = "0.2.93"
-	xaiGrokUserAgent           = "xai-grok-workspace/0.2.93"
+	xaiClientVersionValue      = "1.0.70"
+	xaiGrokUserAgent           = "grok-pager/" + xaiClientVersionValue + " grok-shell/" + xaiClientVersionValue + " (macos; aarch64)"
+	metaAPIVersionHeader       = "x-api-version"
+	metaAPIVersionValue        = "1.0.0"
+	metaMuseUserAgent          = "muse-code/1.0.2"
+	antigravityCodeAssistURL   = "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 )
 
 var defaultAntigravityURLs = []string{
@@ -52,33 +59,33 @@ var defaultAntigravityURLs = []string{
 }
 
 type Options struct {
-	Owner                  string
-	HomeID                 string
-	GlobalProxyURL         string
-	GlobalProxyURLProvider func() string
-	PollInterval           time.Duration
-	ProbeTimeout           time.Duration
-	LeaseDuration          time.Duration
-	SnapshotFreshness      time.Duration
-	ProviderConcurrency    int
-	CodexUsageURL          string
-	CodexResetCreditsURL   string
-	ClaudeUsageURL         string
-	ClaudeProfileURL       string
-	KimiUsageURL           string
-	XAIBillingURL          string
-	CopilotUserURL         string
-	AntigravityURLs        []string
-	Now                    func() time.Time
-	HTTPClient             func(*coreauth.Auth, time.Duration) (*http.Client, error)
-	// CooldownLifter lifts quota routing blocks that a later successful check
-	// shows are stale. Nil leaves routing state untouched.
-	CooldownLifter QuotaCooldownLifter
+	Owner                    string
+	HomeID                   string
+	GlobalProxyURL           string
+	GlobalProxyURLProvider   func() string
+	PollInterval             time.Duration
+	ProbeTimeout             time.Duration
+	LeaseDuration            time.Duration
+	SnapshotFreshness        time.Duration
+	ProviderConcurrency      int
+	CodexUsageURL            string
+	CodexResetCreditsURL     string
+	ClaudeUsageURL           string
+	ClaudeProfileURL         string
+	DevinQuotaURL            string
+	KimiUsageURL             string
+	XAIBillingURL            string
+	XAIProfileURL            string
+	MetaQuotaURL             string
+	AntigravityURLs          []string
+	AntigravityCodeAssistURL string
+	Now                      func() time.Time
+	HTTPClient               func(*coreauth.Auth, time.Duration) (*http.Client, error)
+	CopilotUserURL           string
+	CooldownLifter           QuotaCooldownLifter
 }
 
-// QuotaCooldownLifter clears quota-owned routing blocks recorded before a
-// quota check started. coreauth.Manager implements it through the same
-// persisted mutation path as the Management cooldown reset.
+// QuotaCooldownLifter lifts stale quota-owned routing blocks after a healthy probe.
 type QuotaCooldownLifter interface {
 	LiftQuotaCooldownObservedAt(ctx context.Context, credentialID string, observedAt time.Time) (coreauth.CooldownClearResult, error)
 }
@@ -131,6 +138,9 @@ func NewCollector(repo *cluster.Repository, options Options) *Collector {
 	if strings.TrimSpace(options.ClaudeProfileURL) == "" {
 		options.ClaudeProfileURL = claudeProfileURL
 	}
+	if strings.TrimSpace(options.DevinQuotaURL) == "" {
+		options.DevinQuotaURL = devinQuotaURL
+	}
 	if strings.TrimSpace(options.KimiUsageURL) == "" {
 		options.KimiUsageURL = kimiUsageURL
 	}
@@ -140,8 +150,18 @@ func NewCollector(repo *cluster.Repository, options Options) *Collector {
 	if strings.TrimSpace(options.CopilotUserURL) == "" {
 		options.CopilotUserURL = copilotUserURL
 	}
-	if len(options.AntigravityURLs) == 0 {
+	if strings.TrimSpace(options.XAIProfileURL) == "" {
+		options.XAIProfileURL = xaiSiblingEndpoint(options.XAIBillingURL, "user")
+	}
+	if strings.TrimSpace(options.MetaQuotaURL) == "" {
+		options.MetaQuotaURL = metaQuotaURL
+	}
+	hasDefaultAntigravityURLs := len(options.AntigravityURLs) == 0
+	if hasDefaultAntigravityURLs {
 		options.AntigravityURLs = append([]string(nil), defaultAntigravityURLs...)
+	}
+	if strings.TrimSpace(options.AntigravityCodeAssistURL) == "" && hasDefaultAntigravityURLs {
+		options.AntigravityCodeAssistURL = antigravityCodeAssistURL
 	}
 	if options.Now == nil {
 		options.Now = func() time.Time { return time.Now().UTC() }
@@ -335,7 +355,10 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 		return
 	}
 	auth = resolved
-	probeStartedAt := c.options.Now().UTC()
+	probeStartedAt := now
+	if c.options.CooldownLifter != nil && authHasQuotaCooldown(auth) {
+		probeStartedAt = c.options.Now().UTC()
+	}
 	result, errProbe := c.probeCredential(ctx, auth)
 	if errProbe != nil {
 		c.failProbe(ctx, auth.ID, errProbe)
@@ -343,6 +366,33 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 	}
 	observedAt := c.options.Now().UTC()
 	expiresAt := observedAt.Add(c.options.SnapshotFreshness)
+	if result.boundWindowLifetimes {
+		// A reset ends that window's lifetime, not every other cycle's lifetime.
+		for index := range result.windows {
+			window := &result.windows[index]
+			deadline := window.ObservedAt.Add(c.options.SnapshotFreshness)
+			if window.ExpiresAt != nil && window.ExpiresAt.Before(deadline) {
+				deadline = window.ExpiresAt.UTC()
+			}
+			// The reset may have passed between parsing and persistence.
+			if window.ResetAt != nil && window.ResetAt.Before(deadline) {
+				deadline = window.ResetAt.UTC()
+			}
+			window.ExpiresAt = &deadline
+			if deadline.Before(expiresAt) {
+				expiresAt = deadline
+			}
+		}
+	}
+	nextProbeAt := expiresAt
+	var nextProbeNotBefore *time.Time
+	if result.retryAfter > 0 {
+		retryAt := observedAt.Add(result.retryAfter)
+		nextProbeNotBefore = &retryAt
+		if retryAt.After(nextProbeAt) {
+			nextProbeAt = retryAt
+		}
+	}
 	status := quotaWindowAggregateStatus(result.windows)
 	collectionStatus := "success"
 	if result.partial {
@@ -352,9 +402,9 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 	input := cluster.QuotaSnapshotWrite{
 		CredentialID: auth.ID, QuotaStatus: status, CollectionStatus: collectionStatus, Source: "active_probe",
 		ObservedAt: &observedAt, MaxAcceptedObservedAt: &observedAt, ExpiresAt: &expiresAt, LastAttemptAt: &observedAt, LastSuccessAt: &observedAt,
-		NextProbeAt: &expiresAt, ConsecutiveFailure: 0, Error: result.collectionError, Plan: result.plan, ReplacePlan: !result.preservePlan, ParserVersion: snapshotVersion, CollectorVersion: snapshotVersion,
+		NextProbeAt: &nextProbeAt, NextProbeNotBefore: nextProbeNotBefore, ConsecutiveFailure: 0, Error: result.collectionError, Plan: result.plan, FallbackPlan: result.fallbackPlan, ReplacePlan: result.replacePlan, ParserVersion: snapshotVersion, CollectorVersion: snapshotVersion,
 		ResetCredits: result.resetCredits, ReplaceResetCredits: result.replaceResetCredits,
-		ExpectedProbeOwner: c.options.Owner, ClearProbeLease: true, ReplaceWindows: result.replaceWindows, Windows: result.windows,
+		ExpectedProbeOwner: c.options.Owner, ClearProbeLease: true, ReplaceWindows: result.replaceWindows, PreserveWindowPrefixes: result.preserveWindowPrefixes, Windows: result.windows,
 	}
 	if strings.TrimSpace(c.options.HomeID) != "" {
 		input.Runtime = &cluster.QuotaRuntime{HomeID: c.options.HomeID, HomeLabel: c.options.HomeID}
@@ -378,7 +428,23 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 			"observed_at":   observedAt,
 		}).Debug("quota collector: snapshot persisted")
 	}
-	c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt)
+	// Partial quota families can preserve an exhausted window that is absent from
+	// this response. Metadata-only failures do not make the amounts incomplete.
+	if result.replaceWindows && len(result.preserveWindowPrefixes) == 0 {
+		c.liftStaleQuotaCooldown(ctx, auth, independentQuotaWindows(result.windows), probeStartedAt, observedAt)
+	}
+}
+
+func independentQuotaWindows(windows []cluster.QuotaWindow) []cluster.QuotaWindow {
+	independent := make([]cluster.QuotaWindow, 0, len(windows))
+	for _, window := range windows {
+		// Product shares describe use of the same xAI pool, not another quota.
+		if window.ScopeID != nil && strings.EqualFold(strings.TrimSpace(*window.ScopeID), "xai-product-usage") {
+			continue
+		}
+		independent = append(independent, window)
+	}
+	return independent
 }
 
 // liftStaleQuotaCooldown lifts quota routing blocks that were recorded before
@@ -388,9 +454,17 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 // probe start so a 429 that lands while the probe is in flight is kept. If the
 // provider still refuses after a lift, the next 429 re-blocks the credential
 // with the provider's reported reset time.
-func (c *Collector) liftStaleQuotaCooldown(ctx context.Context, auth *coreauth.Auth, windows []cluster.QuotaWindow, probeStartedAt time.Time) {
+func (c *Collector) liftStaleQuotaCooldown(ctx context.Context, auth *coreauth.Auth, windows []cluster.QuotaWindow, probeStartedAt, observedAt time.Time) {
 	if c.options.CooldownLifter == nil || auth == nil || !quotaWindowsNotExhausted(windows) || !authHasQuotaCooldown(auth) {
 		return
+	}
+	for _, window := range windows {
+		// A reset can pass while the provider request is in flight. An ended
+		// observation must not reopen routing, even if its remaining value is positive.
+		if (window.ExpiresAt != nil && !window.ExpiresAt.After(observedAt)) ||
+			(window.ResetAt != nil && !window.ResetAt.After(observedAt)) {
+			return
+		}
 	}
 	lifted, errLift := c.options.CooldownLifter.LiftQuotaCooldownObservedAt(ctx, auth.ID, probeStartedAt)
 	if errLift != nil {
@@ -451,14 +525,18 @@ func authHasQuotaCooldown(auth *coreauth.Auth) bool {
 }
 
 type probeResult struct {
-	windows             []cluster.QuotaWindow
-	plan                *cluster.QuotaPlan
-	resetCredits        *cluster.QuotaResetCredits
-	partial             bool
-	preservePlan        bool
-	replaceWindows      bool
-	replaceResetCredits bool
-	collectionError     *cluster.QuotaCollectionError
+	windows                []cluster.QuotaWindow
+	plan                   *cluster.QuotaPlan
+	fallbackPlan           *cluster.QuotaPlan
+	resetCredits           *cluster.QuotaResetCredits
+	partial                bool
+	replaceWindows         bool
+	preserveWindowPrefixes []string
+	replacePlan            bool
+	replaceResetCredits    bool
+	collectionError        *cluster.QuotaCollectionError
+	retryAfter             time.Duration
+	boundWindowLifetimes   bool
 }
 
 func (c *Collector) probeCredential(ctx context.Context, auth *coreauth.Auth) (probeResult, *probeError) {
@@ -467,18 +545,20 @@ func (c *Collector) probeCredential(ctx context.Context, auth *coreauth.Auth) (p
 		return c.probeCodex(ctx, auth)
 	case "claude":
 		return c.probeClaude(ctx, auth)
+	case "devin":
+		return c.probeDevin(ctx, auth)
 	case "antigravity":
-		windows, errProbe := c.probeAntigravity(ctx, auth)
-		return probeResult{windows: windows, replaceWindows: true}, errProbe
+		return c.probeAntigravity(ctx, auth)
 	case "kimi":
 		windows, errProbe := c.probeKimi(ctx, auth)
-		return probeResult{windows: windows, replaceWindows: true}, errProbe
+		return probeResult{windows: windows, replaceWindows: true, replacePlan: true}, errProbe
 	case "xai":
-		windows, plan, errProbe := c.probeXAI(ctx, auth)
-		return probeResult{windows: windows, plan: plan, replaceWindows: true}, errProbe
+		return c.probeXAI(ctx, auth)
+	case "meta":
+		return c.probeMeta(ctx, auth)
 	case "copilot":
 		windows, plan, errProbe := c.probeCopilot(ctx, auth)
-		return probeResult{windows: windows, plan: plan, replaceWindows: true}, errProbe
+		return probeResult{windows: windows, plan: plan, replaceWindows: true, replacePlan: true}, errProbe
 	default:
 		return probeResult{}, &probeError{code: "PROVIDER_UNSUPPORTED", message: "Credential provider does not have a quota collector.", retryable: false}
 	}
@@ -506,6 +586,7 @@ func (c *Collector) probeCodex(ctx context.Context, auth *coreauth.Auth) (probeR
 		plan:                usage.plan,
 		resetCredits:        codexResetCreditsCountFallback(usage.resetCreditsAvailableCount, observedAt),
 		replaceWindows:      true,
+		replacePlan:         true,
 		replaceResetCredits: true,
 	}
 	resetHeaders := headers.Clone()
@@ -537,11 +618,73 @@ func codexPlanFromAuth(auth *coreauth.Auth) *cluster.QuotaPlan {
 		return nil
 	}
 	if auth.Attributes != nil {
-		if plan := codexPlan(auth.Attributes["plan_type"]); plan != nil {
-			return plan
+		for _, key := range []string{"plan_type", "planType"} {
+			if plan := codexPlan(auth.Attributes[key]); plan != nil {
+				return plan
+			}
 		}
 	}
-	return codexPlan(quotaMetadataString(auth.Metadata, "plan_type", "planType"))
+	if plan := codexPlan(quotaMetadataString(auth.Metadata, "plan_type", "planType")); plan != nil {
+		return plan
+	}
+	return codexPlanFromIDToken(auth)
+}
+
+func codexPlanFromIDToken(auth *coreauth.Auth) *cluster.QuotaPlan {
+	if auth == nil {
+		return nil
+	}
+	var candidates []any
+	if auth.Metadata != nil {
+		candidates = append(candidates, auth.Metadata["id_token"], auth.Metadata["idToken"])
+	}
+	if auth.Attributes != nil {
+		candidates = append(candidates, auth.Attributes["id_token"], auth.Attributes["idToken"])
+	}
+	for _, candidate := range candidates {
+		payload := parseQuotaIDTokenPayload(candidate)
+		if payload == nil {
+			continue
+		}
+		if plan := codexPlan(quotaMetadataString(payload, "plan_type", "planType", "chatgpt_plan_type", "chatgptPlanType")); plan != nil {
+			return plan
+		}
+		if nested, ok := payload["https://api.openai.com/auth"].(map[string]any); ok {
+			if plan := codexPlan(quotaMetadataString(nested, "plan_type", "planType", "chatgpt_plan_type", "chatgptPlanType")); plan != nil {
+				return plan
+			}
+		}
+	}
+	return nil
+}
+
+func parseQuotaIDTokenPayload(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil
+		}
+		var direct map[string]any
+		if json.Unmarshal([]byte(trimmed), &direct) == nil && direct != nil {
+			return direct
+		}
+		parts := strings.Split(trimmed, ".")
+		if len(parts) < 2 {
+			return nil
+		}
+		decoded, errDecode := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+		if errDecode != nil {
+			return nil
+		}
+		var claims map[string]any
+		if json.Unmarshal(decoded, &claims) == nil && claims != nil {
+			return claims
+		}
+	}
+	return nil
 }
 
 func codexResetCreditsCountFallback(availableCount *int, observedAt time.Time) *cluster.QuotaResetCredits {
@@ -561,6 +704,29 @@ func (c *Collector) probeRequest(ctx context.Context, auth *coreauth.Auth, metho
 	if token == "" {
 		return nil, nil, &probeError{code: "AUTH_TOKEN_UNAVAILABLE", message: "Credential access token is unavailable.", retryable: true}
 	}
+	return c.probeRequestWithToken(ctx, auth, token, method, targetURL, body, headers)
+}
+
+func (c *Collector) probeRequestWithToken(ctx context.Context, auth *coreauth.Auth, token string, method string, targetURL string, body []byte, headers http.Header) ([]byte, http.Header, *probeError) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil, &probeError{code: "AUTH_TOKEN_UNAVAILABLE", message: "Credential access token is unavailable.", retryable: true}
+	}
+	headers = headers.Clone()
+	if headers == nil {
+		headers = make(http.Header)
+	}
+	for key := range headers {
+		if strings.EqualFold(key, "Authorization") {
+			delete(headers, key)
+		}
+	}
+	headers.Set("Authorization", "Bearer "+token)
+	return c.probeHTTPRequest(ctx, auth, method, targetURL, body, headers)
+}
+
+// probeHTTPRequest shares transport and safe error handling with body-authenticated collectors.
+func (c *Collector) probeHTTPRequest(ctx context.Context, auth *coreauth.Auth, method string, targetURL string, body []byte, headers http.Header) ([]byte, http.Header, *probeError) {
 	requestCtx, cancel := context.WithTimeout(ctx, c.options.ProbeTimeout)
 	defer cancel()
 	req, errRequest := http.NewRequestWithContext(requestCtx, method, targetURL, bytes.NewReader(body))
@@ -572,12 +738,14 @@ func (c *Collector) probeRequest(ctx context.Context, auth *coreauth.Auth, metho
 			req.Header.Add(key, value)
 		}
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 	client, errClient := c.options.HTTPClient(auth, c.options.ProbeTimeout)
 	if errClient != nil {
 		return nil, nil, &probeError{code: "PROBE_TRANSPORT_INVALID", message: "Credential proxy configuration is invalid.", retryable: false}
 	}
-	resp, errDo := client.Do(req)
+	// A client factory may share its client across concurrent probes.
+	requestClient := *client
+	requestClient.CheckRedirect = proxyutil.SameOriginRedirectPolicy(client.CheckRedirect)
+	resp, errDo := requestClient.Do(req)
 	if errDo != nil {
 		return nil, nil, &probeError{code: "UPSTREAM_UNAVAILABLE", message: "Upstream quota endpoint is unavailable.", retryable: true}
 	}
@@ -617,10 +785,10 @@ func (c *Collector) failProbe(ctx context.Context, credentialID string, failure 
 			}
 		}
 	}
+	delay = quotaBackoffWithJitter(delay, credentialID)
 	if failure.retryAfter > delay {
 		delay = failure.retryAfter
 	}
-	delay = quotaBackoffWithJitter(delay, credentialID)
 	nextProbeAt := now.Add(delay)
 	occurredAt := now
 	collectionError := cluster.QuotaCollectionError{Code: failure.code, Message: failure.message, Retryable: failure.retryable, OccurredAt: &occurredAt}
@@ -665,7 +833,7 @@ func quotaProbeEligible(auth *coreauth.Auth) bool {
 		return false
 	}
 	switch normalizedQuotaProvider(auth.Provider) {
-	case "codex", "claude", "antigravity", "kimi", "xai", "copilot":
+	case "codex", "claude", "antigravity", "devin", "kimi", "xai", "meta", "copilot":
 		return true
 	default:
 		return false
@@ -726,6 +894,8 @@ func normalizedQuotaProvider(provider string) string {
 		return "kimi"
 	case "xai", "grok":
 		return "xai"
+	case "meta", "muse":
+		return "meta"
 	default:
 		return strings.ToLower(strings.TrimSpace(provider))
 	}
@@ -809,6 +979,10 @@ func quotaRetryAfter(headers http.Header, now time.Time) time.Duration {
 		return 0
 	}
 	if seconds, errSeconds := strconv.ParseInt(value, 10, 64); errSeconds == nil && seconds > 0 {
+		const maxDelay = time.Duration(1<<63 - 1)
+		if seconds > int64(maxDelay/time.Second) {
+			return maxDelay
+		}
 		return time.Duration(seconds) * time.Second
 	}
 	if retryAt, errTime := http.ParseTime(value); errTime == nil && retryAt.After(now) {
@@ -823,6 +997,8 @@ func quotaHTTPProbeError(status int, requestID string) *probeError {
 		return &probeError{code: "UPSTREAM_AUTH_REJECTED", message: "Upstream rejected the credential.", retryable: true, statusCode: status, requestID: requestID}
 	case http.StatusTooManyRequests:
 		return &probeError{code: "UPSTREAM_RATE_LIMITED", message: "Upstream quota endpoint rate limited the probe.", retryable: true, statusCode: status, requestID: requestID}
+	case http.StatusUpgradeRequired:
+		return &probeError{code: "UPSTREAM_CLIENT_OUTDATED", message: "Upstream quota endpoint requires a newer client version.", retryable: false, statusCode: status, requestID: requestID}
 	default:
 		return &probeError{code: "UPSTREAM_UNAVAILABLE", message: "Upstream quota endpoint returned an unavailable response.", retryable: status >= 500, statusCode: status, requestID: requestID}
 	}

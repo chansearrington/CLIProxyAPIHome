@@ -10,6 +10,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPIHome/internal/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/config"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/managementasset"
+	"github.com/router-for-me/CLIProxyAPIHome/internal/registry"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/watcher/diff"
 	log "github.com/sirupsen/logrus"
@@ -102,7 +103,7 @@ func (r *Runtime) applyConfigAndReloadAuths(ctx context.Context, cfg *config.Con
 	if r.coreManager != nil {
 		r.coreManager.SetConfig(cfg)
 		r.coreManager.SetOAuthModelAlias(cfg.OAuthModelAlias)
-		r.coreManager.SetSelector(selectorFromConfig(cfg))
+		r.coreManager.SetSelector(selectorFromConfig(cfg, r.sessionAffinityStore))
 	}
 	r.applyPluginConfig(ctx, cfg)
 
@@ -110,6 +111,8 @@ func (r *Runtime) applyConfigAndReloadAuths(ctx context.Context, cfg *config.Con
 	r.cfg = cfg
 	r.authDir = cfg.AuthDir
 	r.cfgMu.Unlock()
+	r.cancelStaleAntigravityProbes("")
+	r.signalAntigravityModelRefresh()
 
 	if errReload := r.loadAuths(coreauth.WithSkipPersist(ctx)); errReload != nil {
 		if r.coreManager != nil {
@@ -119,7 +122,7 @@ func (r *Runtime) applyConfigAndReloadAuths(ctx context.Context, cfg *config.Con
 			} else {
 				r.coreManager.SetOAuthModelAlias(oldCfg.OAuthModelAlias)
 			}
-			r.coreManager.SetSelector(selectorFromConfig(oldCfg))
+			r.coreManager.SetSelector(selectorFromConfig(oldCfg, r.sessionAffinityStore))
 		}
 		r.applyPluginConfig(ctx, oldCfg)
 		if dirSetter, ok := store.(interface{ SetBaseDir(string) }); ok {
@@ -129,6 +132,11 @@ func (r *Runtime) applyConfigAndReloadAuths(ctx context.Context, cfg *config.Con
 		r.cfg = oldCfg
 		r.authDir = oldAuthDir
 		r.cfgMu.Unlock()
+		if oldCfg != nil {
+			registry.UpdateModelCatalogSources(oldCfg.Models)
+		} else {
+			registry.UpdateModelCatalogSources(config.ModelCatalogs{})
+		}
 		return errReload
 	}
 
@@ -147,6 +155,7 @@ func (r *Runtime) applyConfigAndReloadAuths(ctx context.Context, cfg *config.Con
 	configaccess.Register(&cfg.SDKConfig)
 	r.refreshAccessProviders()
 	managementasset.SetCurrentConfig(cfg)
+	registry.UpdateModelCatalogSources(cfg.Models)
 
 	if globalDisableCoolingActivated && r.coreManager != nil {
 		if errFence := r.coreManager.FenceDisabledCooldownStates(ctx); errFence != nil {

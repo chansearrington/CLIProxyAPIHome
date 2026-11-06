@@ -106,11 +106,12 @@ type Manager struct {
 	store    Store
 	selector Selector
 
-	mu          sync.RWMutex
-	updateLocks authUpdateLocks
-	auths       map[string]*Auth
-	indexAuth   map[string]*Auth
-	scheduler   *authScheduler
+	mu              sync.RWMutex
+	updateLocks     authUpdateLocks
+	auths           map[string]*Auth
+	indexAuth       map[string]*Auth
+	scheduler       *authScheduler
+	modelAliasHints modelAliasHintIndex
 
 	oauthModelAlias atomic.Value
 	runtimeConfig   atomic.Value
@@ -362,6 +363,7 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	delete(m.auths, id)
 	loop := m.refreshLoop
 	m.mu.Unlock()
+	m.modelAliasHints.replace(id, nil)
 
 	if m.scheduler != nil {
 		m.scheduler.removeAuth(id)
@@ -486,6 +488,10 @@ func (m *Manager) persist(ctx context.Context, auth *Auth) error {
 		persisted = nil
 	}
 	m.mu.RUnlock()
+	// Local runtime state from a projection is not a complete credential.
+	if persisted != nil && persisted.RuntimeProjection {
+		return nil
+	}
 	accepted, errPersist := m.persistLocked(ctx, persisted, true)
 	if errPersist != nil || accepted {
 		return errPersist
@@ -526,6 +532,10 @@ func (m *Manager) persistQueued(ctx context.Context, auth *Auth) error {
 	m.mu.RUnlock()
 	unlockUpdate()
 
+	// An index reload may replace a full auth after its result was queued.
+	if persisted != nil && persisted.RuntimeProjection {
+		return nil
+	}
 	accepted, errPersist := m.persistWithStore(ctx, store, persisted, true)
 	if errPersist != nil || accepted {
 		return errPersist
@@ -551,6 +561,9 @@ func (m *Manager) persistWithStore(ctx context.Context, store Store, auth *Auth,
 	}
 	if auth.Disabled {
 		// Keep disabled auth entries persisted to disk too, consistent with CPA.
+	}
+	if auth.RuntimeProjection {
+		return false, ErrRuntimeProjectionPersist
 	}
 	if auth.Metadata == nil && auth.Storage == nil {
 		return true, nil
@@ -676,6 +689,7 @@ func (m *Manager) removeAuthLocked(authID string) {
 	delete(m.auths, authID)
 	loop := m.refreshLoop
 	m.mu.Unlock()
+	m.modelAliasHints.replace(authID, nil)
 	if m.scheduler != nil {
 		m.scheduler.removeAuth(authID)
 	}
@@ -698,7 +712,9 @@ func (m *Manager) enqueueResultPersist(ctx context.Context, auth *Auth) {
 // stageResultPersist publishes the latest snapshot before scheduling database
 // work so configuration fencing can observe it without racing the worker.
 func (m *Manager) stageResultPersist(ctx context.Context, auth *Auth) (string, bool) {
-	if m == nil || m.store == nil || auth == nil {
+	// Projection metadata is scheduling input, not permission to save a full
+	// record. Shared transitions still use StateMutator on authoritative rows.
+	if m == nil || m.store == nil || auth == nil || auth.RuntimeProjection {
 		return "", false
 	}
 	if shouldSkipPersist(ctx) {
@@ -1461,6 +1477,9 @@ func (m *Manager) Dispatch(ctx context.Context, providers []string, requestedMod
 			return nil, m.finalizeDispatchUnavailableError(errUnavailable, normalizedProviders, routeModel, opts, excludedAuthIDs, tried, defaultRequestRetry)
 		}
 
+		if opts.SessionAffinity != nil {
+			*opts.SessionAffinity = SessionAffinitySelection{}
+		}
 		var auth *Auth
 		if pluginScheduler != nil {
 			pluginAuth, handled, errPluginPick := m.pickViaPluginScheduler(ctx, pluginScheduler, providerForSelector, normalizedProviders, routeModel, opts, tried, availableAuths)

@@ -189,6 +189,39 @@ func TestQuotaWindowsNotExhausted(t *testing.T) {
 	}
 }
 
+func TestQuotaProductBreakdownAloneCannotReopenRouting(t *testing.T) {
+	scope := "xai-product-usage"
+	if quotaWindowsNotExhausted(independentQuotaWindows([]cluster.QuotaWindow{{Status: "healthy", ScopeID: &scope}})) {
+		t.Fatal("product distribution without independent amounts authorized recovery")
+	}
+}
+
+func TestQuotaLiftRejectsObservationThatEndsDuringProbe(t *testing.T) {
+	observedAt := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	for _, field := range []string{"expiry", "reset"} {
+		for _, offset := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
+			t.Run(field+offset.String(), func(t *testing.T) {
+				lifter := &recordingCooldownLifter{}
+				collector := &Collector{options: Options{CooldownLifter: lifter}}
+				auth := &coreauth.Auth{ID: "boundary", ModelStates: map[string]*coreauth.ModelState{
+					"model": {Quota: coreauth.QuotaState{Exceeded: true}},
+				}}
+				deadline := observedAt.Add(offset)
+				window := cluster.QuotaWindow{Status: "healthy"}
+				if field == "expiry" {
+					window.ExpiresAt = &deadline
+				} else {
+					window.ResetAt = &deadline
+				}
+				collector.liftStaleQuotaCooldown(context.Background(), auth, []cluster.QuotaWindow{window}, observedAt.Add(-time.Second), observedAt)
+				if lifted := len(lifter.recorded()) == 1; lifted != (offset > 0) {
+					t.Fatal("expired/reset observation incorrectly changed routing eligibility")
+				}
+			})
+		}
+	}
+}
+
 // repoMutatorStore backs a real coreauth.Manager with the test database row,
 // so the collector drives the production lift rule instead of a fake.
 type repoMutatorStore struct {
@@ -263,8 +296,8 @@ func TestCollectorLiftKeepsQuotaBlockRecordedDuringProbe(t *testing.T) {
 				t.Errorf("record in-flight 429: %v", errMutate)
 			}
 			_, _ = w.Write([]byte(`{"plan_type":"pro","rate_limit":{` +
-				`"primary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_at":1792771200},` +
-				`"secondary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_at":1793318400}}}`))
+				`"primary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_at":` + strconv.FormatInt(base.Add(4*time.Hour).Unix(), 10) + `},` +
+				`"secondary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_at":` + strconv.FormatInt(base.Add(6*24*time.Hour).Unix(), 10) + `}}}`))
 		case "/resets":
 			_, _ = w.Write([]byte(`{"available_count":0,"credits":[]}`))
 		default:

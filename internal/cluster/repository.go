@@ -79,6 +79,9 @@ func AuthToRecord(auth *coreauth.Auth) (*AuthRecord, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("auth is nil")
 	}
+	if auth.RuntimeProjection {
+		return nil, coreauth.ErrRuntimeProjectionPersist
+	}
 	if strings.TrimSpace(auth.ID) == "" {
 		return nil, fmt.Errorf("auth id is required")
 	}
@@ -494,6 +497,7 @@ func (r *Repository) ListAuthIndex(ctx context.Context) ([]AuthIndex, error) {
 			Quota:          auth.Quota,
 			ModelStates:    auth.ModelStates,
 			BaseURL:        record.BaseURL,
+			ProxyURL:       strings.TrimSpace(auth.ProxyURL),
 			ModelsHash:     record.ModelsHash,
 			Attributes:     auth.Attributes,
 			ModelMetadata:  modelMetadataFromAuth(auth),
@@ -590,6 +594,8 @@ func (r *Repository) replaceCPANodeSnapshot(ctx context.Context, home HomeIncarn
 	if errDB != nil {
 		return errDB
 	}
+	// Heartbeats and RESP count updates share this Repository. Serialize the complete replacement
+	// independently of the shared Home lifecycle lock, including its DELETE and CREATE statements.
 	r.cpaSnapshotMu.Lock()
 	defer r.cpaSnapshotMu.Unlock()
 	home.IP = strings.TrimSpace(home.IP)
@@ -1076,8 +1082,8 @@ func (r *Repository) UpsertConfigValueWithResult(ctx context.Context, key string
 		if errLock := lockAPIKeyMutationTransaction(tx); errLock != nil {
 			return errLock
 		}
-		// Reserve SQLite's writer before any config read, including shared upstream
-		// roots. A deferred read transaction cannot upgrade after another writer commits.
+		// Every SQLite config upsert needs a write lock before its first read,
+		// including non-OAuth roots, to avoid upgrading a stale WAL snapshot.
 		if tx.Dialector != nil && tx.Dialector.Name() == "sqlite" {
 			if _, errGate := lockConcurrencyActivationGate(tx); errGate != nil {
 				return errGate
