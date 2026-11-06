@@ -37,7 +37,7 @@ func TestCollectQuotaAcceptedWithFilters(t *testing.T) {
 	engine.POST("/quota/collect", handler.CollectQuota)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/quota/collect", strings.NewReader(`{"credential_ids":["auth-a"," auth-b "],"providers":["xai"]}`))
+	request := httptest.NewRequest(http.MethodPost, "/quota/collect", strings.NewReader(`{"credential_ids":["auth-a"," auth-b "],"providers":["devin"]}`))
 	request.Header.Set("Content-Type", "application/json")
 	engine.ServeHTTP(response, request)
 
@@ -59,6 +59,9 @@ func TestCollectQuotaAcceptedWithFilters(t *testing.T) {
 	}
 	if _, ok := trigger.credentialIDs["auth-b"]; !ok {
 		t.Fatalf("credential id whitespace was not trimmed: %v", trigger.credentialIDs)
+	}
+	if _, ok := trigger.providers["devin"]; !ok {
+		t.Fatal("Devin provider filter was not passed to the collector")
 	}
 }
 
@@ -121,6 +124,28 @@ func TestCollectQuotaNormalizesGrokProvider(t *testing.T) {
 	}
 	if _, ok := trigger.providers["xai"]; !ok || len(trigger.providers) != 1 {
 		t.Fatalf("normalized providers = %v, want xai", trigger.providers)
+	}
+}
+
+func TestCollectQuotaAcceptsMetaAndMuseAlias(t *testing.T) {
+	handler, closeRepo := newUsageObservabilityTestHandler(t)
+	defer closeRepo()
+	trigger := &fakeQuotaRecollectTrigger{accepted: 1}
+	handler.SetQuotaRecollectTrigger(trigger)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/quota/collect", handler.CollectQuota)
+
+	for _, raw := range []string{"meta", "muse"} {
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/quota/collect", strings.NewReader(`{"providers":["`+raw+`"]}`)))
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("collect(%s) status = %d body=%s", raw, response.Code, response.Body.String())
+		}
+		if _, ok := trigger.providers["meta"]; !ok || len(trigger.providers) != 1 {
+			t.Fatalf("collect(%s) normalized providers = %v, want meta", raw, trigger.providers)
+		}
 	}
 }
 

@@ -6,6 +6,57 @@ Home is a comprehensive credential **management, scheduling, and distribution** 
 
 It serves as a centralized hub for managing and scheduling API credentials in large-scale CLIProxyAPI cluster deployments. CLIProxyAPI nodes communicate with Home to retrieve necessary API credentials and report usage statistics.
 
+## Home and Home Management Center (HMC)
+
+Home provides the backend service, and [Home Management Center (HMC)](https://github.com/router-for-me/Home-Management-Center) provides a visual Web interface for Home. **The two open-source projects are maintained separately. Official Home releases embed HMC so they can be deployed and updated together.**
+
+### Deploying an official release
+
+Official Home binaries and Docker images include the Web interface, so HMC does not need to be deployed separately. After starting Home, open its address, such as `http://localhost:8327`. The administrator console is at `/management.html`, and the user workspace is at `/user.html`.
+
+Administrator access requires a management key; see the [authentication instructions](docs/management/api.md#authentication). Database setup and configuration import are covered under [Cluster Mode](#cluster-mode). Update the Home binary or Docker image to update the bundled Web interface.
+
+### Developing both projects locally
+
+For frontend development, clone both repositories into sibling directories and run Home and HMC in separate terminals. Environment requirements are listed in Home's [go.mod](go.mod) and the [HMC README](https://github.com/router-for-me/Home-Management-Center#readme).
+
+For a new local setup without `cluster.yaml`, copy Home's `config.example.yaml` to `config.yaml` and set a non-empty `management.secret-key`. Import that configuration into the local SQLite database, then start Home in one terminal:
+
+```bash
+cd CLIProxyAPIHome
+go run ./cmd/home -config config.yaml -import
+go run ./cmd/home -addr 127.0.0.1:8327
+```
+
+An existing configured Home backend can be used directly.
+
+Start HMC in another terminal:
+
+```bash
+cd Home-Management-Center
+bun install --frozen-lockfile
+bun run dev
+```
+
+Open `http://localhost:3000/management.html`, enter `http://127.0.0.1:8327` as the management endpoint, and sign in with the management key. Frontend changes can be previewed without rebuilding Home.
+
+### Building and releasing the bundled frontend
+
+To build Home with the Web interface from source, first build HMC, then copy the complete output into Home before compiling. Starting from the parent of the two sibling repositories:
+
+```bash
+cd Home-Management-Center
+bun install --frozen-lockfile
+bun run build:embedded
+cp -R dist/. ../CLIProxyAPIHome/internal/managementasset/static/
+cd ../CLIProxyAPIHome
+go build -o CLIProxyAPIHome ./cmd/home
+```
+
+Home's source checkout does not include the generated frontend. Neither `go build` nor `docker build` builds HMC automatically, so prepare the complete frontend output before building either a binary or a Docker image.
+
+Official releases automate this process: a version tag triggers the frontend build, followed by Home packaging and publication of binaries or Docker images. See the [binary release workflow](.github/workflows/release.yaml) and [Docker workflow](.github/workflows/docker-image.yml) for details.
+
 ## Key Features
 
 - **Scalable Node Management**: Supports connecting an unlimited number of CLIProxyAPI nodes for credential distribution, ideal for large-scale deployments.
@@ -23,9 +74,13 @@ It serves as a centralized hub for managing and scheduling API credentials in la
 
 Home now always runs from a database-backed runtime. When `cluster.yaml` is absent, Home runs the same scheduler, node discovery, leader election, event watcher, management, and RESP logic on a local SQLite database. The default SQLite path is `home.db`; use `-sqlite-path` to override it.
 
-When `cluster.yaml` exists, Home enables cluster mode and uses the database backend declared in that file. Copy `cluster.sqlite.example.yaml` or `cluster.pgsql.example.yaml` to `cluster.yaml` as a starting point. PostgreSQL accepts either individual connection fields or a connection string in `pgsql.postgres_uri`. PostgreSQL is recommended for multi-node deployments. SQLite is also supported, but cluster SQLite requires `node.external-ip` so other nodes and CPA clients can reach this node.
+When `cluster.yaml` exists, Home enables cluster mode and uses the database backend declared in that file. Copy `cluster.sqlite.example.yaml` or `cluster.pgsql.example.yaml` to `cluster.yaml` as a starting point. PostgreSQL accepts either individual connection fields or a connection string in `pgsql.postgres_uri`. SQLite supports only one active Home process per database; deployments with multiple active Homes must use PostgreSQL. Multiple CPA nodes may connect to a single SQLite-backed Home. When using SQLite with `cluster.yaml`, configure `node.external-ip` so CPA clients can reach the Home.
+
+Before using automatic CPA connection rebalancing, upgrade all Home nodes to a version that supports it. Automatic rebalancing is not guaranteed while old and new Home versions coexist.
 
 Set `slow-query-threshold` under the selected `pgsql` or `sqlite` backend to control slow SQL logging. It accepts Go duration strings such as `"500ms"` or `"1s"` and defaults to `"200ms"`.
+
+PostgreSQL pool limits are configured in `cluster.yaml`: `pgsql.max-open-conns` defaults to `0` (unlimited), and `pgsql.max-idle-conns` defaults to `2` (capped by a positive total limit). Explicit `max-idle-conns: 0` disables idle connection retention; an explicit idle limit must not exceed a positive total limit. Limits apply per Home process and require a restart.
 
 `config.yaml` and `auth-dir` are no longer runtime storage. They are import/export exchange formats only. To migrate an existing local setup into the database, run:
 
@@ -62,11 +117,16 @@ docker compose -f "$COMPOSE_FILE" run --rm \
 
 ## Strict Credential Concurrency Limits
 
-Before enabling credential concurrency policies, follow the [strict credential concurrency limits deployment runbook](docs/README.md). It defines the required SQLite and PostgreSQL topologies, certificate identity requirements, capability checks, and fail-closed mixed-version rollout.
+See the [Management API documentation](docs/management/api.md#credential-concurrency-policy-and-limiter-routes) for credential concurrency policy configuration and activation prerequisites.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Issues, feature requests, and pull requests are welcome. Choose the repository that maintains the affected component:
+
+- **Frontend / Web UI**: Report page display and interaction issues in [HMC Issues](https://github.com/router-for-me/Home-Management-Center/issues), and submit frontend changes to HMC.
+- **Home backend**: Report service, scheduling, and data management issues in [CLIProxyAPIHome Issues](https://github.com/router-for-me/CLIProxyAPIHome/issues), and submit backend changes here.
+
+For changes spanning both projects, link the related issues or pull requests. Update the relevant [Management API](docs/management/api.md) or [User API](docs/user/api.md) documentation when an interface changes.
 
 1. Fork the repository.
 2. Create your feature branch (`git checkout -b feature/amazing-feature`).

@@ -353,6 +353,14 @@ The read-only paths are `credentials/concurrency/lifecycle-config-revision`, `cr
 
 Home normalizes `observability.usage.usage-statistics-enabled` to `true` and `oauth.providers.aistudio.ws-auth` to `false`. `routing.cooldown.disable-cooling` remains Home's local scheduling policy; downstream CPA configuration independently forces local CPA cooling off. `server.port` configures CPA, and running CPA processes need a restart to rebind; Home's listener still uses `-addr` or `cluster.yaml` / `node.port`. `oauth.auth-dir` remains an import/export path, not a runtime file-write destination.
 
+### Model Catalog Sources
+
+The `models` subtree is persisted in the database config snapshot as a `config` table row with key `models` and a JSON object value. Set it through the Management API or import it from `config.yaml` with `-import`; Home reads it from the database at runtime. `config.yaml` is only an import/export exchange format, so editing the file alone does not update a running Home.
+
+The `models` configuration subtree accepts `catalog`, `codex-catalog`, and `devin-catalog`. Each value must be an HTTP(S) URL or an absolute local file path; an empty value keeps the embedded fallback and official remote refresh. Sources refresh every 3 hours and on source changes. Failed refreshes retain the last valid catalog, and custom sources never fall back to official URLs.
+
+All three catalogs are loaded by Home. The complete `models` subtree is also distributed to CPA nodes, where `codex-catalog` selects the Codex client catalog. Home-mode CPA nodes obtain their general and Devin model lists from Home and ignore their `catalog` and `devin-catalog` sources. Update these fields through the existing v8 config or config-subtree endpoints (for example, `/config/models`).
+
 ### Payload and OAuth Provider Subtrees
 
 Use `/config/requests/payload` for payload rules and `/config/oauth/providers/antigravity` for Antigravity OAuth options. Both follow the tree rules above, including raw responses, recursive object patching, whole-list replacement, and retained `null` values.
@@ -1043,6 +1051,7 @@ Example request:
 | `password` | string | no | Non-empty plaintext is stored as a bcrypt hash. Existing valid bcrypt hashes are preserved for migration. Responses do not return password material; they return `password_set`. |
 | `credits` | number | no | User credit balance. Defaults to `0`. When a client API key is bound to this user and credits are `<= 0`, RESP `RPOP auth` returns `user_credits_insufficient`. For billing workflows, prefer `/billing/balance-records/recharge` and `/billing/balance-records/deduct` so balance changes have ledger records. |
 | `credits_unlimited` | boolean | no | When `true`, dispatch ignores the total `credits` balance and billing charges do not deduct it. Period limits still apply. Defaults to `false`. |
+| `billing_multiplier` | number or null | no | Non-negative multiplier applied to every charge for the user's API keys (for example `0.8` for a 20% discount, `0` for free). `null` clears it, which means `1`. Invalid values return `400` with code `invalid_limit`. User responses include the stored value. |
 | `timezone` | string | no | IANA timezone for calendar windows; default `Asia/Shanghai`. |
 | `limit_5h_credits` | number/null | no | 5-hour credits limit. `null` clears/disables. `0` blocks immediately. |
 | `window_mode_5h` | string | no | `first_use` (default; alias `fixed`) or `sliding`. |
@@ -1207,6 +1216,8 @@ Common errors:
 ```
 
 ## Client API Keys
+
+API key writes that explicitly reference a soft-deleted channel or model group are rejected atomically with `400 invalid_access_group`; refresh the group list before retrying. This applies to both management and user API key writes. Disabled groups remain valid bindings and retain their restrictions. Unknown IDs retain their legacy fail-closed behavior.
 
 ### GET `/access/api-keys`
 
@@ -1524,6 +1535,10 @@ Response fields:
 
 ### GET `/billing/charges`
 
+Charge queries normalize `input_tokens` and `output_tokens` at read time. When the associated usage has v2 token accounting with `complete` quality, input includes uncached input, cache reads, and cache writes; output includes non-reasoning and reasoning tokens. Pending backfills, non-complete accounting, and missing usage retain the original charge snapshot counters. This presentation conversion does not rewrite stored records or change amounts, price snapshots, balances, or price-band selection. `/billing/overview` sums input and output using the same per-charge rule; `cache_tokens` is unchanged.
+
+Admin charge responses also include `cache_read_tokens` and `cache_write_tokens`. They carry the canonical cache read/write buckets when the associated usage has v2 token accounting with `complete` quality (zero included), and are `null` otherwise. Clients should fall back to the combined `cache_tokens` counter when either value is `null` instead of assuming a split.
+
 Lists billing charge records with administrator context. Responses expose user ID, masked API-key metadata, price snapshot, matched price rule, request ID, endpoint, and `balance_before`/`balance_after`. Billing charge responses never expose raw API keys.
 
 Query parameters:
@@ -1537,8 +1552,18 @@ Query parameters:
 | `user_id` | integer | Optional exact user ID filter. Alias: `uid`. |
 | `provider` | string | Optional provider filter. |
 | `model` | string | Optional model filter. |
+| `cost_diagnostic` | string | Optional zero-cost diagnostic filter: `unpriced_model`, `zero_price`, or `any` for every flagged charge. |
+| `auth_index` | string | Optional exact serving-credential filter. |
 | `limit` | integer | Optional page size. Default `50`, max `200`. |
 | `offset` | integer | Optional page offset. Negative values normalize to `0`. |
+
+Admin charge responses also include immutable charge-time fields: `billed_cache_read_tokens`, `billed_cache_write_tokens`, and `billed_reasoning_tokens` (the canonical buckets priced for complete v2 accounting, `null` for legacy accounting), and `cost_breakdown` (`{ "request": number, "items": { "<bucket>": { "tokens", "price_per_million", "cost" } }, "total": number }`). Charge amounts, balance deltas, and balances are quantized to 8 decimal places before they are stored, so `cost_breakdown.total` equals `amount`.
+
+Admin charge responses also include `base_amount` (the list value after rule multipliers and before the user `billing_multiplier`), `billing_multiplier`, and `auth_index` (the serving credential). `amount = round(base_amount * billing_multiplier, 8)`. Summing `base_amount` by `auth_index` values each credential's output independently of customer discounts, while `amount` is the revenue actually charged. `cost_breakdown` carries the same `base_total`, `billing_multiplier`, and the applied `reasoning_effort_multiplier`.
+
+Failed usage is billed only when the upstream reported consumed tokens (for example a client-cancelled `499` stream after the prompt was processed); such charges exclude `request_price` and per-unit surcharges and record `price_snapshot.failed_request: true` with `fail_status_code`. Failed usage without tokens is never charged. Requests to `/images/generations` or `/images/edits` bill at least one image at `image_price_per_image` when CPA omits `image_count`.
+
+Admin charge responses include `cost_diagnostic`. It is empty for normal charges, `unpriced_model` when billable usage matched no enabled price rule (billed at $0), and `zero_price` when it matched a rule whose prices produced $0. The same value is recorded as `price_snapshot.cost_diagnostic`.
 
 Response shape:
 
@@ -1564,7 +1589,9 @@ Response shape:
       "request_id": "req_xxx",
       "endpoint": "/v1/chat/completions",
       "matched_price_rule": "openai:gpt-5.5:priority:272001",
-      "price_snapshot": { "request_price": 0, "input_price_per_million": 2.5, "matched_service_tier": "priority", "min_input_tokens": 272001, "requested_service_tier": "priority", "response_service_tier": "default", "service_tier_source": "request", "effective_service_tier": "priority", "response_tier_fallback": false }
+      "price_snapshot": { "request_price": 0, "input_price_per_million": 2.5, "matched_service_tier": "priority", "min_input_tokens": 272001, "context_input_tokens": 300000, "price_model_source": "model", "requested_service_tier": "priority", "response_service_tier": "default", "service_tier_source": "request", "effective_service_tier": "priority", "response_tier_fallback": false },
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0
     }
   ],
   "total": 1,
@@ -1656,7 +1683,7 @@ Response:
 
 Lists model price rules.
 
-The response always includes `price_rule_schema_version: 2`, including when `items` is empty. Rules match exact normalized service tiers before the `*` compatibility wildcard, then select the greatest `min_input_tokens` not exceeding the usage record's original input-token count.
+The response always includes `price_rule_schema_version: 2`, including when `items` is empty. Rules match exact normalized service tiers before the `*` compatibility wildcard, then select the greatest `min_input_tokens` not exceeding the usage record's full prompt context (uncached input plus cache-read and cache-write tokens). Rule `provider` may be `*` to match every provider, and rule `model` may end with a single `*` to match by case-insensitive prefix (for example `gemini-3.5-*`, or `*` for every model); a `*` anywhere else is rejected with `400 invalid_body`. Model comparison is case-insensitive. Lookup tries the executed `model` and then the client-requested `alias` at each specificity level, most specific first: exact provider and exact model, exact provider and the longest matching model pattern, `*` provider and exact model, then `*` provider and the longest matching pattern. An exact alias therefore beats a model pattern. When nothing matches, the charge uses `default:zero`. `price_snapshot.price_match` records the level (`exact`, `model_pattern`, `any_provider`, or `any_provider_model_pattern`). The unpriced-model dispatch gate accepts exact and pattern rules.
 
 Query parameters:
 
@@ -1680,12 +1707,54 @@ Model price fields:
 | `cache_read_price_per_million` | number | Cache-read token price. |
 | `cache_write_price_per_million` | number | Cache-write token price. |
 | `request_price` | number | Per-request price. |
+| `cache_write_30m_price_per_million` | number or null | Price for 30-minute cache writes; `null` falls back to the cache-write price (or input price when that is zero). |
+| `cache_write_1h_price_per_million` | number or null | Price for 1-hour cache writes; `null` falls back to the 30-minute cache-write price. |
+| `cache_write_12h_price_per_million` | number or null | Price for 12-hour cache writes; `null` falls back to the 1-hour cache-write price. |
+| `reasoning_price_per_million` | number or null | Price for reasoning output tokens; `null` bills them at the output price. |
+| `image_input_price_per_million` | number or null | Price for image input tokens; `null` falls back to the input price. |
+| `image_output_price_per_million` | number or null | Price for image output tokens; `null` falls back to the output price. |
+| `audio_input_price_per_million` | number or null | Price for audio input tokens; `null` falls back to the input price. |
+| `audio_output_price_per_million` | number or null | Price for audio output tokens; `null` falls back to the output price. |
+| `web_search_price_per_call` | number or null | USD per web search call; `null` bills nothing. |
+| `image_price_per_image` | number or null | USD per generated image; `null` bills nothing. |
+| `reasoning_effort_multipliers` | object or null | Map from normalized reasoning effort to token-cost multiplier; usage whose `reasoning_effort` is absent from the map is not multiplied. |
 | `source` | string | Price source. |
 | `enabled` | boolean | Whether the rule is active. |
 | `note` | string | Operator note. |
 | `created_at` | string | Creation time. |
 | `updated_at` | string | Last update time. |
 | `revision` | integer | Monotonic rule revision used by import conflict detection. |
+
+Optional dimension prices apply to sub-buckets carved out of the canonical v2 buckets, so totals never change: `cache_write_30m`/`cache_write_1h`/`cache_write_12h` come from the cache-write bucket, `image_input`/`audio_input` from uncached input, `reasoning` from output, and `image_output`/`audio_output` from non-reasoning output. Home reads the optional counters `cache_creation_30m_tokens` (alias `cache_write_30m_tokens` or `cache_details.ephemeral_30m_input_tokens`), `cache_creation_1h_tokens` (alias `cache_write_1h_tokens` or `cache_details.ephemeral_1h_input_tokens`), `cache_creation_12h_tokens` (alias `cache_write_12h_tokens` or `cache_details.ephemeral_12h_input_tokens`), `image_input_tokens`, `image_output_tokens`, `audio_input_tokens`, and `audio_output_tokens` from the usage `tokens` object or structured payload fields and clamps each to its parent bucket. When no TTL sub-bucket is set and `cache_details.ttl` names `30m`, `1h`, or `12h`, the cache-write bucket is assigned to that TTL. When CPA does not report a counter, its bucket is empty and the parent price applies. An explicit `0` bills the bucket as free; `null` never undercharges.
+
+Per-unit surcharges use the counters `web_search_requests` (fallback `tool_usage_details.web_search_calls`) and `image_count` (fallback `tool_usage_details.image_generation_calls`), read from the usage `tokens` object or the payload top level. They are billed as `count * unit_price` items (`web_search_calls`, `images`) in `cost_breakdown`, added like `request_price`, and not scaled by `reasoning_effort_multipliers`. With no unit price configured they bill nothing.
+
+#### Pricing expressions
+
+`pricing_expr` (string, optional) replaces every price column of the rule, including `request_price` and the optional dimensions. An empty string clears it. Rule matching (provider, model, service tier, and `min_input_tokens`) is unchanged; `reasoning_effort_multipliers` and the user `billing_multiplier` still apply to the result.
+
+The expression evaluates to USD per million tokens: each token variable is multiplied by a `$/1M` coefficient, so `p * 3 + c * 15` bills $3/M uncached input and $15/M output. `usd(x)` adds a fixed USD amount, for example `req * usd(0.01)` per request.
+
+| Name | Meaning |
+| --- | --- |
+| `p` | Uncached text input tokens. |
+| `c` | Non-reasoning text output tokens. |
+| `r` | Reasoning output tokens. |
+| `cr` | Cache-read tokens. |
+| `cc`, `cc30m`, `cc1h`, `cc12h` | 5-minute, 30-minute, 1-hour, and 12-hour cache-write tokens. |
+| `img`, `imgo` (`img_o`), `ai`, `ao`, `vi`, `vo`, `fi` | Image input, image output, audio input, audio output, video input, video output, and file/document input tokens. |
+| `img_cr`, `acr` (`ai_cr`), `ct`, `apred`, `rpred` | Image cache-read, audio cache-read, cached text, accepted prediction, and rejected prediction tokens. |
+| `len`, `total` | Full prompt context (`uncached + cache read + cache write`) and total (`input + output`) tokens, for conditions. |
+| `req` | `1` on succeeded requests, `0` on failed requests. |
+| `ws`, `wsq`, `wf`, `xs`, `ce` (`ci`), `fs`, `ds`, `mcp`, `maps`, `src`, `st` | Server-side tool counters from `tool_usage_details`: web search calls/queries, web fetch, X search, code execution, file/collections search, document search, MCP calls, Google Maps grounding chunks, sources used, and total server-side tools used. When the expression does not reference `ws`, the rule's `web_search_price_per_call` still applies. |
+| `imgn` (`image_count`), `pmedia`, `cmedia`, `paudio`, `asec`, `upcost` | Generated images, prompt/completion media counts, prompt audio count (`media_counts`), audio/video seconds (`media_counts.audio_seconds`), and upstream USD cost (`cost_details`). When the expression does not reference `imgn`/`image_count`, the rule's `image_price_per_image` still applies. |
+| `tier`, `upstream_tier`, `speed`, `geo`, `cache_ttl`, `img_size`, `img_res`, `img_quality`, `img_ratio`, `img_tier`, `byok`, `response_model`, `effort`, `model`, `provider`, `endpoint` | Effective service tier, upstream service tier, inference speed, inference geography, cache TTL/retention, image size/resolution/quality/aspect ratio/normalized size tier (`1k`/`2k`/`4k`), BYOK flag, upstream response model, reasoning effort, executed model, provider, and endpoint strings. String `==` and `!=` are case-insensitive. |
+| `hour(tz)`, `minute(tz)`, `weekday(tz)`, `month(tz)`, `day(tz)` | Usage time in an IANA timezone literal (default `UTC`); `weekday` is `0` for Sunday. |
+| `tier(name, expr)`, `fixed(x)`, `usd(x)`, `u(path)`, `s(path)` (`param(path)`), `min(...)`, `max(...)`, `abs(x)`, `ceil(x)`, `floor(x)`, `round(x)`, `contains(s, sub)` (`has(s, sub)`) | Helpers. `tier(name, expr)` records `matched_tier` in `cost_breakdown`; `fixed(x)` bills `req * usd(x)`; `u(path)` and `s(path)` read numeric/string fields from the usage payload. Optional `v1:` prefix is accepted. |
+
+Operators are `+ - * /`, comparisons, `&& || !`, and `cond ? a : b`. Example: `len > 200000 ? p * 6 + c * 22.5 + cr * 0.6 : p * 3 + c * 15 + cr * 0.3`. Peak pricing example: `(hour('Asia/Shanghai') >= 9 && hour('Asia/Shanghai') < 18 ? 1 : 0.5) * (p * 2 + c * 8)`.
+
+Cached text (`ct`) is carved out of the cache-read bucket and clamped to its remaining tokens after image/audio cache reads, preventing double billing. Unreferenced token buckets fold into their parent before evaluation so no reported token is dropped: `ct` into `cr`, `cc12h` into `cc1h` (or `cc`), `cc1h` into `cc`, `cc`, `cr`, `img`, and `ai` into `p`, and `imgo`, `ao`, and `r` into `c`. To bill a bucket as free, reference it explicitly, for example `cr * 0`. Saving validates syntax, variable and function names, timezone literals, and a sample evaluation that must return a finite non-negative number; invalid expressions return `400 invalid_body`. If evaluation fails at charge time (for example division by zero), Home bills with the rule's price columns and sets `cost_diagnostic: pricing_expr_error` with `cost_breakdown.expression_error`. Successful charges record `price_snapshot.pricing_expr`, `cost_breakdown.pricing_expr`, the folded token counts as `expr:<name>` items, and the result as the `expression` item. User price ladders include `pricing_expr` on rungs that use it.
 
 ### POST `/billing/model-prices`
 
@@ -1704,6 +1773,18 @@ Request body fields:
 | `cache_read_price_per_million` | number | no | Non-negative cache-read token price. |
 | `cache_write_price_per_million` | number | no | Non-negative cache-write token price. |
 | `request_price` | number | no | Non-negative per-request price. |
+| `cache_write_30m_price_per_million` | number or null | no | Optional non-negative 30-minute cache-write price. On `PATCH`, `null` clears it. |
+| `cache_write_1h_price_per_million` | number or null | no | Optional non-negative 1-hour cache-write price. On `PATCH`, `null` clears it. |
+| `cache_write_12h_price_per_million` | number or null | no | Optional non-negative 12-hour cache-write price. On `PATCH`, `null` clears it. |
+| `reasoning_price_per_million` | number or null | no | Optional non-negative reasoning-output price. On `PATCH`, `null` clears it. |
+| `image_input_price_per_million` | number or null | no | Optional non-negative image-input price. On `PATCH`, `null` clears it. |
+| `image_output_price_per_million` | number or null | no | Optional non-negative image-output price. On `PATCH`, `null` clears it. |
+| `audio_input_price_per_million` | number or null | no | Optional non-negative audio-input price. On `PATCH`, `null` clears it. |
+| `audio_output_price_per_million` | number or null | no | Optional non-negative audio-output price. On `PATCH`, `null` clears it. |
+| `web_search_price_per_call` | number or null | no | Optional non-negative USD per web search call. On `PATCH`, `null` clears it. |
+| `image_price_per_image` | number or null | no | Optional non-negative USD per generated image. On `PATCH`, `null` clears it. |
+| `reasoning_effort_multipliers` | object | no | Optional map from reasoning effort (case-insensitive, for example `xhigh`) to a non-negative token-cost multiplier. The request price is not multiplied. On `PATCH`, `{}` clears it. |
+| `pricing_expr` | string | no | Optional pricing expression that replaces the price columns. See Pricing expressions. On `PATCH`, `""` clears it. |
 | `source` | string | no | Price source such as `manual`. |
 | `enabled` | boolean | no | Whether the rule is active. Defaults to `true`. |
 | `note` | string | no | Operator note. |
@@ -1738,27 +1819,31 @@ Response:
 
 ### GET `/billing/settings`
 
-Returns the DB-backed billing policy. `service_tier_source` is `request` by default and may be `request` or `response`. `report_timezone` is a supported IANA timezone and defaults to `UTC`; it is the default calendar timezone for Management Billing reports when a request does not provide a `timezone` override. Changing it affects future report boundaries and grouping only. It does not reprice historical charges, rewrite price snapshots, or change balances. In either tier-source mode, `auto`, `default`, and `standard` match the local Standard price tier.
+Returns the DB-backed billing policy. `model_source` is `request` by default and may be `request` or `response` (`request` matches the requested/routed model first and falls back to `response_model`; `response` matches `response_model` first and falls back to the request model). `service_tier_source` is `request` by default and may be `request` or `response`. `report_timezone` is a supported IANA timezone and defaults to `UTC`; it is the default calendar timezone for Management Billing reports when a request does not provide a `timezone` override. Changing it affects future report boundaries and grouping only. It does not reprice historical charges, rewrite price snapshots, or change balances. In either tier-source mode, `auto`, `default`, and `standard` match the local Standard price tier.
+
+`allow_unpriced_models` defaults to `false`. While false, dispatch for a user-owned API key fails with `model_not_found` (`model <id> has no configured price`) when no enabled price rule names the requested model for any provider. A rule whose prices are all zero counts as configured, so explicitly free models remain callable. API keys that are not owned by a user are not gated. Set it to `true` to allow unpriced models; their charges are recorded at $0 with `cost_diagnostic: unpriced_model`.
 
 ```json
-{ "service_tier_source": "request", "report_timezone": "UTC" }
+{ "model_source": "request", "service_tier_source": "request", "report_timezone": "UTC", "allow_unpriced_models": false }
 ```
 
 ### PATCH `/billing/settings`
 
-Partially updates billing settings. Both fields are optional. In `response` mode, a missing response tier falls back to the request tier and records that fallback in the charge price snapshot. Invalid tier-source values or unsupported timezone names return `400 invalid_body`.
+Partially updates billing settings. All fields are optional. In `response` mode, a missing response tier falls back to the request tier and records that fallback in the charge price snapshot. Invalid tier-source values or unsupported timezone names return `400 invalid_body`.
 
 ```json
-{ "service_tier_source": "response", "report_timezone": "Asia/Shanghai" }
+{ "model_source": "request", "service_tier_source": "response", "report_timezone": "Asia/Shanghai" }
 ```
 
-OpenAI defines an omitted `service_tier` as `auto`; `auto` is represented internally by Home and is not a literal Codex backend request value. See the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing) and [Responses Create reference](https://developers.openai.com/api/reference/resources/responses/methods/create). Home stores the request `service_tier` and optional upstream `response_service_tier` so later billing policy can switch sources without re-ingesting usage. The default `request` source bills from `service_tier` (client-requested tier). In `response` mode, Home uses `response_service_tier` when present and falls back to the request tier when the upstream omits it. `auto`, `default`, and `standard` map to the local Standard price tier; configure `flex` or `priority` rules when those tiers are used.
+OpenAI defines an omitted `service_tier` as `auto`; `auto` is represented internally by Home and is not a literal Codex backend request value. See the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing) and [Responses Create reference](https://developers.openai.com/api/reference/resources/responses/methods/create). Home stores the request `service_tier` and optional upstream `response_service_tier` so later billing policy can switch sources without re-ingesting usage. The default `request` source bills from the outbound tier CPA reports as `effective_service_tier` (the tier in the final upstream request after CPA config overrides) and falls back to `service_tier` (client-requested tier) when the payload omits it, so a request CPA upgraded to `priority` bills as priority and one CPA downgraded bills at the lower tier. Snapshots record it as `outbound_service_tier`. In `response` mode, Home uses `response_service_tier` when present and falls back to the request tier when the upstream omits it. `auto`, `default`, and `standard` map to the local Standard price tier; configure `flex` or `priority` rules when those tiers are used.
 
-Charge `price_snapshot` audit data includes `requested_service_tier`, optional `response_service_tier`, `service_tier_source`, `effective_service_tier`, `response_tier_fallback`, `matched_service_tier`, and `min_input_tokens`. Context-band selection uses the original total input count. In the OpenAI Responses protocol, `input_tokens` includes both cache-read and cache-write tokens. Home removes cache-read tokens from ordinary input before applying the cache-read price. When `cache_write_price_per_million` is positive, Home also removes cache-write tokens from ordinary input before applying that separate price; when the price is zero or omitted, those cache-write tokens remain billed as ordinary input. In the Anthropic Messages protocol, `input_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens` are independent buckets, so Home prices them independently without subtracting either cache bucket from input. Cache-field compatibility backfills update usage counters only; existing immutable `billing_charge` snapshots and balances are not repriced automatically, so historical corrections require an explicit audited balance adjustment.
+Charge `price_snapshot` audit data includes `requested_service_tier`, optional `response_service_tier`, `service_tier_source`, `effective_service_tier`, `response_tier_fallback`, `matched_service_tier`, `min_input_tokens`, `context_input_tokens`, and `price_model_source` (`model` or `alias`, omitted when no rule matched). Context-band selection uses `context_input_tokens`, the full prompt context including cache-read and cache-write tokens, so Anthropic usage with large cache hits selects the same band as an equivalent uncached prompt. In the OpenAI Responses protocol, `input_tokens` includes both cache-read and cache-write tokens. Home removes cache-read tokens from ordinary input before applying the cache-read price. When `cache_write_price_per_million` is positive, Home also removes cache-write tokens from ordinary input before applying that separate price; when the price is zero or omitted, those cache-write tokens remain billed as ordinary input. In the Anthropic Messages protocol, `input_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens` are independent buckets, so Home prices them independently without subtracting either cache bucket from input. Cache-field compatibility backfills update usage counters only; existing immutable `billing_charge` snapshots and balances are not repriced automatically, so historical corrections require an explicit audited balance adjustment.
 
 ### POST `/billing/model-prices/import/preview`
 
-Creates a server-side, immutable `models.dev` import preview. The server fetches and pins the source snapshot; clients provide targets, matching policy, aliases, row multipliers, and optional source-match overrides. Invalid request-controlled input returns `422 invalid_import_preview`, a catalog fetch failure returns `502 models_dev_fetch_failed`, and an internal preview persistence failure returns `500 billing_import_preview_failed`. A successful response contains `preview_id`, `preview_revision`, source provenance, `generated_at`, `expires_at`, explicit `atomic: true`, rows, and an exact summary.
+OpenRouter time-based pricing expressions retain image/audio, reasoning, and cache-write TTL token prices in every branch. Optional token prices use their parent rate when unset and remain free when explicitly zero, including when another branch configures the same dimension.
+
+Creates a server-side, immutable model-price import preview from `source` (`"models.dev"`, `"openrouter"`, `"litellm"`, or `"auto"`). The server fetches and pins the source snapshot (or parses inline `catalog_json` when provided); clients provide `targets` (or `auto_discover: true` to discover models from stored usage and rules), matching policy, aliases, row multipliers, and optional source-match overrides. Invalid request-controlled input returns `422 invalid_import_preview`, a catalog fetch failure returns `502 models_dev_fetch_failed`, and an internal preview persistence failure returns `500 billing_import_preview_failed`. A successful response contains `preview_id`, `preview_revision`, source provenance, `generated_at`, `expires_at`, explicit `atomic: true`, rows, and an exact summary.
 
 Preview targets currently describe only the wildcard base rule (`service_tier: "*"`, `min_input_tokens: 0`); other target scopes are rejected rather than silently rewritten. A matched row includes official prices, final multiplied prices, the exact `write_rule`, optional complete `existing_rule` snapshot with `revision`, and a machine-readable reason. Models.dev context bands create distinct wildcard rows at their inclusive lower bounds. `row_multipliers` apply to the exact returned row key, including a context-band key. Cache-read and cache-write prices are imported from the pinned catalog snapshot. When a cost object has an input price but omits `cache_read` or `cache_write`, Home derives the missing price as `input * 0.1` or `input * 1.25`, respectively; explicit values, including zero, are preserved. Unsupported dimensions, malformed or invalid prices/bands, duplicate bands, or a tier that omits a price dimension configured by its base rule make the whole target non-applicable; the server never imports a potentially undercharged subset.
 
@@ -1896,6 +1981,8 @@ Upstream provider keys are configured through the v8 config tree. They are disti
 | `/config/api-keys/openai-compatibility` | Configured compatibility provider name |
 
 All paths support `GET`, `PUT`, `PATCH`, and `DELETE`. `GET` returns a raw group array. `PUT` and `PATCH` replace the entire array for that family; neither appends nor patches one key by index. `DELETE` removes that family and clears its provider-key records. Send `[]` to replace it with an empty list. Removing one key requires writing the remaining complete family list with retained `id` values. These writes return `{"status":"ok","config-version":8}`.
+
+JSON reads add a read-only `auth_index` to every key, equal to the key's credential `id`; a keyless `openai-compatibility` group carries it on the group. It is the selector `/requests/api-call` accepts as `auth_index`, matching CPA's v8 config reads. `GET /config.yaml` omits it, and writes drop `auth_index` and `auth-index` from groups and keys, so a read can be sent back unchanged.
 
 ### Native Provider Groups
 
@@ -2081,6 +2168,16 @@ the current value without downloading the credential JSON:
 | `disable-cooling` | boolean | Optional credential cooling override. `true` disables cooling, `false` explicitly enables it, and the field is omitted when unset so the credential inherits the global setting. |
 | `request-retry` | integer | Optional credential override for additional retry rounds. `0` disables additional rounds, and the field is omitted when unset so the credential inherits the global setting. |
 
+v8 list entries additionally expose the following fields only when an active quota plugin registered in the Home process matches. Store-installed plugins are matched only when Home loads them, for example with `plugins.configs.<pluginID>.load-in-home: true`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `supports_quota` | boolean | `true` when a quota plugin matches; otherwise omitted. |
+| `quota_provider` | string | The credential provider key. |
+| `quota_plugin_id` | string | Plugin ID selected by the host's two-pass precedence; use it directly in `/plugins/:id/quota`. |
+
+These fields are not added to the v0 `/auth-files` response. Matching normalizes provider keys and excludes fused plugins; plugins may explicitly support built-in providers. Declarative `quota_probe` metadata or an available Home collector alone does not advertise plugin quota support.
+
 ### GET `/credentials/models?name=<name-or-id>`
 
 Returns models associated with an auth file or auth ID.
@@ -2102,9 +2199,16 @@ Example response:
       "type": "codex",
       "owned_by": "openai"
     }
+  ],
+  "exclusion_models": [
+    {"id": "gpt-5.5", "display_name": "GPT-5.5", "type": "codex", "owned_by": "openai"}
   ]
 }
 ```
+
+`models` contains the credential's currently registered, client-visible IDs after exclusions, OAuth aliases, and prefixes. Use it to inspect effective routing, not to construct exclusion rules.
+
+`exclusion_models` is the current Home node's candidate snapshot before those transformations, including models already excluded. Its entries use the same shape as `models`, and their `id` values are the IDs matched by `excluded_models`. The list remains available when all candidates are excluded. It is `null` when no candidate snapshot is available (for example, a disabled credential or a provider path that does not apply credential exclusions); an empty array means a known empty catalog. Older Home versions omit this field. Clients must keep manual rule editing available and must not substitute `models` when candidates are unavailable. This field is only added to v8; the legacy v0 response is unchanged.
 
 ### GET `/credentials/model-states` and `/credentials/:credential_id/model-states`
 
@@ -2334,7 +2438,7 @@ Editable fields:
 | `disabled` | boolean or string bool | Updates auth disabled state and status. |
 | `disable-cooling` | boolean or `null` | Credential cooling override. `true` disables cooling, `false` enables it, and `null` clears the override so the credential inherits the global setting. The hyphenated response field is accepted directly by this PATCH route. |
 | `request-retry` | integer or `null` | Additional credential retry-round override. `0` disables additional rounds; `null` or a negative value inherits the global setting. Both `request-retry` and `request_retry` are accepted; when both appear together, `request_retry` takes precedence. |
-| `excluded_models`, `excluded-models` | string array or `null` | Per-credential model exclusion patterns, merged with global OAuth exclusions. `[]` or `null` clears only the per-credential list. When both names are provided, `excluded_models` takes precedence. Invalid types, non-string array elements, and nested paths under this field return `400` without applying any changes. |
+| `excluded_models`, `excluded-models` | string array or `null` | Per-credential model exclusion patterns. A non-empty list takes priority over the global OAuth exclusions for this credential (it is not merged with them). `[]` or `null` clears the per-credential list so the credential inherits the current global OAuth exclusions. When both names are provided, `excluded_models` takes precedence. Invalid types, non-string array elements, and nested paths under this field return `400` without applying any changes. |
 | any other nested path | any valid JSON | Sets arbitrary metadata paths such as `token.access_token`. |
 
 Example response:
@@ -2501,7 +2605,7 @@ Input:
 | Form field or query | Type | Required | Description |
 | --- | --- | --- | --- |
 | form `file` | file | yes | Vertex service account JSON. |
-| form/query `location` | string | no | Vertex location. Default: `us-central1`. |
+| form/query `location` | string | no | Vertex location. Default: `global`. |
 
 Example response:
 
@@ -2511,7 +2615,7 @@ Example response:
   "auth-file": "11111111-2222-4333-8444-555555555555.json",
   "project_id": "project-id",
   "email": "service-account@example.iam.gserviceaccount.com",
-  "location": "us-central1"
+  "location": "global"
 }
 ```
 
@@ -2548,7 +2652,7 @@ Lists quota providers registered in the Home plugin host plus available built-in
 }
 ```
 
-`display_name` and `supported_providers` are optional. Built-in collector entries are present only when Home has a collector trigger; the current built-in provider keys are `claude`, `antigravity`, `codex`, `kimi`, and `xai`. Plugin reset support is reported by `supports_reset`.
+`display_name` and `supported_providers` are optional. Built-in collector entries are present only when Home has a collector trigger; the current built-in provider keys are `claude`, `antigravity`, `codex`, `devin`, `kimi`, `xai`, and `meta`. Plugin reset support is reported by `supports_reset`.
 
 ### POST `/credentials/quota/fetch`
 
@@ -2650,9 +2754,11 @@ Example request:
 | `method` | string | yes | HTTP method; normalized to uppercase. |
 | `url` | string | yes | Absolute URL with scheme and host. |
 | `header` | object string to string | no | Request headers. Header values containing `$TOKEN$` are replaced with the selected auth token. `Host` sets request host override. |
-| `data` | string | no | Raw request body string. |
+| `data` | string | no | Raw request body string. `$TOKEN$` is replaced with the selected auth token; JSON string values are escaped safely. |
 
-Token replacement is strict: if any header contains `$TOKEN$`, `auth_index` must resolve to a DB auth or runtime auth. Otherwise the endpoint returns:
+Requests that substitute `$TOKEN$` only follow same-origin redirects (same scheme, host, and effective port); an unsafe redirect returns HTTP `502` without forwarding the credential.
+
+Token replacement is strict: if any header or the request body contains `$TOKEN$`, `auth_index` must resolve to a DB auth or runtime auth. Otherwise the endpoint returns:
 
 ```json
 { "error": "auth not found" }
@@ -2752,7 +2858,12 @@ When an observation is joined to a policy in `/credentials/in-flight`, `/credent
 
 ### Credential concurrency policy and limiter routes
 
-Before activating a policy, follow the [strict credential concurrency limits deployment runbook](../README.md). It defines the required topology, capability checks, certificate identities, and fail-closed mixed-version rollout.
+Before activating a policy:
+
+- Use only one active Home per SQLite database; multiple active Homes require PostgreSQL, even when all limits are disabled.
+- Give each Home and CPA node its own mTLS certificate and private key. Do not share identities between nodes or reuse an identity for a replacement node.
+- Keep all limits disabled while upgrading every Home and CPA. Confirm old processes are stopped, every active CPA membership uses protocol version `1`, and authenticated `GET /capabilities` on each live Home returns `capabilities.credential_concurrency_limits_v2: true`.
+- Active policies are unsupported with legacy CPAs or old/capability-missing Homes. Remove those nodes from service and remove or fence their memberships/incarnations before enabling or continuing policies; never bypass these checks through direct database writes.
 
 The policy route groups are `GET /credentials/concurrency-policies`, `GET /credentials/:credential_id/concurrency-policy` plus `PATCH /credentials/:credential_id/concurrency-policy`, and `GET /credentials/concurrency`. The first two read stored policy; the patch replaces only supplied fields; the final route reads policy plus the authoritative admitted-counter state. `PATCH /credentials/fields` is the auth-files compatibility form of the same policy patch.
 
@@ -2827,15 +2938,29 @@ Response fields:
 
 ### Quota Snapshot Conventions
 
+Devin reads `https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus` using Connect-RPC JSON and the stored `api_key` or `session_token` in `metadata.apiKey`. It emits stable `devin-daily` and `devin-weekly` account windows from `userStatus.planStatus`, with remaining percentages, 1-day/1-week periods, and Unix-second reset times. `planInfo.planName` and `planEnd` supply plan name and optional subscription expiry. Malformed optional plan metadata cannot invalidate usable quota; an absent or malformed plan preserves the last-known plan, and zero or invalid expiry dates are omitted. Numeric strings are accepted; invalid or missing remaining values stay unknown, never zero. Only cycles with valid remaining amounts are persisted; a partial response merges those cycles with still-valid stored cycles, preserving the unobserved cycles' values, observation times, and freshness deadlines. A response without any usable remaining amount, including reset-only responses, fails and retains the previous snapshot. Cycles whose supplied reset time has passed are rejected. Each window keeps its own freshness deadline: the earlier of its observation freshness limit and its own reset, even if that reset passes between parsing and persistence. The snapshot uses the earliest effective window deadline to drive recollection; one cycle resetting never expires other cycles prematurely. Partial merges also include retained windows when computing snapshot freshness and the next scheduled probe, while respecting the upstream retry lower bound. This collector does not refresh tokens. HTTP `426` from any quota probe is reported as `UPSTREAM_CLIENT_OUTDATED`, separately from authorization failures.
+
 Quota snapshot endpoints are read-only DB views. Reading them does not call an upstream provider, refresh OAuth tokens, change scheduler priority, or consume a queue. A credential that exists but has never produced a snapshot or collection attempt is returned with `quota_status=unknown`, `freshness=never`, an empty window list, and HTTP `200`. If its first collection attempt fails before any usable quota fact exists, it is returned as `quota_status=error`, `freshness=never`, and `collection_status=failed`. A credential whose provider is explicitly outside the current collector plan is returned as `unsupported`. Deleted credentials are not visible and their quota rows are deleted with the credential. Changing a credential's provider or credential type also discards snapshots from the previous identity.
 
 All timestamps are RFC3339 UTC values or `null`. Ratios are numbers in `[0,1]`. Quantity fields may be `null`; unlimited quota uses `is_unlimited=true`. Different provider periods remain separate windows. While a snapshot is fresh, an individually expired merged window is omitted and no longer contributes to status/source. Once the snapshot itself is stale, the detail view retains its last-known windows for diagnosis. `earliest_reset_at` is the minimum non-null `reset_at` across the same complete internal window set represented by the credential item. It may be in the past for stale last-known data.
 
 Current passive collection extracts a bounded `quota_headers` object from the CPA usage event `response_headers`. Home preserves only the Codex `X-Codex-*` quota allowlist plus a syntax-validated, non-secret-like upstream request ID, and removes the raw `response_headers` object before writing the usage payload. Before the core transaction starts, the reported `auth_index` is resolved concurrently against the active auth UUID, runtime index, and ID; the usage row stores the stable UUID, normalized provider/type identity, and quota-identity generation, so a concurrent delete or identity change fences the row from the replacement credential without serializing usage ingestion. After the core usage/billing transaction commits, Codex Header observations are normalized and upserted in an isolated quota transaction; invalid quota metadata or quota persistence failures cannot roll back the core usage or billing write. Timestamps more than five minutes ahead of Home's receive time are normalized to the receive time. Older observations cannot replace a newer snapshot or window, including concurrent first writes. Codex Header observations are always treated as sparse rolling updates: they merge by stable limit identity and period, retain still-valid windows and metadata learned by the authoritative active probe, do not clear an in-flight probe lease, and do not postpone the next active probe or bypass its retry backoff. Unprefixed Primary/Secondary windows are accepted only when `X-Codex-Active-Limit` contains a valid limit identity: `codex` and `premium` map to the default account family, `codex_bengalfox` maps to the Spark model family, and other valid identities remain isolated model families. Missing or invalid active-limit metadata causes only the unprefixed windows to be ignored; explicitly grouped windows remain usable. If the active family is also present as an explicit group, matching identity-and-period windows collapse to one entry, the unprefixed observation supplies the quota values, and the explicit group may supply its label. Repeated Primary/Secondary observations for the same limit period also collapse to one window. Expired windows cannot make a new snapshot appear healthy or exhausted.
 
-Home also runs fixed-target active collectors for Claude, Antigravity, Codex, Kimi, xAI, and GitHub Copilot (plugin provider `copilot`) OAuth/file credentials. Codex reads the official usage endpoint, uses `metered_feature` as the stable identity for additional limits, and derives normalized plan metadata. It queries the reset-credit detail endpoint independently of whether the usage summary contains `rate_limit_reset_credits`. If that detail request fails while the usage summary reports a positive current count, the collection is `partial` and stores the latest count with an empty detail list instead of carrying forward older quantities or expired credits. If neither endpoint provides reliable reset-credit information, older reset-credit data is cleared without degrading otherwise usable quota windows. Codex `primary_windows` keeps one representative from the default account family and one from `codex_bengalfox`, preferring the longest (normally weekly) window in each family, so the default 5-hour window or code-review limits cannot hide Spark. At the next eligible scheduled scan (recent usage, the hourly re-check of a credential with an active quota block, the 6-hour re-check of an idle credential, or the check after a saved window reset), existing Codex v1 snapshots that use positional `*-primary`/`*-secondary` IDs trigger one immediate v2 active recollection even when freshness or `next_probe_at` would normally defer it. The upgrade attempt is recorded before the request, so a failure returns to the normal retry backoff instead of bypassing it repeatedly. Legacy raw windows remain stored for diagnosis, but the API reports them as `unknown`/`stale` before a successful upgrade and `error`/`stale` after a failed upgrade; a successful v2 probe atomically replaces the old IDs, and later passive Header observations cannot downgrade the snapshot version. No reset-credit consume operation is exposed through the Management API. Claude reads usage and profile and derives `Max 5x`, `Max 20x`, `Max`, `Pro`, `Team`, `Enterprise` or explicitly identified `Free` plan metadata from the organization type, rate-limit tier and individual account flags. Unknown tiers are not inferred from quota sizes. It reports `partial` when quota succeeds but profile metadata fails and preserves the last verified plan on that failure. A valid profile with an unknown plan clears an older plan. Antigravity calls the grouped quota-summary endpoint with the credential `project_id` and maps only `gemini-5h`, `gemini-weekly`, `3p-5h`, and `3p-weekly` into stable `gemini` and `third-party` model scopes. Numeric fractions, numeric strings, and percentage strings are accepted; disabled, unknown, or malformed buckets are omitted independently. Both weekly buckets are required before a response can replace the last-known snapshot, while either 5-hour bucket remains independently optional. Primary selection keeps one window per stable scope and prefers that scope's 5-hour bucket when present. At the next eligible scheduled scan, existing model-ID Antigravity v1 snapshots trigger an immediate v2 recollection; they are reported as `unknown`/`stale` while upgrade is pending and `error`/`stale` after a failed upgrade, with normal retry backoff. A successful v2 probe atomically replaces the legacy model windows. Kimi reads coding usage and preserves both the account usage summary and each returned limit window while accepting numeric fields encoded as numbers or strings. Kimi provider limits take primary-window priority over its aggregate summary so weekly and duration limits remain visible in list views. xAI calls the Grok CLI billing endpoint with the CLI token-auth, client-version, user-agent, and optional user-ID headers. It accepts camelCase or snake_case billing fields and `{ "val": ... }`, numeric, or string cent values. `monthlyLimit=15000` maps to SuperGrok and `monthlyLimit=150000` maps to SuperGrok Heavy. Positive `onDemandCap` plus explicit or derived `onDemandUsed` values produce the `xai-on-demand` monthly USD window; a missing or zero cap means pay-as-you-go is disabled and no such window is emitted. GitHub Copilot calls `GET https://api.github.com/copilot_internal/user` with the credential's GitHub OAuth token (`github_access_token`) and maps `quota_snapshots` to monthly `requests` windows in the order `copilot-premium-interactions`, `copilot-chat`, `copilot-completions`: a bucket with `unlimited: true` becomes an `is_unlimited` window, a metered bucket keeps GitHub's `entitlement` as `limit` and `remaining` (or `percent_remaining` when `remaining` is absent), and a metered bucket without a positive allowance or a bucket key Home does not know is omitted. `reset_at` comes from `quota_reset_date_utc` (falling back to the date-only `quota_reset_date`), and `copilot_plan` maps `free`/`individual`/`individual_pro`/`business`/`enterprise` to Free/Pro/Pro+/Business/Enterprise (Pro+ is `premium`). Provider API-key credentials that cannot use these OAuth collectors are returned as `unsupported`.
+Home also runs fixed-target active collectors for Claude, Antigravity, Codex, Devin, Kimi, xAI, Meta, and GitHub Copilot (`copilot`) OAuth/file credentials. Codex reads the official usage endpoint, uses `metered_feature` as the stable identity for additional limits, and derives normalized plan metadata. It queries the reset-credit detail endpoint independently of whether the usage summary contains `rate_limit_reset_credits`. If that detail request fails while the usage summary reports a positive current count, the collection is `partial` and stores the latest count with an empty detail list instead of carrying forward older quantities or expired credits. If neither endpoint provides reliable reset-credit information, older reset-credit data is cleared without degrading otherwise usable quota windows. Codex `primary_windows` keeps one representative from the default account family and one from `codex_bengalfox`, preferring the longest (normally weekly) window in each family, so the default 5-hour window or code-review limits cannot hide Spark. At the next eligible scheduled scan (recent usage, hourly blocked-account checks, six-hour idle checks, or a saved reset), existing Codex v1 snapshots that use positional `*-primary`/`*-secondary` IDs trigger one immediate v2 active recollection even when freshness or `next_probe_at` would normally defer it. The upgrade attempt is recorded before the request, so a failure returns to the normal retry backoff instead of bypassing it repeatedly. Legacy raw windows remain stored for diagnosis, but the API reports them as `unknown`/`stale` before a successful upgrade and `error`/`stale` after a failed upgrade; a successful v2 probe atomically replaces the old IDs, and later passive Header observations cannot downgrade the snapshot version. No reset-credit consume operation is exposed through the Management API. Claude reads usage and profile, reporting `partial` when quota succeeds but profile metadata fails. Antigravity calls the grouped quota-summary endpoint with the credential `project_id` and maps only `gemini-5h`, `gemini-weekly`, `3p-5h`, and `3p-weekly` into stable `gemini` and `third-party` model scopes, and queries `loadCodeAssist` (`{"metadata":{"ideType":"ANTIGRAVITY"}}`) to derive subscription plan metadata (`g1-ultra-tier` -> `Ultra`, `g1-ultra-lite-tier` -> `Ultra Lite`, `g1-pro-tier` -> `Pro`, `free-tier` -> `Free`, preferring `paidTier` over `currentTier`; a failed or malformed subscription read marks the collection `partial` and retains the last-known plan). Numeric fractions, numeric strings, and percentage strings are accepted; disabled, unknown, or malformed buckets are omitted independently. Both weekly buckets are required before a response can replace the last-known snapshot, while either 5-hour bucket remains independently optional. Primary selection keeps one window per stable scope and prefers that scope's 5-hour bucket when present. At the next eligible scheduled scan (recent usage, hourly blocked-account checks, six-hour idle checks, or a saved reset), existing model-ID Antigravity v1 snapshots trigger an immediate active recollection; they are reported as `unknown`/`stale` while upgrade is pending and `error`/`stale` after a failed upgrade, with normal retry backoff. A successful probe atomically replaces the legacy model windows. Kimi reads coding usage and preserves both the account usage summary and each returned limit window while accepting numeric fields encoded as numbers or strings. Kimi provider limits take primary-window priority over its aggregate summary so weekly and duration limits remain visible in list views. Provider API-key credentials that cannot use these OAuth collectors are returned as `unsupported`.
 
-Collectors read DB credentials directly and never accept a URL from HMC. Before probing, they resolve the latest DB credential and use its currently stored access token without invoking OAuth refresh; credential refresh remains owned by the independent runtime refresh subsystem. They use the current hot-reloaded global proxy unless the credential has its own proxy. They use a 20-second request timeout, a per-provider concurrency limit of 3 on PostgreSQL and a global limit of 1 on SQLite, a per-credential DB lease, and a five-minute exponential retry backoff with per-credential jitter capped near one hour. `Retry-After` can extend the next attempt. Disabled credentials and credentials blocked by an OAuth refresh failure are not actively probed; model execution cooldowns do not prevent quota collection, and quota collection's own retry backoff (`next_probe_at`) defers scheduled scans without blocking on-demand force recollection. Persisted unavailable/error state from an expired cooldown or cleared refresh block no longer blocks recovery. Successful snapshots are fresh for 30 minutes. Failures preserve last-known windows and store only structured, redacted error metadata.
+xAI queries three fixed Grok CLI endpoints concurrently within one probe timeout: billing, its `format=credits` variant, and `/v1/user?include=subscription`. All requests use CLI token-auth, Grok CLI `1.0.70` client-version, matching pager/shell user-agent, and optional user-ID headers. It accepts camelCase/snake_case billing fields and `{ "val": ... }`, numeric, or string cent values.
+
+- Subscription eligibility is independent of billing amounts. Explicit null, empty, `Free`, or `None` subscription tiers mean `Free` and suppress all weekly/product-usage windows, even if the credits response contains a period or percentages. Confirmed free profiles with a valid empty monthly response successfully replace old paid quota with no windows and `quota_status=unknown`.
+- Recognized paid tiers are `SuperGrok`, `SuperGrokPlus`, `SuperGrokPro`, `SuperGrokHeavy`, and `XPremiumPlus`; case, separators, and the `SUBSCRIPTION_TIER_` prefix are normalized. The profile plan takes precedence over the monthly-limit heuristic (`15000` cents -> SuperGrok, `150000` cents -> SuperGrok Heavy). Missing, malformed, unavailable, or unrecognized subscription tiers do not establish paid eligibility. An unrecognized string remains visible as the plan name. If the profile cannot supply a plan, the monthly-limit heuristic only fills an absent plan under the active probe's snapshot lock; it cannot replace an existing plan name, premium flag, or subscription expiry. A subsequent explicit profile result can replace that last-known metadata.
+- Valid explicit `creditUsagePercent` values on a 0–100 scale produce `xai-weekly-usage`, with the current period end as reset time. Supplied weekly period metadata must be consistent and current for both explicit and inferred amounts; expired or malformed ends, future starts, wrong period types, and conflicting period aliases reject the whole weekly/product observation. Missing reset metadata stays unknown for otherwise valid explicit amounts. Each monthly, weekly, and product window expires no later than its own observed reset, including a reset that has already passed by collection completion; its freshness limit starts at the window's observation time. Snapshot freshness ends at the earliest effective window deadline. An omitted percentage means zero usage only when the current profile confirms a recognized paid tier, the response explicitly describes a weekly period ending in the future, any supplied start is valid and not in the future, and product usage does not contradict zero. Explicit null, malformed/out-of-range percentages, conflicting aliases, and invalid periods never imply 100% remaining. Product amounts that are missing or invalid remain unknown instead of becoming zero; product percentages describe shares of the same allowance, not separate quotas. They remain visible as detail but never independently determine the credential's aggregate quota status, including when an older product amount is retained after a partial collection.
+- `xai-monthly-spend` is a monthly USD window only for a positive `monthlyLimit`; zero or missing limits do not imply exhaustion. Positive `onDemandCap` produces `xai-on-demand` with explicit or derived usage when available, otherwise unknown usage; missing or zero caps omit that window.
+- Failure or incomplete data in one component keeps other usable amounts and reports `partial`. With usable amounts from at least one component, the monthly/on-demand and weekly/product groups are replaced independently: failed groups retain still-valid stored windows with their original values, observation times, and expiry. An unknown incoming amount cannot overwrite a still-valid numeric observation in a failed group. A successful group can remove old windows when caps are disabled or entries disappear; confirmed free profiles remove the weekly/product group. Expired retained windows are pruned, and a complete later observation replaces retained values normally. Without any observed amounts, a failed or incomplete collection retains the previous snapshot, plan, and observation time and uses normal retry backoff. Client-upgrade, authorization, and rate-limit errors take precedence over generic parsing errors. The longest `Retry-After` across failed components delays the next scheduled probe in both partial and failed collections, independently of which error is displayed, without extending quota freshness. A subsequent successful collection clears the error and failure count. Confirmed free empty snapshots follow the successful replacement rule above.
+- At the next activity-eligible scheduled scan, xAI snapshots older than v3 trigger recollection even while otherwise fresh. The upgrade attempt is recorded before probing, so failures return to normal retry backoff. Successful collection replaces legacy quota atomically.
+
+Claude plan metadata comes from `/api/oauth/profile`; failed or unrecognized profile reads retain the last known plan. Claude reset counts are read separately with `GET /api/oauth/usage?cedar_ember=1&skip_spend=1`. For an eligible account with a valid grant list, `reset_credits.available_count` sums the remaining resets in grants that have started, have not expired, and are not paused. This is a remaining count, not a guarantee that a reset can be redeemed at the current usage level. The `credits` array is empty because Claude grants may cover multiple resets rather than individual Codex-style credits. Missing or ineligible grant data produces `reset_credits: null`; a failed or malformed reset read clears the prior reset observation and marks collection `partial`, while retaining successfully collected windows and plan data. Home only observes this information and never consumes a reset grant.
+
+
+Collectors read DB credentials directly and never accept a URL from HMC. Credential-bearing quota requests only follow redirects within the original scheme, host, and effective port; cross-origin redirects and HTTPS downgrades are rejected before forwarding the request. Before probing, they resolve the latest DB credential and use its currently stored access token without invoking OAuth refresh; credential refresh remains owned by the independent runtime refresh subsystem. They use the current hot-reloaded global proxy unless the credential has its own proxy. They use a 20-second request timeout, a per-provider concurrency limit of 3 on PostgreSQL and a global limit of 1 on SQLite, a per-credential DB lease, and a five-minute exponential retry backoff with per-credential jitter capped near one hour. `Retry-After` can extend the next attempt. Disabled credentials and credentials blocked by an OAuth refresh failure are not actively probed; model execution cooldowns do not prevent quota collection, and quota collection's own retry backoff (`next_probe_at`) defers scheduled scans without blocking on-demand force recollection. Persisted unavailable/error state from an expired cooldown or cleared refresh block no longer blocks recovery. Successful snapshots are fresh for 30 minutes. Failures preserve last-known windows and store only structured, redacted error metadata.
 
 Credential fields:
 
@@ -2860,7 +2985,7 @@ Credential fields:
 | `window_count` | integer | Number of all current windows. |
 | `error` | object/null | Redacted collection error. Messages are capped at 500 bytes. |
 | `runtime` | object/null | Home and CPA ownership metadata. |
-| `plan` | object/null | Provider subscription plan metadata derived by the collector (for example Codex `Pro 20x` or xAI `SuperGrok`). Shape: `{"name": "Pro 20x", "premium": true}`. A successful authoritative probe clears an older plan when the current payload no longer maps to one. |
+| `plan` | object/null | Provider subscription plan metadata derived by the collector (for example Codex `Pro 20x` or xAI `SuperGrok`). Shape: `{"name": "Pro 20x", "premium": true}`; optional `expires_at` is the provider-reported subscription end in RFC3339 UTC, distinct from quota reset and snapshot freshness. Collectors retain the last-known plan when optional subscription metadata is unavailable; an authoritative recognized free tier replaces a previous paid plan with `Free`. |
 
 Quota window fields:
 
@@ -3006,7 +3131,7 @@ Request body (all fields optional; an empty body collects every eligible credent
 | Field | Type | Description |
 | --- | --- | --- |
 | `credential_ids` | string array | Only these credential IDs are collected. |
-| `providers` | string array | Only these providers are collected: `claude`, `antigravity`, `codex`, `kimi`, `xai`, `copilot`; `grok` is accepted as an alias for `xai`. Other values return `400`. Both filters combine with AND semantics. |
+| `providers` | string array | Only these providers are collected: `claude`, `antigravity`, `codex`, `devin`, `kimi`, `xai`, `meta`, `copilot`; `grok` is accepted as an alias for `xai`, and `muse` is accepted as an alias for `meta`. Other values return `400`. Both filters combine with AND semantics. |
 
 Response `202`:
 
@@ -3040,6 +3165,8 @@ Invalid filters, sorts, or pagination return `400`; missing credentials return `
 These endpoints read persisted `usage`, `billing_charge`, `api_key`, `user`, and `auth` data. Responses never return raw client access keys, provider API keys, OAuth tokens, cookies, authorization headers, complete payloads, or complete failure bodies. They may return `api_key_masked`, redacted `body_preview`, and payload summaries.
 
 Canonical token accounting is available only when `capabilities.usage_token_breakdown_v2=true`. Clients must read that declared capability and must not infer support by probing a usage route or rebuilding a breakdown from the legacy token counters. While the capability is `false`, the server may already return `token_breakdown` objects for newly normalized rows, but the selected range can still contain historical rows awaiting backfill. The legacy `input_tokens`, `output_tokens`, `reasoning_tokens`, `cached_tokens`, `cache_read_tokens`, `cache_creation_tokens`, and `total_tokens` fields remain available for diagnostics and backward compatibility; they are not mutually exclusive and must not be stacked into a total.
+
+`input_tokens` and `output_tokens` use one display rule across `/usage/overview` (`totals`, `trend[]`, `model_efficiency[]`, and `top`), `/usage/records`, `/usage/records/:id`, `/usage/export`, `/usage/aggregates`, `/usage/realtime` (`current_usage[]`), `/usage/session-tree`, and the `/request-events` list, detail, and export APIs. The rule matches `/billing/charges` and `/billing/overview`. When a usage row has v2 token accounting with `complete` quality, `input_tokens` includes uncached input, cache reads, and cache writes, and `output_tokens` includes non-reasoning and reasoning output. Pending backfills and `unclassified` or `inconsistent` rows keep the original counters. Aggregates sum this per-row value. `reasoning_tokens`, `cached_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `total_tokens`, `token_breakdown`, and `performance.tps` are unchanged. This read-time conversion does not rewrite stored usage rows.
 
 When enabled, `totals`, every `trend[]` bucket, every usage record, and every aggregate item include this schema:
 
@@ -3097,6 +3224,7 @@ Key `UsageRecordSummary` fields:
 | `reasoning_effort` | string/null | Usage payload reasoning effort. |
 | `token_breakdown` | object | Canonical v2 mutually exclusive input/output/unclassified token buckets. Consume only when `capabilities.usage_token_breakdown_v2=true`. |
 | `client.client_ip` | string/null | Caller IP associated with the usage payload. This is not treated as the CPA node IP. |
+| `client.user_agent` | string/null | Caller User-Agent reported in the usage payload. |
 | `credential.api_key_preview` | string/null | Redacted provider API key preview when available; raw keys are never returned. |
 | `billing.balance_before` / `billing.balance_after` | number/null | Balance before and after the charge when linked to `billing_charge`. |
 | `runtime.home_ip` / `runtime.home_port` | string/integer/null | Home node identity that persisted the usage record. |
@@ -3177,7 +3305,7 @@ Query parameters:
 | --- | --- | --- | --- |
 | `session_id` / `root_session_id` / `request_id` / `id` | string | none | The identifier to look up (supports raw names, prefixed IDs, or canonical UUIDv8). If a `request_id`, `id`, or subagent `session_id` is supplied, the endpoint resolves the root session and returns the full hierarchy. |
 
-The response contains `root_session_id`, `total_sessions`, `total_requests`, `total_tokens`, and `tree[]`. Each tree node includes aggregated token metrics, first/last seen timestamps, failure counts, optional subagent node metadata (`node_kind`, `is_fork`, `is_compaction`), child sessions (`children[]`), and request turns (`timeline[]`).
+The response contains `root_session_id`, `total_sessions`, `total_requests`, `total_tokens`, and `tree[]`. Each tree node includes aggregated token metrics (`input_tokens` and `output_tokens` follow the usage display rule), first/last seen timestamps, failure counts, optional subagent node metadata (`node_kind`, `is_fork`, `is_compaction`), child sessions (`children[]`), and request turns (`timeline[]`).
 
 ### GET `/usage/aggregates`
 
@@ -3248,7 +3376,8 @@ The response contains `items`, `total`, `limit`, `offset`, and `sort`. `items[]`
 | `credential` | object | Execution credential type, ID, auth index, provider, label, source, and redacted `api_key_preview`. |
 | `client` | object | User, client key ID/label, redacted `client_key_masked`, and caller client IP. |
 | `error` | object | Redacted error status, upstream status, reason, message, and body preview. |
-| `tokens` / `performance` / `billing` | object | Token, latency/TTFT/TPS, and billing metadata. |
+| `tokens` / `performance` / `billing` | object | Token, latency/TTFT/TPS, and billing metadata. `tokens.input_tokens` and `tokens.output_tokens` follow the usage display rule in Usage Observability Conventions; list, detail, and export responses use the same values. |
+| `token_breakdown` | object | Canonical v2 mutually exclusive input/output/unclassified token buckets, the same object as `/usage/records`. Consume only when `capabilities.usage_token_breakdown_v2=true`; otherwise read the legacy `tokens` counters. |
 | `related.request_log` | object | Request log link metadata, including `home_ip` and `home_port` when available. Local availability is checked against the filesystem. For a remote Home, `available=true` and `download_url` mean cluster forwarding is configured and the download can be attempted. |
 
 ### GET `/request-events/filter-options`
@@ -3366,10 +3495,20 @@ Query parameters:
 | `client_ip` | string | Optional CPA client IP filter. |
 | `request_id` | string | Optional request ID filter against stored IDs. An 8-character value matches the literal suffix; other lengths match exactly. Returns all matching log records with short display IDs; `%` and `_` are not wildcards. |
 | `level` | string | Optional log level filter. |
+| `search` | string | Optional case-insensitive contains match over the log `line` content. When set, the response includes a `search` field echoing the applied value so clients can detect support. |
 | `after` | integer or RFC3339 | Optional timestamp lower bound. |
 | `before` | integer or RFC3339 | Optional timestamp upper bound. |
+| `anchor_id` | positive integer | Optional inclusive ingestion ID ceiling (`id <= anchor_id`). Reuse the server-returned value for historical pages; this is independent of timestamp ordering. |
+| `before_id` | positive integer | Optional exclusive cursor record ID for loading older records in `(timestamp DESC, id DESC)` order. |
+| `after_id` | positive integer | Optional exclusive cursor record ID for tailing newer records in `(timestamp DESC, id DESC)` order. |
 | `limit` | integer | Maximum returned record count. Default is `100`, maximum is `1000`. |
 | `offset` | integer | Pagination offset. Default is `0`. |
+
+Cursor pagination is available on the v8 route only. When `anchor_id` is omitted, the server captures the maximum stored log ID and returns it as `anchor_id` (omitted when the entire log table is empty). The ceiling may belong to a record outside the current filters or page; never infer it from the first returned record. Reuse it with `offset`, or with `before_id` and `offset=0`, to exclude subsequently assigned IDs even if their timestamps are older. All filters and cursor bounds are intersected; results always use `(timestamp DESC, id DESC)` order. `before_id` and `after_id` are exclusive chronological positions, not ingestion ID comparisons. `total` counts the matching rows after all bounds, before `limit` and `offset`; a `before_id` response therefore reports the remaining older rows, not the original list total. Supplied `before_id` and `after_id` values are echoed in the response.
+
+Each request reads its ceiling, count, cursor timestamps, and rows from one consistent database snapshot. The ID ceiling does not retain a database snapshot across requests: deletions, database restores, and PostgreSQL transactions that had already allocated lower IDs but commit later can change the bounded set. Timestamp cursors support chronological navigation; `after_id` alone does not guarantee delivery of late-arriving records with older timestamps.
+
+Cursor IDs must fit the database's signed 64-bit ID range (and the server's `uint` range). Invalid values return HTTP `400` with `invalid_anchor_id`, `invalid_before_id`, or `invalid_after_id`. A missing `before_id` or `after_id` record returns HTTP `409` with `log_cursor_expired`; refresh the list and restart pagination instead of retrying that cursor. Database read failures return HTTP `500` with `log_load_failed`. The `anchor_id` ceiling remains usable if the record with that ID is deleted.
 
 Example response:
 
@@ -3387,6 +3526,7 @@ Example response:
       "created_at": "2026-05-29T01:02:04Z"
     }
   ],
+  "anchor_id": 1,
   "total": 1,
   "limit": 100,
   "offset": 0
@@ -3469,10 +3609,17 @@ Response: file attachment.
 Returns model definitions from either the current runtime registry or the static model catalog.
 
 Each model includes `providers`, the authoritative provider identifiers used by `usage.provider`
-and Billing model-price rules. Clients must create one candidate per `(provider, model)` pair and
-must not derive Billing providers from `type`, `owned_by`, or a static catalog group name.
-Clients must omit model records whose `providers` field is absent or empty because they do not have
-a safe Billing identity.
+and Billing model-price rules. Available v8 models additionally include `billing_models`, an array
+of `{"provider": "z-ai", "model": "glm-5.3-flash"}` execution identities resolved per credential.
+A public `id` such as `team/MY-MODEL` can map to multiple upstream models, including multiple models
+under the same provider. Billing editors must use these pairs instead of the public `id` or the
+merged display `name`. Targets are unique and sorted by provider/model; an empty array means no
+billing identity could be resolved and must not be replaced with an alias-based guess.
+
+Static models and older responses omit `billing_models`; clients can retain their existing
+`(providers[], id)` candidates for those responses. Clients must not derive Billing providers from
+`type`, `owned_by`, or a static catalog group name, and must omit records without a safe Billing
+identity. This metadata does not rewrite existing price rules or historical charges.
 
 Provider implementations must register every executor identifier that can appear in
 `usage.provider` under the same normalized runtime registry provider key. Adding or renaming an
@@ -3614,6 +3761,8 @@ Unknown channel response:
 
 Channel groups restrict which auth records a client API key may use. If a client API key has an empty `channels` array, channel-group filtering is not applied.
 
+Downstream model listings fetched through CPA with a client API key expose only models registered by enabled credentials within that key's credential and model scopes, including model-specific channel bindings. Both scopes are intersected; when a restricted scope has no matching credential/model, Home returns an empty catalog, never the global catalog. CPA returns HTTP 200 with an empty list in the requested client format for a valid empty Home catalog. Authentication failures, policy lookup failures, and malformed catalog responses remain errors rather than being converted to empty lists. Policy lookup failures return an error. Filtering precedes model deduplication and capability aggregation. Temporary cooldowns and concurrency saturation do not remove otherwise permitted models from the catalog. Management model catalogs are unchanged.
+
 ### GET `/channel-groups`
 
 Example response:
@@ -3681,7 +3830,9 @@ Response: `{ "channel_group": ... }`.
 
 ### DELETE `/channel-groups/:id`
 
-Soft-deletes the group and its details.
+Soft-deletes the group and its details, and atomically removes its ID from API key `channels` and model group detail `channels`, including soft-deleted records. Other bindings, key identity, and user ownership are preserved. Removing the last API key channel binding makes credential selection unrestricted by that key; removing the last model-detail channel binding restores inheritance from the key. A config event is published when bindings change, and the local runtime config is refreshed. Disabled groups are not removed.
+
+On upgrade, startup migration also removes historical references to soft-deleted channel groups. Unknown group IDs are not silently removed.
 
 Response:
 
@@ -3856,7 +4007,9 @@ Response: `{ "model_group": ... }`.
 
 ### DELETE `/model-groups/:id`
 
-Soft-deletes the model group and its details.
+Soft-deletes the model group and its details, and atomically removes its ID from API key `model_groups`, including soft-deleted keys. Other bindings, key identity, and user ownership are preserved. Removing the last model group binding disables model filtering for that key. A config event is published when bindings change, and the local runtime config is refreshed. Disabled groups are not removed.
+
+On upgrade, startup migration also removes historical references to soft-deleted model groups. Unknown group IDs are not silently removed.
 
 Response:
 
@@ -3971,7 +4124,9 @@ Response:
 { "claude": ["claude-opus-4.5"], "codex": ["*-preview"] }
 ```
 
-`PUT /config/oauth/excluded-models/claude` accepts a raw string array. `DELETE /config/oauth/excluded-models/claude` removes only that provider; deleting `/config/oauth/excluded-models` removes the whole map. These rules apply to OAuth/file credentials; upstream API-key groups use their own `excluded-models`.
+`PUT /config/oauth/excluded-models/claude` accepts a raw string array. `DELETE /config/oauth/excluded-models/claude` removes only that provider; deleting `/config/oauth/excluded-models` removes the whole map. These rules apply to OAuth/file credentials; upstream API-key groups use their own `excluded-models`. A credential with its own non-empty `excluded_models` uses that list instead of these global rules; every other credential picks up changes here on the next config reload without rewriting credentials.
+
+Upgrade note: earlier Home versions merged these global rules into each OAuth credential when it was saved. The database version 7 startup migration rebuilds every OAuth credential's stored exclusions from its own `excluded_models`, removing those merged copies. Invalid stored `excluded_models` values do not block the migration: as with runtime loading, valid rules are kept and invalid entries are ignored with a warning. This upgrade requires downtime: stop every older Home node before starting the new version, and do not run older and newer nodes against the same database at the same time. A still-running older node can write the merged copies back, and PostgreSQL does not rerun the migration afterwards.
 
 ### `/config/oauth/model-alias`
 
@@ -4000,6 +4155,8 @@ Response:
 | `force-mapping` | boolean | Uses the mapped upstream name in response model fields. |
 
 To edit one channel, use `/config/oauth/model-alias/claude` with a raw alias array. To remove it, use `DELETE` on that path. v8 does not use the v0 `items`, `channel`, `provider`, or `aliases` wrappers. Writes return `{"status":"ok","config-version":8}`. As elsewhere in the config tree, `null` is retained rather than interpreted as deletion.
+
+When a downstream request uses an upstream model ID that is published under an alias, Home may append up to three visible public model IDs to an `auth_not_found` or `model_not_found` error, including a missing-price rejection. Hints cover API-key and OAuth aliases, include required credential prefixes, and respect the client key's credential, model, and model-specific channel scopes. Disabled credentials and unpublished or excluded models are omitted; a policy lookup failure omits the hint. The error code and routing rules remain unchanged.
 
 ## Config Field Reference
 
@@ -4033,6 +4190,7 @@ The following paths use the v8 config layout. `/config` and `/config.yaml` suppo
 | `user-email.reset-token-ttl` | string | Positive Go duration for password-reset tokens. |
 | `oauth.auth-dir` | string | Import/export auth directory; not a Home runtime storage backend. |
 | `requests.proxy-url` | string | Global outbound proxy URL. |
+| `requests.tls-handshake-timeout-seconds` | integer | Bounds upstream TLS handshakes made by CPA's shared uTLS client in seconds. Applies to both the Claude Code Anthropic transport and the Chrome ChatGPT/Codex transport; starts after TCP/proxy connection establishment and does not bound dialing or proxy CONNECT. Default `0` disables it. |
 | `multimedia.disable-image-generation` | boolean or `"chat"` / `"passthrough"` | `false` enables image generation; `true` disables it globally; `"chat"` disables image generation on non-image endpoints; `"passthrough"` neither injects nor strips `image_generation` there, while keeping dedicated image endpoints enabled. |
 | `routing.force-model-prefix` | boolean | Requires explicit model prefixes for prefixed credentials. |
 | `observability.logs.request-log` | boolean | Enables detailed request logging. |
@@ -4040,13 +4198,14 @@ The following paths use the v8 config layout. `/config` and `/config.yaml` suppo
 | `requests.passthrough-headers` | boolean | Passes upstream response headers to downstream clients. |
 | `requests.streaming.keepalive-seconds` | integer | SSE heartbeat interval in seconds; `<=0` disables it. |
 | `requests.streaming.bootstrap-retries` | integer | Streaming retries before first byte; `<=0` disables it. |
+| `requests.streaming.send-keepalive-before-ft` | boolean | Sends SSE heartbeats before the first token arrives when `keepalive-seconds > 0`. |
 | `requests.nonstream-keepalive-interval` | integer | Blank-line keepalive interval for non-streaming responses. |
 | `observability.logs.debug` | boolean | Enables debug logging/features. |
 | `observability.pprof.enable` | boolean | Enables pprof server. |
 | `observability.pprof.addr` | string | pprof listen address. |
 | `server.commercial-mode` | boolean | Reduces high-overhead middleware behavior under high concurrency. |
 | `observability.logs.logging-to-file` | boolean | Writes app logs to files instead of stdout. |
-| `observability.logs.logs-max-total-size-mb` | integer | Total log file size limit in MB; `0` disables cleanup. |
+| `observability.logs.logs-max-total-size-mb` | integer | Per-node local log file size limit in MB for every Home and CPA node; `0` disables cleanup. Each Home checks its `logs/` directory at startup and every minute using the latest cluster-synchronized config, deleting the oldest `.log`/`.log.gz` files first. Does not limit database records or container stdout logs. |
 | `observability.logs.error-logs-max-files` | integer | Retained request error log file count. |
 | `plugins.enabled` | boolean | Enables trusted in-process plugins on Home and downstream CPA nodes. |
 | `plugins.dir` | string | Local plugin artifact directory used by each node. |
@@ -4063,8 +4222,8 @@ The following paths use the v8 config layout. `/config` and `/config.yaml` suppo
 | `quota-exceeded.switch-preview-model` | boolean | Switches to preview model on quota errors. |
 | `oauth.providers.antigravity.antigravity-credits` | boolean | Uses Antigravity credits as last-resort Claude fallback. |
 | `routing.strategy` | string | `round-robin`, `weighted-round-robin`, or `fill-first`. |
-| `routing.session-affinity` | boolean | Universal session-sticky credential routing. |
-| `routing.session-affinity-ttl` | string | Session-to-auth binding duration. |
+| `routing.session-affinity` | boolean | Database-backed session-sticky credential routing, shared across Home nodes using the same database. Bindings survive config reloads and restarts; unavailable credentials may be reselected. Upgrade all Home nodes to enable cluster-wide consistency. |
+| `routing.session-affinity-ttl` | string | Session-to-auth idle timeout, renewed by successful dispatches. Default: `1h`. |
 | `oauth.providers.antigravity.signature-cache-enabled` | boolean pointer | Enables Antigravity thinking signature cache validation. |
 | `oauth.providers.antigravity.signature-bypass-strict` | boolean pointer | Controls strictness of Antigravity signature bypass. |
 | `oauth.providers.antigravity.sensitive-words` | array of string | Words to obfuscate with zero-width characters in system instructions. |
@@ -4242,7 +4401,7 @@ The tables in this appendix compare paths relative to `/v0/management` and `/v8/
 | `/meta-auth-url` | `/oauth/auth-url?provider=meta` |
 | `/<plugin-provider>-auth-url` | `/oauth/auth-url?provider=<plugin-provider>` |
 
-The v0 callback is an authenticated POST; v8 additionally accepts GET and validates state without the management key. `/credentials/refresh`, `/oauth/session`, `/routing/cooldown/reset`, credential/plugin quota operations, and `DELETE /plugins/:id` are registered explicitly in v8, not by copying all SDK v0 endpoints.
+The v0 callback is an authenticated POST; v8 additionally accepts GET and validates state without the management key. `GET /credentials`, `/credentials/refresh`, `/oauth/session`, `/routing/cooldown/reset`, credential/plugin quota operations, and `DELETE /plugins/:id` are registered explicitly in v8, not by copying all SDK v0 endpoints.
 
 ### Configuration Layout Mapping
 
@@ -4269,6 +4428,7 @@ Each row names a legacy config field/root and its canonical v8 tree location. JS
 | `save-cooldown-status` | `routing.cooldown.save-cooldown-status` |
 | `transient-error-cooldown-seconds` | `routing.cooldown.transient-error-cooldown-seconds` |
 | `proxy-url` | `requests.proxy-url` |
+| `tls-handshake-timeout-seconds` | `requests.tls-handshake-timeout-seconds` |
 | `passthrough-headers` | `requests.passthrough-headers` |
 | `nonstream-keepalive-interval` | `requests.nonstream-keepalive-interval` |
 | `streaming` | `requests.streaming` |

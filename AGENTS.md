@@ -20,7 +20,7 @@ go build -o test-output ./cmd/home && rm test-output # Verify compile after Go c
 
 ## Config And Runtime
 - Default config file: `config.yaml` (template: `config.example.yaml`).
-- Home runtime state is database-backed. Without `cluster.yaml`, Home uses local SQLite (`home.db` by default, or `-sqlite-path`). With `cluster.yaml`, Home uses the configured cluster database; PostgreSQL is preferred for multi-node deployments.
+- Home runtime state is database-backed. Without `cluster.yaml`, Home uses local SQLite (`home.db` by default, or `-sqlite-path`). With `cluster.yaml`, Home uses the configured cluster database; SQLite supports only one active Home process per database. Deployments with multiple active Homes must use PostgreSQL.
 - `config.yaml` and `auth-dir` are import/export exchange formats only. Use `-import` to import local files into the database and `-export` to write database state back to files.
 - RESP password authentication has been removed. Home RESP access is mTLS-only; `allow-host` is only an IP allowlist.
 - The Management API is controlled by `remote-management.secret-key`; an empty key disables Management routes.
@@ -64,3 +64,4 @@ go build -o test-output ./cmd/home && rm test-output # Verify compile after Go c
 - Avoid panics in HTTP handlers; prefer logged errors and meaningful HTTP status codes.
 - Keep network timeout behavior consistent with the existing runtime. Do not add broad upstream timeouts after an upstream connection is established unless the existing code path already has an intentional exception.
 - Avoid wall-clock `time.Sleep` in TTL, expiration, ordering, or cache-eviction unit tests due to platform timer granularity (e.g. Windows default timer resolution of ~15.6ms) and CI jitter under load; prefer controllable clocks (`nowFunc` / mock clock), explicit timestamp manipulation, or deterministic synchronization primitives.
+- Endpoints under the `/v0/management` base URL are deprecated and no longer maintained. For any feature changes, do not modify endpoints under `/v0/management` unless necessary to fix compilation errors.

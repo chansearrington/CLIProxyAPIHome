@@ -17,12 +17,15 @@ import (
 	"github.com/gin-gonic/gin"
 	coreauth "github.com/router-for-me/CLIProxyAPIHome/internal/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/cluster"
-	appconfig "github.com/router-for-me/CLIProxyAPIHome/internal/config"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/watcher/synthesizer"
 )
 
-// ListAuthFiles returns an auth files.
+// ListAuthFiles preserves the v0 credential list contract without plugin quota metadata.
 func (h *Handler) ListAuthFiles(c *gin.Context) {
+	h.listAuthFiles(c, nil)
+}
+
+func (h *Handler) listAuthFiles(c *gin.Context, quotaPluginIDs map[string]string) {
 	ctx, cancel := h.requestContext(c)
 	defer cancel()
 	auths, errAuths := h.repo.ListAuths(ctx)
@@ -52,6 +55,11 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 			continue
 		}
 		entry := authFileEntry(auth)
+		if pluginID := quotaPluginIDs[strings.ToLower(strings.TrimSpace(auth.Provider))]; pluginID != "" {
+			entry["supports_quota"] = true
+			entry["quota_provider"] = auth.Provider
+			entry["quota_plugin_id"] = pluginID
+		}
 		observed, observedOK := observedCredentials[auth.ID]
 		if observationRead != nil && observedOK {
 			applyInFlightObservationToAuthFile(entry, *observationRead, observed)
@@ -260,11 +268,7 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	}
 	removeOAuthFieldPatchIdentifierFields(body)
 	removeOAuthFieldPatchConcurrencyFields(body)
-	var cfg *appconfig.Config
-	if h.runtime != nil {
-		cfg = h.runtime.Config()
-	}
-	changed, errPatch := applyOAuthFieldPatch(auth, body, cfg)
+	changed, errPatch := applyOAuthFieldPatch(auth, body)
 	if errPatch != nil {
 		respondError(c, http.StatusBadRequest, "invalid body", errPatch)
 		return
@@ -340,7 +344,10 @@ func (h *Handler) storeOAuthPayloadWithContext(ctx context.Context, raw []byte, 
 		return "", errUUID
 	}
 
-	auths := h.synthesizeOAuthPayload(updatedRaw, fileUUID, originalFilename)
+	auths, errSynthesize := h.synthesizeOAuthPayload(updatedRaw, fileUUID, originalFilename)
+	if errSynthesize != nil {
+		return "", errSynthesize
+	}
 	if len(auths) == 0 {
 		return "", fmt.Errorf("unsupported credential json")
 	}
@@ -358,7 +365,7 @@ func (h *Handler) storeOAuthPayloadWithContext(ctx context.Context, raw []byte, 
 }
 
 // synthesizeOAuthPayload handles a synthesize o auth payload.
-func (h *Handler) synthesizeOAuthPayload(raw []byte, fileUUID string, originalFilename string) []*coreauth.Auth {
+func (h *Handler) synthesizeOAuthPayload(raw []byte, fileUUID string, originalFilename string) ([]*coreauth.Auth, error) {
 	// Resolve credential context before calling upstream OAuth services.
 	cfg := h.runtime.Config()
 	authPath := fileUUID + ".json"
@@ -373,9 +380,12 @@ func (h *Handler) synthesizeOAuthPayload(raw []byte, fileUUID string, originalFi
 		_ = auth
 		return fileUUID
 	}
-	auths := synthesizer.SynthesizeAuthFile(sctx, authPath, raw)
+	auths, errSynthesize := synthesizer.SynthesizeAuthFile(sctx, authPath, raw)
+	if errSynthesize != nil {
+		return nil, errSynthesize
+	}
 	cluster.ApplyOriginalAuthFileName(auths, originalFilename)
-	return auths
+	return auths, nil
 }
 
 // replaceOAuthPayloadAuths handles a replace o auth payload auths.
@@ -580,6 +590,9 @@ func authFileEntry(auth *coreauth.Auth) gin.H {
 	if priority := priorityFromAuth(auth); priority != nil {
 		entry["priority"] = *priority
 	}
+	if weight := weightFromAuth(auth); weight != nil {
+		entry["weight"] = *weight
+	}
 	if note := noteFromAuth(auth); note != "" {
 		entry["note"] = note
 	}
@@ -597,6 +610,9 @@ func authFileEntry(auth *coreauth.Auth) gin.H {
 	}
 	if requestRetry, ok := auth.RequestRetryOverride(); ok {
 		entry["request-retry"] = requestRetry
+	}
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "xai") || hasUsingAPIInAuth(auth) {
+		entry["using_api"] = usingAPIFromAuth(auth)
 	}
 	return entry
 }
@@ -620,7 +636,7 @@ func authFileDisplayName(auth *coreauth.Auth) string {
 }
 
 // applyOAuthFieldPatch applies an o auth field patch.
-func applyOAuthFieldPatch(auth *coreauth.Auth, fields map[string]json.RawMessage, cfg *appconfig.Config) (bool, error) {
+func applyOAuthFieldPatch(auth *coreauth.Auth, fields map[string]json.RawMessage) (bool, error) {
 	// Resolve credential context before calling upstream OAuth services.
 	normalizedFields := make(map[string]json.RawMessage, len(fields))
 	pathOwners := make(map[string]string, len(fields))
@@ -744,6 +760,14 @@ func applyOAuthFieldPatch(auth *coreauth.Auth, fields map[string]json.RawMessage
 				continue
 			}
 		}
+		if metadataPath == "weight" {
+			if value == nil {
+				delete(auth.Metadata, "weight")
+				touchedRoots["weight"] = struct{}{}
+				changed = true
+				continue
+			}
+		}
 		if metadataPath == "headers" {
 			applyOAuthHeadersPatch(auth, value)
 		} else if errSet := setOAuthMetadataValue(auth.Metadata, metadataPath, value); errSet != nil {
@@ -755,7 +779,9 @@ func applyOAuthFieldPatch(auth *coreauth.Auth, fields map[string]json.RawMessage
 		changed = true
 	}
 	if changed {
-		syncOAuthMetadataFields(auth, touchedRoots, cfg)
+		if errSync := syncOAuthMetadataFields(auth, touchedRoots); errSync != nil {
+			return false, errSync
+		}
 	}
 	return changed, nil
 }
@@ -822,6 +848,8 @@ func canonicalOAuthMetadataKey(key string) string {
 		return "request_scoped_errors"
 	case "tool-prefix-disabled":
 		return "tool_prefix_disabled"
+	case "using-api":
+		return "using_api"
 	default:
 		return key
 	}
@@ -849,6 +877,8 @@ func legacyOAuthMetadataKey(canonicalKey string) string {
 		return "request-scoped-errors"
 	case "tool_prefix_disabled":
 		return "tool-prefix-disabled"
+	case "using_api":
+		return "using-api"
 	default:
 		return ""
 	}
@@ -949,9 +979,9 @@ func oauthHeadersStringMap(value any) (map[string]string, bool) {
 	}
 }
 
-func syncOAuthMetadataFields(auth *coreauth.Auth, touchedRoots map[string]struct{}, cfg *appconfig.Config) {
+func syncOAuthMetadataFields(auth *coreauth.Auth, touchedRoots map[string]struct{}) error {
 	if auth == nil || len(touchedRoots) == 0 {
-		return
+		return nil
 	}
 	if _, ok := touchedRoots["prefix"]; ok {
 		auth.Prefix = stringFromAny(auth.Metadata["prefix"])
@@ -965,36 +995,27 @@ func syncOAuthMetadataFields(auth *coreauth.Auth, touchedRoots map[string]struct
 	if _, ok := touchedRoots["priority"]; ok {
 		syncOAuthPriorityAttribute(auth)
 	}
+	if _, ok := touchedRoots["weight"]; ok {
+		syncOAuthWeightAttribute(auth)
+	}
 	if _, ok := touchedRoots["note"]; ok {
 		syncOAuthNoteAttribute(auth)
 	}
 	if _, ok := touchedRoots["websockets"]; ok {
 		syncOAuthWebsocketsAttribute(auth)
 	}
+	if _, ok := touchedRoots["using_api"]; ok {
+		syncOAuthUsingAPIAttribute(auth)
+	}
 	if _, ok := touchedRoots["disabled"]; ok {
 		syncOAuthDisabledState(auth)
 	}
 	if _, ok := touchedRoots["excluded_models"]; ok {
-		syncOAuthExcludedModelsAttribute(auth, cfg)
+		if errSync := synthesizer.SyncOAuthExcludedModelsAttributes(auth); errSync != nil {
+			return errSync
+		}
 	}
-}
-
-// syncOAuthExcludedModelsAttribute rebuilds the runtime excluded_models attributes from metadata,
-// merging global oauth-excluded-models the same way auth file synthesis does.
-func syncOAuthExcludedModelsAttribute(auth *coreauth.Auth, cfg *appconfig.Config) {
-	if auth == nil {
-		return
-	}
-	if auth.Attributes == nil {
-		auth.Attributes = make(map[string]string)
-	}
-	// ApplyAuthExcludedModelsMeta never clears attributes, so drop stale values first.
-	delete(auth.Attributes, "excluded_models")
-	delete(auth.Attributes, "excluded_models_hash")
-	if cfg == nil {
-		cfg = &appconfig.Config{}
-	}
-	synthesizer.ApplyAuthExcludedModelsMeta(auth, cfg, synthesizer.ExtractExcludedModelsFromMetadata(auth.Metadata), "oauth")
+	return nil
 }
 
 func syncOAuthHeaderAttributes(auth *coreauth.Auth) {
@@ -1027,6 +1048,21 @@ func syncOAuthPriorityAttribute(auth *coreauth.Auth) {
 		return
 	}
 	auth.Attributes["priority"] = strconv.Itoa(priority)
+}
+
+func syncOAuthWeightAttribute(auth *coreauth.Auth) {
+	if auth == nil {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	weight, ok := oauthIntValue(auth.Metadata["weight"])
+	if !ok || weight < 0 {
+		delete(auth.Attributes, "weight")
+		return
+	}
+	auth.Attributes["weight"] = strconv.Itoa(weight)
 }
 
 func oauthIntValue(value any) (int, bool) {
@@ -1082,6 +1118,21 @@ func syncOAuthWebsocketsAttribute(auth *coreauth.Auth) {
 		return
 	}
 	auth.Attributes["websockets"] = strconv.FormatBool(websockets)
+}
+
+func syncOAuthUsingAPIAttribute(auth *coreauth.Auth) {
+	if auth == nil {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	usingAPI, ok := oauthBoolValue(auth.Metadata["using_api"])
+	if !ok {
+		delete(auth.Attributes, "using_api")
+		return
+	}
+	auth.Attributes["using_api"] = strconv.FormatBool(usingAPI)
 }
 
 func oauthBoolValue(value any) (bool, bool) {
@@ -1171,6 +1222,26 @@ func priorityFromAuth(auth *coreauth.Auth) *int {
 	return nil
 }
 
+// weightFromAuth derives an explicit non-negative routing weight from auth.
+func weightFromAuth(auth *coreauth.Auth) *int {
+	if auth == nil {
+		return nil
+	}
+	if auth.Attributes != nil {
+		if weightRaw := strings.TrimSpace(auth.Attributes["weight"]); weightRaw != "" {
+			if weight, errAtoi := strconv.Atoi(weightRaw); errAtoi == nil && weight >= 0 {
+				return &weight
+			}
+		}
+	}
+	if auth.Metadata != nil {
+		if weight, ok := oauthIntValue(auth.Metadata["weight"]); ok && weight >= 0 {
+			return &weight
+		}
+	}
+	return nil
+}
+
 func prefixFromAuth(auth *coreauth.Auth) string {
 	if auth == nil {
 		return ""
@@ -1212,6 +1283,52 @@ func websocketsFromAuth(auth *coreauth.Auth) bool {
 	if auth.Metadata != nil {
 		if websockets, ok := oauthBoolValue(auth.Metadata["websockets"]); ok {
 			return websockets
+		}
+	}
+	return false
+}
+
+func hasUsingAPIInAuth(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	if auth.Attributes != nil {
+		if _, ok := oauthBoolValue(auth.Attributes["using_api"]); ok {
+			return true
+		}
+		if _, ok := oauthBoolValue(auth.Attributes["using-api"]); ok {
+			return true
+		}
+	}
+	if auth.Metadata != nil {
+		if _, ok := oauthBoolValue(auth.Metadata["using_api"]); ok {
+			return true
+		}
+		if _, ok := oauthBoolValue(auth.Metadata["using-api"]); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func usingAPIFromAuth(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	if auth.Attributes != nil {
+		if usingAPI, ok := oauthBoolValue(auth.Attributes["using_api"]); ok {
+			return usingAPI
+		}
+		if usingAPI, ok := oauthBoolValue(auth.Attributes["using-api"]); ok {
+			return usingAPI
+		}
+	}
+	if auth.Metadata != nil {
+		if usingAPI, ok := oauthBoolValue(auth.Metadata["using_api"]); ok {
+			return usingAPI
+		}
+		if usingAPI, ok := oauthBoolValue(auth.Metadata["using-api"]); ok {
+			return usingAPI
 		}
 	}
 	return false

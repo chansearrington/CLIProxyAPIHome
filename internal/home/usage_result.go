@@ -41,8 +41,9 @@ func (r *Runtime) RecordUsagePayload(ctx context.Context, payload string) {
 	}
 	body := gjson.Get(payload, "fail.body").String()
 	headers := parseResponseHeaders(payload)
+	failCode := strings.TrimSpace(gjson.Get(payload, "fail.code").String())
 
-	result := coreauth.NewUsageResultWithHeaders(authIndex, provider, model, statusCode, body, headers)
+	result := coreauth.NewUsageResultWithCodeAndHeaders(authIndex, provider, model, statusCode, body, failCode, headers)
 	result.AccessTokenSHA256 = strings.TrimSpace(gjson.Get(payload, "access_token_sha256").String())
 	r.coreManager.MarkResult(ctx, result)
 }

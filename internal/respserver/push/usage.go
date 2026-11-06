@@ -60,6 +60,7 @@ func handleUsage(ctx context.Context, env dispatch.Env, args []string) dispatch.
 		persisted, errPersist := env.Runtime.PersistClusterUsagePayload(ctx, payload, receivedAt)
 		if errPersist != nil {
 			log.Errorf("usage database write error: %v", errPersist)
+			return dispatch.Err("usage database write failed")
 		}
 		if persisted {
 			return dispatch.Integer(1)
@@ -87,6 +88,9 @@ func usagePayloadWithCPAIdentity(payload string, env dispatch.Env) (string, erro
 
 // SanitizeUsageLog removes provider API key secrets from the fallback usage log.
 func SanitizeUsageLog() error {
+	logFilesMu.RLock()
+	defer logFilesMu.RUnlock()
+
 	usageLogMu.Lock()
 	defer usageLogMu.Unlock()
 	return sanitizeUsageLogPathLocked(filepath.Join("logs", "usage.log"))
@@ -98,6 +102,9 @@ func appendUsageLog(payload string) error {
 	if strings.TrimSpace(payload) == "" {
 		return fmt.Errorf("empty payload")
 	}
+
+	logFilesMu.RLock()
+	defer logFilesMu.RUnlock()
 
 	usageLogMu.Lock()
 	defer usageLogMu.Unlock()

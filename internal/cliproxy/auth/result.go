@@ -240,6 +240,21 @@ func (m *Manager) applyResultTransition(auth *Auth, result Result, resultModel s
 	if isRequestScopedNotFoundResultError(result.Error) {
 		return transition
 	}
+	if isStreamTruncatedResultError(result.Error) {
+		// A truncated accepted stream already submitted its generation
+		// upstream; record the failure without cooling the credential/model.
+		state := ensureModelState(auth, resultModel)
+		state.Status = StatusError
+		state.UpdatedAt = now
+		if result.Error != nil {
+			state.LastError = cloneError(result.Error)
+			state.StatusMessage = result.Error.Message
+			auth.LastError = cloneError(result.Error)
+			auth.StatusMessage = result.Error.Message
+		}
+		auth.UpdatedAt = now
+		return transition
+	}
 	state := ensureModelState(auth, resultModel)
 	state.Unavailable = true
 	state.Status = StatusError
@@ -1242,14 +1257,21 @@ func quotaCooldownAfterFailure(quota QuotaState, now time.Time, result Result) (
 // through this entry point -- use NewUsageResultWithHeaders when headers are
 // available.
 func NewUsageResult(authIndex, provider, model string, statusCode int, body string) Result {
-	return NewUsageResultWithHeaders(authIndex, provider, model, statusCode, body, nil)
+	return NewUsageResultWithCodeAndHeaders(authIndex, provider, model, statusCode, body, "", nil)
 }
 
-// NewUsageResultWithHeaders creates a new usage result, additionally parsing
-// provider-specific reset hints out of response headers for providers whose
-// rate-limit information is not carried in the response body (Claude's
-// Anthropic-Ratelimit-Unified-* headers).
+// NewUsageResultWithHeaders preserves provider retry/reset hints from response headers.
 func NewUsageResultWithHeaders(authIndex, provider, model string, statusCode int, body string, headers http.Header) Result {
+	return NewUsageResultWithCodeAndHeaders(authIndex, provider, model, statusCode, body, "", headers)
+}
+
+// NewUsageResultWithCode preserves structured downstream failure classifications.
+func NewUsageResultWithCode(authIndex, provider, model string, statusCode int, body string, code string) Result {
+	return NewUsageResultWithCodeAndHeaders(authIndex, provider, model, statusCode, body, code, nil)
+}
+
+// NewUsageResultWithCodeAndHeaders preserves failure classifications and provider quota hints.
+func NewUsageResultWithCodeAndHeaders(authIndex, provider, model string, statusCode int, body string, code string, headers http.Header) Result {
 	// Keep validation before state changes so failures leave existing data intact.
 	authIndex = strings.TrimSpace(authIndex)
 	provider = strings.TrimSpace(provider)
@@ -1287,10 +1309,16 @@ func NewUsageResultWithHeaders(authIndex, provider, model string, statusCode int
 		ResetAt:         resetAt,
 		CredentialScope: credentialScope,
 		Error: &Error{
+			Code:       strings.TrimSpace(code),
 			Message:    message,
 			HTTPStatus: statusCode,
 		},
 	}
+}
+
+// isStreamTruncatedResultError excludes locally truncated streams from credential cooldowns.
+func isStreamTruncatedResultError(err *Error) bool {
+	return err != nil && err.Code == ErrorCodeStreamTruncated
 }
 
 // claudeRateLimitWarningWindows lists the Anthropic unified rate-limit window
