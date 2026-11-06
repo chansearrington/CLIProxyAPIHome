@@ -431,8 +431,20 @@ func (c *Collector) collectCredential(ctx context.Context, auth *coreauth.Auth, 
 	// Partial quota families can preserve an exhausted window that is absent from
 	// this response. Metadata-only failures do not make the amounts incomplete.
 	if result.replaceWindows && len(result.preserveWindowPrefixes) == 0 {
-		c.liftStaleQuotaCooldown(ctx, auth, result.windows, probeStartedAt, observedAt)
+		c.liftStaleQuotaCooldown(ctx, auth, independentQuotaWindows(result.windows), probeStartedAt, observedAt)
 	}
+}
+
+func independentQuotaWindows(windows []cluster.QuotaWindow) []cluster.QuotaWindow {
+	independent := make([]cluster.QuotaWindow, 0, len(windows))
+	for _, window := range windows {
+		// Product shares describe use of the same xAI pool, not another quota.
+		if window.ScopeID != nil && strings.EqualFold(strings.TrimSpace(*window.ScopeID), "xai-product-usage") {
+			continue
+		}
+		independent = append(independent, window)
+	}
+	return independent
 }
 
 // liftStaleQuotaCooldown lifts quota routing blocks that were recorded before

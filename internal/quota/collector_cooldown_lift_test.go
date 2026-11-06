@@ -189,6 +189,13 @@ func TestQuotaWindowsNotExhausted(t *testing.T) {
 	}
 }
 
+func TestQuotaProductBreakdownAloneCannotReopenRouting(t *testing.T) {
+	scope := "xai-product-usage"
+	if quotaWindowsNotExhausted(independentQuotaWindows([]cluster.QuotaWindow{{Status: "healthy", ScopeID: &scope}})) {
+		t.Fatal("product distribution without independent amounts authorized recovery")
+	}
+}
+
 func TestQuotaLiftRejectsObservationThatEndsDuringProbe(t *testing.T) {
 	observedAt := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
 	for _, field := range []string{"expiry", "reset"} {

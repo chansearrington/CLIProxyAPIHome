@@ -31,6 +31,9 @@ func TestQuotaRecoveryRequiresCompleteAmountsButNotProfileMetadata(t *testing.T)
 			fixture.profileStatus = 503
 		}
 		fixture.weekly = strings.Replace(fixture.weekly, `"currentPeriod":`, `"creditUsagePercent":`+used+`,"currentPeriod":`, 1)
+		if phase.Load() == 2 {
+			fixture.weekly = strings.Replace(fixture.weekly, `"currentPeriod":`, `"productUsage":[{"product":"GrokBuild","usagePercent":100}],"currentPeriod":`, 1)
+		}
 		if phase.Load() == 1 {
 			fixture.weeklyStatus = 503
 		}
