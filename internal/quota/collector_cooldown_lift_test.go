@@ -289,8 +289,8 @@ func TestCollectorLiftKeepsQuotaBlockRecordedDuringProbe(t *testing.T) {
 				t.Errorf("record in-flight 429: %v", errMutate)
 			}
 			_, _ = w.Write([]byte(`{"plan_type":"pro","rate_limit":{` +
-				`"primary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_at":1792771200},` +
-				`"secondary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_at":1793318400}}}`))
+				`"primary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_at":` + strconv.FormatInt(base.Add(4*time.Hour).Unix(), 10) + `},` +
+				`"secondary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_at":` + strconv.FormatInt(base.Add(6*24*time.Hour).Unix(), 10) + `}}}`))
 		case "/resets":
 			_, _ = w.Write([]byte(`{"available_count":0,"credits":[]}`))
 		default:
