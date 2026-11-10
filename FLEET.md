@@ -55,8 +55,8 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.43** (Home's automatic patch rollout, phase complete; read from Home's `/fleet` API
-  2026-10-26 02:00 UTC). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.64** on all five machines (verified native requests, running-process
+  banners and artifact hashes on 2026-11-10; ws-0047). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -307,3 +307,25 @@ At the November 10 review, Home is 1.1.8 and all nodes are 8.0.58; stable target
 (schema 17) and CPA 8.0.64. Moxy records repeated `rollback_not_ready` attempts for 8.0.61/63/64.
 Diagnose and prove the updater/rollback path before another retry. This review did not change
 runtime policy or deploy anything. See the [assessment](docs/fleet/ws-0046-upstream-review-nov10.md).
+
+
+## November 10 upstream upgrade accepted (ws-0047)
+
+Home **1.1.9** (`cpa-home:1.1.9-claude-fleet-44a3c27`, immutable image `41924ea4…`) and
+all five CPA **8.0.64** nodes are deployed and accepted. Home PR #32 and agent-os readiness
+PR #850 are merged and independently reviewed. A real Moxy rollback/re-upgrade, isolated
+schema/startup rehearsals, 22 final native fleet requests with usage attribution, both native
+Claude Code generations, panel assets, data preservation and direct OpenAI recovery passed.
+The temporary Claude software-version header override was removed after node acceptance;
+No account priority or access scope was changed. Maintenance is restored and parent locks released.
+
+Rollback must retain the current database and rotating credentials. Before starting the old
+1.1.8 refresh engine, disable automatic restart first, freeze/kill the candidate and wait until it is
+stopped and unpaused, then verify that the live WAL-aware `codex_refresh_journal` is empty. Do not
+resume the candidate between that check and the old-image start. A missing/unreadable/nonempty journal forbids that
+old-image path; recover with the journal-aware new image. Never restore an older full database
+snapshot over current authorizations. The two retained DB snapshots are Nov 10 pre-1.1.9 and
+Nov 6 pre-1.1.8; ordinary configuration changes still require targeted backups only.
+
+Full evidence, recovery launcher/expiry, first-attempt limitations and deployment-check corrections:
+[`ws-0047-upgrade-119-8064.md`](docs/fleet/ws-0047-upgrade-119-8064.md).
