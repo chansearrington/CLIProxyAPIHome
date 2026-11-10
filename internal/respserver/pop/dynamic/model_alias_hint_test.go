@@ -106,7 +106,7 @@ func TestRESPDispatchModelAliasHintsPreserveErrorCodes(t *testing.T) {
 	}
 }
 
-func TestRESPDispatchModelAliasHintBeforeBillingRejection(t *testing.T) {
+func TestRESPDispatchUnpricedModelAliasHintForUserKey(t *testing.T) {
 	repo, runtime := newAliasHintRESPRuntime(t)
 	publishAliasHintRESPAuth(t, repo, runtime, "upstream-priced-218", "friendly-priced-218")
 	username, unlimited := "alias-hint-user", true
@@ -126,8 +126,8 @@ func TestRESPDispatchModelAliasHintBeforeBillingRejection(t *testing.T) {
 		t.Fatalf("expected model_not_found: %+v", reply)
 	}
 	message := gjson.GetBytes(reply.BulkString, "error.message").String()
-	if !strings.Contains(message, "has no configured price") || !strings.Contains(message, `under the alias "friendly-priced-218"`) {
-		t.Fatalf("billing error must retain its reason and include the alias: %s", reply.BulkString)
+	if strings.Contains(message, "no configured price") || !strings.Contains(message, `under the alias "friendly-priced-218"`) {
+		t.Fatalf("lookup error must include the alias without a billing availability gate: %s", reply.BulkString)
 	}
 	if result, replyAlias := requestAliasHintRESP(t, runtime, key, "friendly-priced-218"); result == nil || replyAlias != nil {
 		t.Fatalf("priced alias should route: result=%+v reply=%+v", result, replyAlias)
