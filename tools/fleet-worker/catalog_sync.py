@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Add public CPA Home models to OpenClaw without changing agent selections."""
+"""Reconcile CPA model menus without changing operator model selections."""
 import argparse
 import copy
 import datetime
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -62,12 +64,20 @@ def atomic_write(path, content, expected):
             output.write(content)
             output.flush()
             os.fsync(output.fileno())
-        if path.read_bytes() != expected:
+        if (path.read_bytes() if path.exists() else None) != expected:
             raise SyncError('concurrent_config_change')
         os.replace(name, path)
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def retain_two_backups(directory, prefix):
+    backups = sorted(directory.glob(prefix + '*'),
+                     key=lambda entry: entry.stat().st_mtime_ns, reverse=True)
+    for obsolete in backups[2:]:
+        if obsolete.is_dir() and not obsolete.is_symlink():
+            shutil.rmtree(obsolete)
 
 
 def cli(args, config=None):
@@ -119,7 +129,134 @@ def verify_views(ids):
         raise SyncError('gateway_unhealthy')
 
 
-def reconcile(home, apply=False, metadata=None):
+def has_openclaw_target(home):
+    path = home / '.openclaw/openclaw.json'
+    return (path.is_file() and not path.is_symlink()
+            and json.loads(path.read_bytes()).get('models', {}).get('providers', {})
+            .get('cpa-gui', {}).get('baseUrl') == 'http://127.0.0.1:18317/v1')
+
+
+def has_claude_target(home):
+    path = home / '.claude/settings.json'
+    return (path.is_file() and not path.is_symlink()
+            and json.loads(path.read_bytes()).get('env', {}).get('ANTHROPIC_BASE_URL')
+            in ('http://127.0.0.1:18317', 'http://127.0.0.1:18317/'))
+
+
+def has_catalog_target(home):
+    return has_openclaw_target(home) or has_claude_target(home)
+
+
+def claude_picker_options(ids, metadata=None):
+    """Use the newest native model per family, excluding encoded provider aliases."""
+    families = {}
+    for identifier in ids:
+        match = re.fullmatch(r'claude-(fable|opus|sonnet|haiku)-(\d+(?:-\d+)*)', identifier)
+        if not match:
+            continue
+        family, version = match.groups()
+        parts = version.split('-')
+        dated = len(parts[-1]) == 8
+        normalized = parts[:-1] if dated else parts
+        rank = (tuple(int(part) for part in normalized), not dated)
+        if family not in families or rank > families[family][0]:
+            families[family] = (rank, identifier, normalized)
+    result = []
+    for family in ('fable', 'opus', 'sonnet', 'haiku'):
+        if family not in families:
+            continue
+        _, identifier, version = families[family]
+        info = (metadata or {}).get(identifier, {})
+        context = info.get('contextWindow', 0)
+        million = isinstance(context, int) and context >= 1_000_000
+        result.append({'model': identifier + ('[1m]' if million else ''),
+                       'label': family.title() + ' ' + '.'.join(version),
+                       'description': 'Claude subscription through CPA'
+                       + ('; 1,000,000-token context' if million else '')})
+    return result
+
+
+def updated_claude_config(config, generated, owned):
+    result = copy.deepcopy(config)
+    picker = result.setdefault('modelPicker', {})
+    if not isinstance(picker, dict) or not isinstance(picker.get('options', []), list):
+        raise SyncError('invalid_claude_picker')
+    options = picker.get('options', [])
+    if any(not isinstance(row, dict) or not isinstance(row.get('model'), str) for row in options):
+        raise SyncError('invalid_claude_picker')
+    # A modified generated row becomes user-owned; never remove or overwrite it.
+    custom = [row for row in options if row not in owned]
+    existing = {row['model'] for row in custom}
+    managed = [row for row in generated if row['model'] not in existing]
+    picker['options'] = managed + custom
+    return result, managed
+
+
+def reconcile_claude(home, ids, apply=False, metadata=None):
+    path = home / '.claude/settings.json'
+    if not has_claude_target(home):
+        raise SyncError('unexpected_claude_endpoint')
+    original = path.read_bytes()
+    before = json.loads(original)
+    if before.get('env', {}).get('ANTHROPIC_BASE_URL') not in (
+            'http://127.0.0.1:18317', 'http://127.0.0.1:18317/'):
+        raise SyncError('unexpected_claude_endpoint')
+    state = home / '.openclaw/state/cpa-home-fleet-worker/claude-picker.json'
+    if state.is_symlink():
+        raise SyncError('unsafe_claude_picker_state')
+    old_state = state.read_bytes() if state.exists() else None
+    ownership = json.loads(old_state) if old_state is not None else {'schema': 1, 'options': []}
+    if (ownership.get('schema') != 1 or not isinstance(ownership.get('options'), list)
+            or any(not isinstance(row, dict) or not isinstance(row.get('model'), str)
+                   for row in ownership['options'])):
+        raise SyncError('invalid_claude_picker_state')
+    generated = claude_picker_options(ids, metadata)
+    if not generated:
+        raise SyncError('no_native_claude_models')
+    after, managed = updated_claude_config(before, generated, ownership['options'])
+    next_state = (json.dumps({'schema': 1, 'options': managed}, indent=2) + '\n').encode()
+    changed = before != after
+    report = {'status': 'would-update' if changed else 'current',
+              'models': [row['model'] for row in managed], 'defaults_preserved': True}
+    if not apply:
+        return report
+    state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    backup = None
+    if changed:
+        directory = state.parent / 'catalog-backups'
+        directory.mkdir(mode=0o700, exist_ok=True)
+        backup = Path(tempfile.mkdtemp(prefix='claude-picker-', dir=str(directory)))
+        for name, content in [('settings-before.json', original),
+                              ('ownership-before.json', old_state or b'null\n')]:
+            target = backup / name
+            target.write_bytes(content)
+            target.chmod(0o600)
+        candidate = (json.dumps(after, indent=2, ensure_ascii=False) + '\n').encode()
+        atomic_write(path, candidate, original)
+    try:
+        if old_state != next_state:
+            atomic_write(state, next_state, old_state)
+    except Exception:
+        if changed:
+            current_bytes = path.read_bytes()
+            current = json.loads(current_bytes)
+            if current.get('modelPicker', {}).get('options') != after['modelPicker']['options']:
+                raise SyncError('claude_picker_rollback_conflict') from None
+            if 'options' in before.get('modelPicker', {}):
+                current['modelPicker']['options'] = before['modelPicker']['options']
+            else:
+                current['modelPicker'].pop('options', None)
+                if not current['modelPicker'] and 'modelPicker' not in before:
+                    current.pop('modelPicker')
+            atomic_write(path, (json.dumps(current, indent=2) + '\n').encode(), current_bytes)
+        raise
+    if changed:
+        retain_two_backups(state.parent / 'catalog-backups', 'claude-picker-')
+    return dict(report, status='updated' if changed else 'current',
+                backup=str(backup) if backup else None)
+
+
+def reconcile_openclaw(home, apply=False, metadata=None):
     path = home / '.openclaw/openclaw.json'
     if path.is_symlink():
         raise SyncError('unsafe_config_path')
@@ -170,7 +307,36 @@ def reconcile(home, apply=False, metadata=None):
             current['agents']['defaults']['models'] = before['agents']['defaults']['models']
             atomic_write(path, (json.dumps(current, indent=2)+'\n').encode(), current_bytes)
         raise SyncError('runtime_failed_restored_model_fields') from None
+    if backup:
+        retain_two_backups(backup.parent, 'cpa-catalog-')
     return dict(report, status='updated' if backup else 'current', backup=str(backup) if backup else None)
+
+
+def reconcile(home, apply=False, metadata=None, client_key=None):
+    reports = {}
+    if has_claude_target(home):
+        # Use the original key's local CPA view, never the global metadata alone.
+        key = client_key
+        if not key:
+            key_path = home / '.config/cpa-home/client-key'
+            if key_path.is_file():
+                key = key_path.read_text().strip()
+        if not key:
+            raise SyncError('client_key_unavailable')
+        config = {'models': {'providers': {'cpa-gui': {
+            'baseUrl': 'http://127.0.0.1:18317/v1', 'apiKey': key}}}}
+        ids = fetch_ids(config)
+        reports['claude'] = reconcile_claude(home, ids, apply, metadata)
+    # A slow OpenClaw validation must not prevent the independent Claude picker update.
+    # Still fail the overall Home task if either configured target cannot be verified.
+    if has_openclaw_target(home):
+        reports['openclaw'] = reconcile_openclaw(home, apply, metadata)
+    if not reports:
+        raise SyncError('no_catalog_target')
+    status = ('updated' if any(r['status'] == 'updated' for r in reports.values())
+              else 'would-update' if any(r['status'] == 'would-update' for r in reports.values())
+              else 'current')
+    return {'status': status, 'targets': reports, 'defaults_preserved': True}
 
 
 def main():

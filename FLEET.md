@@ -89,6 +89,27 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   3,461,537,792 bytes, full integrity check `ok`, SHA-256
   `595c33ef8bb1baec302286c5719d035120f2a7d3da5a48e9cff4572c4987fc97`.
 
+## Account additions
+
+- User-selected rule (2026-11-07): give a newly added account the next highest priority
+  number for its provider (`max(existing priorities) + 1`). Higher numbers run first.
+  Leave every existing account's priority unchanged; do not renumber accounts to insert
+  a new one near the fallback. Add shared accounts to channel group 1 and the existing
+  CodexBar access-token sync, preserving Home's sole refresh-token ownership.
+
+## Backup retention
+
+- User-selected scope (2026-11-07): configuration-only changes use a targeted backup of
+  the affected settings and access bindings, with a scoped rollback. Do not copy the
+  full usage/history database for routine configuration edits. Full database snapshots
+  remain appropriate for image upgrades, schema migrations and database maintenance.
+- User-selected rule (2026-11-07): keep only the two newest verified Home database
+  backup versions in `/mnt/user/appdata/cpa-home/data/backups`, across all operation
+  names. Keep at most two versions of each other backup/archive type. A new database
+  snapshot counts only after its integrity check and checksum complete successfully.
+  Remove obsolete SQLite sidecars and logs with their superseded snapshots. This rule
+  supersedes older workstream instructions to retain individual historical backups.
+
 ## Secrets
 
 - Nothing in this repo may contain the Home management password, any node's `home_jwt`, an API
@@ -116,14 +137,26 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   (Home `/fleet` and `/nodes`, read 2026-10-26 02:00 UTC). Home's automatic patch rollout carried them there
   from 8.0.29 (ws-0030, ws-0031); the last hand-verified restart-in-place rollout (8.0.29) passed each node's
   native Claude/Codex/Copilot completions, protected-key fences and Home usage attribution.
-- Shared Claude order is Gmail (10), HypeSports (9), 82 (8), Chip (7), Developer (6), Moxy (5), Lara (4), The Vanderblooms (3), Hyper Rally (2); Microsoft (1)
+- Shared Claude order is Chip Outlook (13), Character8201 (12), Gmail (11), HypeSports (10), 82 (9), Chip (8), Developer (7), Moxy (6), Lara (5), The Vanderblooms (4), Hyper Rally (3), Hotmail (2); Microsoft (1)
   remains Chanse-only emergency fallback. All six keys and five nodes selected Hyper Rally in the ws-0025
   routing proof while higher-priority accounts were unavailable; native Opus also passed.
   Earlier proofs selected Moxy (ws-0017), Developer (ws-0016) and Lara (ws-0015).
-  Nine shared Claude accounts and the private Microsoft fallback are in CodexBar with
+  Eleven shared Claude accounts and the private Microsoft fallback are in CodexBar with
   Home access-token sync every 120 seconds; selection now follows the MacBook/key-6 latest
   successful Claude request. Home alone owns refresh tokens.
-  CodexBar is now 0.75.0; all ten OAuth accounts and scheduled sync/follow pass.
+  On 2026-11-05, repaired the local Claude sync so expired Home access tokens cannot block
+  authorized accounts. Nine Claude accounts and all four Codex accounts pass live usage;
+  HypeSports Claude and Microsoft Claude are currently disabled/unauthorized in Home and need
+  reauthorization there. All eleven Claude mappings remain and retry every 120 seconds.
+  [CodexBar sync recovery](docs/fleet/ws-0039-codexbar-sync-recovery.md).
+  The in-place OAuth Reconnect feature is deployed and verified on image `4cdbc4b`.
+  [Verified artifact and cutover handoff](docs/fleet/ws-0040-credential-reconnect-acceptance.md).
+  CodexBar is now 0.83.0; eleven Claude mappings are retained. Hotmail's OAuth
+  usage and provider-backed Pro quota are verified. Its shared binding is 28; all six original
+  keys pass Sonnet, and an isolated new-account key passed Sonnet/Opus on the four running nodes.
+  Lara's separate post-upgrade setup was completed physically; her Workbench, gateway and CPA
+  node are restored, all five memberships are healthy, and Lara passed native Sonnet through her
+  own node (usage 1811514). [Hotmail acceptance and desktop recovery](docs/fleet/ws-0035-hotmail-claude-shared.md).
   The ws-0026 local freeze mitigation still disables CodexBar's optional OpenAI Web Extras and
   quota-warning sounds, avoiding captured WebKit/audio main-thread blocks. Silent warnings,
   all ten Claude account entries, token sync and automatic account following remain enabled.
@@ -212,3 +245,65 @@ The always-on canary/required nodes continue while the optional MacBook sleeps. 
 remain explicit operator choices; menu sync does not promote generations automatically.
 Before manual fleet maintenance, pause Home fleet policy and let any active task finish/reconcile,
 then follow the normal fleet-lock procedure. Do not install a competing laptop coordinator.
+
+## November 6 Home recovery
+
+Home 1.1.8 fleet image `87210da` is deployed and accepted. SQLite index creation had
+exhausted the production container's 64 MB `/tmp`; Compose now places SQLite temporary
+files on the data volume. All five nodes and all six keys passed live acceptance,
+account/access/history preservation checks passed, and the saved maintenance policy
+was restored. See [upgrade and recovery evidence](docs/fleet/ws-0041-home-118-recovery.md).
+
+## November 7 account setup and backup policy
+
+Character8201 (`character8201@gmail.com`) is shared at priority **12** (binding 30),
+with every existing priority unchanged. All six original keys and all five nodes passed
+native Claude requests attributed to the new account; Sonnet and Opus passed. CodexBar
+has twelve Claude mappings and follows this account from MacBook/key-6 usage. Main and
+fleet are synchronized with upstream main and pushed. Configuration-only changes now
+use targeted configuration backups; the backup directory retains two verified database
+snapshots and at most two versions of each other backup type. See the
+[account setup and retention record](docs/fleet/ws-0042-character8201-claude-shared.md).
+
+## November 9 urgent account addition
+
+`chip.bullard@outlook.com` is shared at Claude priority **13** (binding 31), with all
+existing priorities unchanged. All six keys passed Sonnet and key 6 passed Opus through
+the MacBook node; all seven usage records identify the new account. Only a 13 KB targeted
+configuration backup was created. Maintenance was restored and locks released. This request
+was scoped to CPA Home. See the [account record](docs/fleet/ws-0043-chip-outlook-claude-shared.md).
+
+## November 10 Fable 5.2 and Claude Code catalog sync
+
+Fable 5.2 now serves through all five nodes and all six original keys. Home's DB-backed
+`upstream.claude.header-defaults` sets the measured Claude Code 2.1.300 software baseline
+(SDK 0.128.0, runtime v26.3.0), fixing the upstream 2.1.280 rejection without rebuilding nodes.
+The override controls both software headers and the signed billing version. Do not diagnose
+future version-gate failures from the fallback literals alone; inspect the configured baseline.
+
+All five machines use fleet-worker bundle `80bc72a639456aed`. Home's existing catalog tasks
+now reconcile Claude Code's picker alongside OpenClaw, including Claude-only laptops. Generated
+entries select the newest native Fable/Opus/Sonnet/Haiku family from the caller's own model
+catalog, excluding encoded provider aliases. Defaults and custom options are preserved;
+operator edits to generated rows are retained. The worker does not edit first-party caches.
+All twenty focused tests pass on Ark; native Claude Code confirms Fable 5.2 with a 1M window.
+See the [reviewed plan and deployment evidence](docs/fleet/ws-0045-fable52-fix.md).
+
+Home scheduled and accepted the new MacBook Claude-only catalog target at 2026-11-10
+16:32:56 UTC (task `cc3787e9-10ce-4668-a3a4-992f6f499103`). Normal maintenance policy is
+restored; all four operation locks are released and all five nodes remain healthy.
+
+## Upgrade recovery requirement (November 10)
+
+The user explicitly requires that upgrades never strand the agent behind a failed CPA Home.
+Before a manually initiated disruptive CPA/Home cutover, positively test an independent direct
+OpenAI/operator recovery route and keep it available through acceptance. The recovery controller
+must use SSH/Docker/launchd independently of model inference. Rehearse production mount/tmpfs
+constraints, preserve both SQLite temp-directory environment variables, and allow measured full
+startup time. Verify credential-refresh journal/fence safety during rollback, not only database
+readability. Do not copy Home-owned refresh grants into a local fallback client.
+
+At the November 10 review, Home is 1.1.8 and all nodes are 8.0.58; stable targets are Home 1.1.9
+(schema 17) and CPA 8.0.64. Moxy records repeated `rollback_not_ready` attempts for 8.0.61/63/64.
+Diagnose and prove the updater/rollback path before another retry. This review did not change
+runtime policy or deploy anything. See the [assessment](docs/fleet/ws-0046-upstream-review-nov10.md).

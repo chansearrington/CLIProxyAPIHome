@@ -172,7 +172,7 @@ def follow_selection(config, settings, payload, now=None):
             'observed_at': row['timestamp'], 'selection_changed': changed}, changed
 
 
-def validate_accounts(settings, payload, now=None):
+def validate_accounts(settings, payload, now=None, *, allow_expired=False):
     now = now or dt.datetime.now(dt.timezone.utc)
     if set(payload) != {'accounts'} or not isinstance(payload['accounts'], list):
         raise SyncError('unexpected credential response')
@@ -191,10 +191,12 @@ def validate_accounts(settings, payload, now=None):
             raise SyncError('invalid Claude access token')
         try:
             expiry = dt.datetime.fromisoformat(item['expires_at'].replace('Z', '+00:00'))
-            if expiry.tzinfo is None or expiry <= now + dt.timedelta(seconds=60):
+            if expiry.tzinfo is None:
                 raise ValueError()
         except (ValueError, TypeError, AttributeError):
             raise SyncError('Home access token expired or near expiry') from None
+        if not allow_expired and expiry <= now + dt.timedelta(seconds=60):
+            raise SyncError('Home access token expired or near expiry')
         found[item['home_id']] = item
     if set(found) != set(expected):
         raise SyncError('missing Home account')
@@ -259,13 +261,19 @@ def encoded(value):
 def sync(settings, state, stage=None, check=False):
     follow = validate_follow_settings(settings)
     payload = fetch_accounts(settings)
-    accounts = validate_accounts(settings, payload)
+    now = dt.datetime.now(dt.timezone.utc)
+    accounts = validate_accounts(settings, payload, now, allow_expired=True)
+    skipped = [a for a in settings['accounts'] if dt.datetime.fromisoformat(
+        accounts[a['home_id']]['expires_at'].replace('Z', '+00:00')) <= now + dt.timedelta(seconds=60)]
+    skipped_ids = {a['home_id'] for a in skipped}
+    eligible_settings = dict(settings, accounts=[a for a in settings['accounts']
+                                                if a['home_id'] not in skipped_ids])
     path = Path(settings['codexbar_config']).expanduser()
     if path.is_symlink():
         raise SyncError('CodexBar config must be a regular file')
     original = path.read_bytes()
     config = json.loads(original)
-    updated, changed = patched_config(config, settings, accounts)
+    updated, changed = patched_config(config, eligible_settings, accounts)
     selection_payload = None
     if follow is not None:
         try:
@@ -275,7 +283,7 @@ def sync(settings, state, stage=None, check=False):
                 raise
         except (OSError, subprocess.SubprocessError):
             pass
-    selection, selection_changed = follow_selection(updated, settings, selection_payload)
+    selection, selection_changed = follow_selection(updated, eligible_settings, selection_payload)
     for mapping in changed:
         verify_profile(accounts[mapping['home_id']]['access_token'], mapping['email'])
     if stage:
@@ -292,6 +300,9 @@ def sync(settings, state, stage=None, check=False):
     report = {'ok': True, 'mode': 'stage' if stage else 'check' if check else 'sync',
               'checked_at': dt.datetime.now(dt.timezone.utc).isoformat(),
               'changed_accounts': [a['label'] for a in changed],
+              'health': 'degraded' if skipped else 'healthy',
+              'skipped_accounts': [{'label': a['label'], 'email': a['email'],
+                                    'reason': 'Home access token expired or near expiry'} for a in skipped],
               'selection': selection,
               'accounts': [{'label': a['label'], 'email': a['email'],
                             'expires_at': accounts[a['home_id']]['expires_at']} for a in settings['accounts']]}
@@ -339,7 +350,11 @@ def main():
             print(json.dumps({'ok': False, 'error': 'management authentication blocked; fix key then remove auth-blocked'}))
             return 1
         try:
-            report = restore(settings, state) if args.restore else sync(settings, state, args.stage, args.check)
+            config_path = Path(settings['codexbar_config']).expanduser()
+            with Path(str(config_path) + '.lock').open('a') as config_lock:
+                os.chmod(config_lock.name, 0o600)
+                fcntl.flock(config_lock, fcntl.LOCK_EX)
+                report = restore(settings, state) if args.restore else sync(settings, state, args.stage, args.check)
             print(json.dumps(report))
             return 0
         except Exception as error:

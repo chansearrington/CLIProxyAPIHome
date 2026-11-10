@@ -97,6 +97,67 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), original)
         self.assertFalse((self.root / 'original-tokens.json').exists())
 
+    def add_expired_account(self):
+        self.settings['accounts'].insert(0, {'label': 'Expired', 'home_id': 'expired-home',
+                                              'codexbar_id': 'expired-bar', 'email': 'expired@example.com'})
+        self.payload['accounts'].insert(0, {'home_id': 'expired-home', 'email': 'expired@example.com',
+                                           'access_token': 'sk-ant-oat-expired-fake',
+                                           'expires_at': '2000-01-01T00:00:00Z'})
+        self.config['providers'][1]['tokenAccounts']['accounts'].append(
+            {'id': 'expired-bar', 'label': 'Expired', 'token': 'preserve-expired-token'})
+        self.path.write_bytes(sync.encoded(self.config))
+
+    def test_expired_account_does_not_block_rotation_and_recovers_on_next_poll(self):
+        self.add_expired_account()
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'verify_profile') as profile:
+            report = sync.sync(self.settings, self.root)
+            profile.assert_called_once_with('sk-ant-oat-fake-token', 'test@example.com')
+            self.assertEqual(report['health'], 'degraded')
+            self.assertEqual(report['changed_accounts'], ['Test'])
+            self.assertEqual([a['email'] for a in report['skipped_accounts']], ['expired@example.com'])
+            accounts = json.loads(self.path.read_bytes())['providers'][1]['tokenAccounts']['accounts']
+            self.assertEqual(accounts[0]['token'], 'sk-ant-oat-fake-token')
+            self.assertEqual(accounts[2]['token'], 'preserve-expired-token')
+            self.assertEqual(json.loads(self.path.read_bytes())['providers'][0], self.config['providers'][0])
+            self.assertNotIn('sk-ant-oat', json.dumps(report))
+            self.payload['accounts'][0]['expires_at'] = '2099-01-01T00:00:00Z'
+            report = sync.sync(self.settings, self.root)
+            self.assertEqual(report['health'], 'healthy')
+            self.assertEqual(report['skipped_accounts'], [])
+            self.assertEqual(report['changed_accounts'], ['Expired'])
+
+    def test_all_expired_preserves_config_without_verifying_or_backing_up(self):
+        self.payload['accounts'][0]['expires_at'] = '2000-01-01T00:00:00Z'
+        original = self.path.read_bytes()
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'verify_profile') as profile:
+            report = sync.sync(self.settings, self.root)
+            profile.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(report['health'], 'degraded')
+        self.assertFalse((self.root / 'original-tokens.json').exists())
+
+    def test_allow_expired_still_rejects_invalid_identity_fields_and_timestamp(self):
+        for change in [{'email': 'wrong@example.com'}, {'refresh_token': 'never-export'},
+                       {'expires_at': 'malformed'}, {'expires_at': '2099-01-01T00:00:00'}]:
+            with self.subTest(change=change):
+                payload = json.loads(json.dumps(self.payload))
+                payload['accounts'][0].update(change)
+                with self.assertRaises(sync.SyncError):
+                    sync.validate_accounts(self.settings, payload, self.now, allow_expired=True)
+
+    def test_expired_account_cannot_become_followed_selection(self):
+        selection = self.enable_follow()
+        self.add_expired_account()
+        selection['selection'].update(credential_id='expired-home',
+                                      timestamp=dt.datetime.now(dt.timezone.utc).isoformat())
+        with patch.object(sync, 'fetch_accounts', return_value=self.payload), \
+             patch.object(sync, 'fetch_selection', return_value=selection):
+            report = sync.sync(self.settings, self.root)
+        self.assertEqual(report['selection']['mode'], 'unmapped')
+        self.assertEqual(json.loads(self.path.read_bytes())['providers'][1]['tokenAccounts']['activeIndex'], 1)
+
     def test_concurrent_edit_is_not_overwritten(self):
         original = self.path.read_bytes()
         self.path.write_text('concurrent edit')

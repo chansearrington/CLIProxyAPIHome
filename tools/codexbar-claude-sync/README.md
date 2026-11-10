@@ -16,9 +16,12 @@ and [config persistence](https://github.com/steipete/CodexBar/blob/v0.60.3/Sourc
    management password there and downloads only the pinned credential IDs from the v8 API.
 2. On that host, project each credential to ID, email, expiry, and **access token only**.
    Refresh tokens and the management password never enter the SSH response.
-3. Reject missing accounts, unexpected fields, identity mismatches, and tokens with less than
-   60 seconds remaining. Verify every changed token's email against Anthropic's OAuth profile.
+3. Reject missing accounts, unexpected fields, identity mismatches, and malformed expiry times.
+   Skip tokens with less than 60 seconds remaining, preserving those accounts' existing local
+   tokens while continuing to sync the others. Verify every changed token's email against
+   Anthropic's OAuth profile.
 4. Replace mapped CodexBar accounts' `token` fields using a mode-0600 atomic write.
+   Share CodexBar's config lock with the Codex helper and check for concurrent edits.
    Preserve other providers, account IDs, labels, and settings. Account selection is preserved
    unless the optional usage-following setting below is enabled.
 5. Keep a private copy of the original managed tokens for rollback. Unchanged tokens cause
@@ -55,6 +58,12 @@ within two minutes of an online scheduled run. No service on Home needs installi
 `state_dir/status.json` contains non-secret status and expiry information. Keep the state
 directory private: `original-tokens.json` is the rollback copy of the old cookies/tokens.
 Avoid logging SSH responses or dumping CodexBar's config.
+
+A successful polling run can report `ok: true` with `health: degraded` when some Home access
+tokens are expired. `skipped_accounts` identifies them without exposing credentials. They
+cannot become the followed selection while skipped, and are retried automatically on every
+poll. Reconnect accounts in Home when authorization has been revoked; the helper never
+reenables disabled Home credentials or attempts local OAuth refresh.
 
 ## Follow CPA's selected Claude account
 
