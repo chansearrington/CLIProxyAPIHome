@@ -155,8 +155,13 @@ func readRefreshReceipt(ctx context.Context, journal RefreshJournal, key, token 
 		if errRead != nil {
 			return nil, journalOutcome(token, "receipt_read", errRead)
 		}
-		if len(encoded) == 0 && value != nil {
-			return usableRefreshReceipt(token, value)
+		if len(encoded) == 0 {
+			if value != nil {
+				return usableRefreshReceipt(token, value)
+			}
+			// A competing owner may have proved non-submission and released its
+			// claim before this first read. Absence is not a corrupt receipt.
+			return nil, journalOutcome(token, "receipt_read", nil)
 		}
 		var receipt refreshReceipt
 		if errDecode := json.Unmarshal(encoded, &receipt); errDecode != nil {

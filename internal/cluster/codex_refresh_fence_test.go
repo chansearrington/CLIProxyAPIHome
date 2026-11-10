@@ -134,3 +134,47 @@ func TestCodexPendingObserverCanRecoverAfterUnsubmittedOwnerReleasesClaim(t *tes
 		})
 	}
 }
+
+func TestCodexObserverRecoversWhenOwnerReleasesBeforeReceiptRead(t *testing.T) {
+	ctx := context.Background()
+	repo := newRefreshTestRepository(t)
+	key := codexJournalTestKey(t.Name())
+	owner, errClaim := repo.RefreshClaim(ctx, key)
+	if errClaim != nil || owner == "" {
+		t.Fatalf("claim grant: %v", errClaim)
+	}
+	var released atomic.Bool
+	if errRegister := repo.db.Callback().Query().Before("gorm:query").Register("test:release-before-observer-read", func(db *gorm.DB) {
+		if db.Statement.Table == "codex_refresh_journal" && released.CompareAndSwap(false, true) {
+			// The observer already lost its claim, but the owner now proves that
+			// it never submitted an exchange and removes the pending receipt.
+			if errRelease := repo.RefreshRelease(ctx, key, owner); errRelease != nil {
+				db.AddError(errRelease)
+			}
+		}
+	}); errRegister != nil {
+		t.Fatal(errRegister)
+	}
+	var calls atomic.Int32
+	transport := refreshRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return codexJournalTestResponse(req, "rotated-after-release"), nil
+	})
+	installCodexJournalTransport(t, transport)
+	auth := &coreauth.Auth{ID: t.Name(), Index: t.Name(), Provider: "codex", Status: coreauth.StatusActive,
+		Metadata: map[string]any{"access_token": "previous", "refresh_token": t.Name()},
+	}
+	runtime := newRefreshTestRuntime(t, repo, auth, transport)
+	snapshot, errRefresh := runtime.CoreManager().RefreshAuthCredential(ctx, auth)
+	var authErr *coreauth.Error
+	if !released.Load() || !errors.As(errRefresh, &authErr) || authErr.Code != coreauth.ErrorCodeRefreshOutcomeUnknown || calls.Load() != 0 {
+		t.Fatalf("released owner observation: err=%v calls=%d released=%v", errRefresh, calls.Load(), released.Load())
+	}
+	result, errRetry := runtime.CoreManager().RefreshAuthCredential(ctx, snapshot)
+	if errRetry != nil {
+		t.Fatalf("retry after qualified release must recover: %v", errRetry)
+	}
+	if result.Metadata["refresh_token"] != "rotated-after-release" || calls.Load() != 1 || codexauth.RefreshOutcomeUnknown(result.Metadata, false) != nil {
+		t.Fatalf("released observer left a permanent fence: calls=%d", calls.Load())
+	}
+}
