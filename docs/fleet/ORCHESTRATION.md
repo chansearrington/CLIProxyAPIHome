@@ -50,6 +50,17 @@ git worktree + Claude agent, and its brief is its record. Started 2026-09-30.
 | ws-0031 | Home-native fleet maintenance | CPA Home fleet service + certificate-bound local workers | — | **done** — Home owns policy/scheduling/history; four mini tasks verified with laptop coordinators absent; native inference/scopes/panel preserved |
 | ws-0032 | Third Codex account: HypeSports | database routing + local CodexBar mapping | — | **done** — Gmail 3/HypeSports 2/Hotmail 1; shared group 1, six original keys and new-account proofs on all five nodes; three-account OAuth/scheduled sync pass; temporary access removed and maintenance restored |
 | ws-0033 | Fourth Codex account: Developer | database routing + local CodexBar mapping | — | **done** — Gmail 4/HypeSports 3/Developer 2/Hotmail 1; shared group 1, six original keys and new-account proof on all five nodes; fresh quota/four-account OAuth/scheduled sync pass; temporary access removed and maintenance restored |
+| ws-0035 | Hotmail Claude subscription | configuration + CodexBar mapping | — | **done** — shared binding 28/priority 2; six keys/new-account Sonnet/Opus on four nodes pass; fresh Pro quota/eleven-account sync; policy restored/locks released; Lara physically completed upgrade setup, Workbench/gateway/CPA restored and native Sonnet passes; all five memberships healthy |
+| ws-0036 | MacBook Tailscale and Claude limit diagnosis | local VPN recovery + targeted quota recheck | — | **partially recovered** — fleet/CPA connectivity and Workbench signaling pass; recurring IPv6 receive-loop warning remains; Hyper/Hotmail healthy, eight weekly limits and Microsoft monthly spend confirmed; remote-access protocol clarification pending |
+| ws-0037 | All-account health audit | read-only account/runtime inspection + normal quota recheck | — | **done** — 18 credentials inspected; 17 enabled providers rechecked; nine real quota errors, eight active/one disabled; Claude/Codex/Copilot/Grok live requests pass; all five nodes healthy; reset/action report recorded |
+| ws-0038 | Upstream update review and upgrade plan | read-only release/source/runtime assessment | — | **plan only** — Home 1.1.7 recommended over deployed 1.1.1 fleet 897d9c6; nine merge-conflict files and schema/SDK/panel gates identified; nodes already latest 8.0.53/plugin 0.3.7; no runtime changes or deployment |
+| ws-0039 | Restore CodexBar Home source | local sync repair | — | **repaired** — expired Home tokens no longer block the nine authorized Claude accounts; four Codex accounts pass; Hotmail Claude/Developer Codex follow live Home usage; HypeSports and Microsoft Claude require Home reauthorization; no fleet upgrade |
+| ws-0040 | Reconnect existing OAuth credentials | Home PR 26 + panel fork PR 1 | — | **deployed** — approved ship JNxqfwqHob; image 4cdbc4b; all six keys/five nodes and 64 panel files pass; identities/routing/history retained; maintenance restored and locks released; upstream upgrades held |
+| ws-0042 | Character8201 Claude account and main sync | repository sync + Home/CodexBar configuration | — | **done** — main/fleet pushed; only new Claude account assigned next-highest priority 12/shared binding 30; six keys/five nodes and twelve-account CodexBar sync pass; targeted config backup/two-version retention applied, 206.3 GB removed; maintenance restored/locks released |
+| ws-0043 | Chip Outlook Claude account | Home configuration | — | **done** — new account priority 13/shared binding 31; six-key Sonnet and Opus live attribution pass; targeted config backup, maintenance restored and locks released |
+| ws-0044 | Fable 5.2 availability and Claude picker audit | read-only Home/node/client checks | — | **audit complete** — all five catalogs/four OpenClaw runtime menus include 5.2; all native probes fail on proxy identity 2.1.280; Claude Code picker is independently cached and outside catalog sync; no live changes |
+| ws-0045 | Fable 5.2 execution and automatic Claude picker sync | Home configuration + fleet worker | — | **done** — measured compatibility profile; six keys/five nodes serve Fable 5.2; native CLI 1M, five picker updates and 20 Ark tests pass; Home-scheduled MacBook catalog task succeeds; policy restored/locks released |
+| ws-0046 | November 10 upstream and recovery review | read-only release/source/runtime assessment | — | **assessment complete** — CPA 8.0.64/Home 1.1.9 recommended; schema 17 and repeated rollback-not-ready require rehearsal/updater repair; independent direct recovery access is mandatory before cutover; no live changes |
 
 Round 1 (ws-0003..0006) ran in parallel; round 2 (ws-0007, ws-0008) started 2026-10-01. The only thing they share is the live system, so deploys are one at a
 time (see below).
@@ -68,8 +79,13 @@ time (see below).
    `origin/fleet` (another workstream may have shipped since you started), re-run the full suite on
    the rebased tree, then fast-forward `fleet` with `--force-with-lease`. The image must contain
    everything already live.
-4. **Backup before a Home change**: `VACUUM INTO` from a script run with nohup; record size,
-   integrity and sha256 in your brief. Know the rollback image ID before you swap.
+4. **Back up the scope being changed** (user correction, 2026-11-07): configuration-only
+   edits require a targeted backup of affected settings/bindings and a scoped rollback;
+   do not copy the full usage/history database for routine configuration edits. Before
+   an image upgrade, schema migration or database maintenance, use `VACUUM INTO` from
+   a script run with nohup and record size, integrity and sha256 in your brief. Know the
+   rollback image ID before an image swap. Retain only the two newest verified database
+   snapshots and at most two versions of each other backup type.
 5. **Config writes**: a `PUT /config.yaml` soft-deletes any API key missing from the upload —
    always carry the full `api-keys` list (memory: home-plugins-and-copilot).
 6. **Nodes**: never stop `cpa-home-node` on a mini; restart in place only, one box at a time.

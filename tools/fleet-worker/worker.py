@@ -75,11 +75,7 @@ def inventory(settings):
         if not match:
             raise WorkerError('unrecognized_installed_binary')
         version = match[1]
-    config=Path.home()/'.openclaw/openclaw.json'
-    catalog=False
-    if config.exists():
-        value=json.loads(config.read_bytes())
-        catalog=value.get('models',{}).get('providers',{}).get('cpa-gui',{}).get('baseUrl')=='http://127.0.0.1:18317/v1'
+    catalog = catalog_sync.has_catalog_target(Path.home())
     return {'version': version, 'sha256': digest, 'size': len(data), 'platform': 'darwin/arm64', 'catalog':catalog}
 
 
@@ -244,7 +240,8 @@ def execute_job(settings, job, state):
         if job['operation'] == 'catalog':
             lease.check()
             try:
-                report = catalog_sync.reconcile(Path.home(), apply=True, metadata=job.get('metadata', {}))
+                report = catalog_sync.reconcile(Path.home(), apply=True, metadata=job.get('metadata', {}),
+                                                client_key=client_key(settings))
             except catalog_sync.SyncError as error:
                 raise WorkerError('catalog_'+str(error)) from None
             if report['status'] not in ('updated', 'current'):

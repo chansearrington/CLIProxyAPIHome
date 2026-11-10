@@ -22,6 +22,18 @@ A certificate can read/report only its own registered node tasks. Model sync pre
 model choices and unrelated configuration. Binary changes reuse the existing verified restart-
 in-place/rollback script; no service is stopped or unloaded by a node upgrade.
 
+Catalog tasks update OpenClaw and Claude Code independently. A CPA-wired Claude Code
+installation is a catalog target even without OpenClaw, so laptop menus participate in
+Home's normal schedule. Claude Code receives the latest native Fable, Opus, Sonnet and
+Haiku models from its own key-scoped CPA listing. Encoded provider aliases are excluded.
+The generated entries appear before existing custom picker options; defaults and sessions
+are never changed. Older built-in choices remain controlled by Claude Code itself.
+
+Only rows that still exactly match the worker's ownership record are replaced on a future
+model release. Edited/generated rows become user-owned. Ownership and two retained private
+configuration backups live in the existing worker state directory. Writes detect concurrent
+edits; an ownership-publication failure rolls back only the affected picker field.
+
 Settings, bundle hashes and private receipts live under
 `~/.openclaw/services/cpa-home-fleet-worker/` and `~/.openclaw/state/cpa-home-fleet-worker/`.
 The worker prints status codes, operation and job ID, never lease tokens or credentials. Home's
