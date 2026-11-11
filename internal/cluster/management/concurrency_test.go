@@ -134,25 +134,49 @@ func TestPatchAuthFileConcurrencyDelegatesPolicyService(t *testing.T) {
 }
 
 func TestPatchAuthFileRollbackPreservesPolicyOnAuthFailure(t *testing.T) {
-	handler, closeRepo := newUsageObservabilityTestHandler(t)
-	defer closeRepo()
-	seedOAuthAuth(t, handler.repo, "oauth-rollback")
-
-	limit := int64(1)
-	errPatch := handler.repo.PatchAuthAndConcurrency(context.Background(), cluster.AuthConcurrencyPatchRequest{
-		CredentialID: "oauth-rollback",
-		Auth:         &coreauth.Auth{ID: "wrong-id", Index: "wrong-id"},
-		AuthChanged:  true,
-		PolicyPatch: cluster.ConcurrencyPolicyPatch{
-			MaxInFlight: cluster.OptionalLimit{Set: true, Value: limit},
-		},
-	})
-	if errPatch == nil {
-		t.Fatal("PatchAuthAndConcurrency() error = nil, want auth failure")
-	}
-	policy := mustManagementPolicy(t, handler.repo, "oauth-rollback")
-	if policy.MaxInFlight != nil || len(policy.MaxInFlightByModel) != 0 || policy.Version != 0 {
-		t.Fatalf("policy after rollback = %#v", policy)
+	for _, failure := range []string{"identity", "persistence", "callback"} {
+		t.Run(failure, func(t *testing.T) {
+			handler, closeRepo := newUsageObservabilityTestHandler(t)
+			defer closeRepo()
+			seedOAuthAuth(t, handler.repo, "oauth-rollback")
+			before, beforeRecord, errBefore := handler.repo.GetAuth(t.Context(), "oauth-rollback")
+			if errBefore != nil {
+				t.Fatal(errBefore)
+			}
+			limit := int64(1)
+			errPatch := handler.repo.PatchAuthAndConcurrency(t.Context(), cluster.AuthConcurrencyPatchRequest{
+				CredentialID: "oauth-rollback",
+				MutateAuth: func(current *coreauth.Auth) (bool, error) {
+					current.Metadata["priority"] = 12
+					switch failure {
+					case "identity":
+						current.ID, current.Index = "wrong-id", "wrong-id"
+					case "persistence":
+						current.RuntimeProjection = true
+					case "callback":
+						return true, coreauth.ErrRuntimeProjectionPersist
+					}
+					return true, nil
+				},
+				PolicyPatch: cluster.ConcurrencyPolicyPatch{
+					MaxInFlight: cluster.OptionalLimit{Set: true, Value: limit},
+				},
+			})
+			if errPatch == nil {
+				t.Fatal("PatchAuthAndConcurrency() error = nil, want auth failure")
+			}
+			policy := mustManagementPolicy(t, handler.repo, "oauth-rollback")
+			if policy.MaxInFlight != nil || len(policy.MaxInFlightByModel) != 0 || policy.Version != 0 {
+				t.Fatalf("policy after rollback = %#v", policy)
+			}
+			after, afterRecord, errAfter := handler.repo.GetAuth(t.Context(), "oauth-rollback")
+			if errAfter != nil {
+				t.Fatal(errAfter)
+			}
+			if !reflect.DeepEqual(before, after) || afterRecord.Version != beforeRecord.Version {
+				t.Fatal("auth failure left a partial auth change")
+			}
+		})
 	}
 }
 

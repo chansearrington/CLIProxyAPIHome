@@ -2395,7 +2395,7 @@ Example response:
 
 ### PATCH `/credentials/fields`
 
-Updates editable auth metadata.
+Updates editable auth metadata. Only supplied fields are applied to the current auth row under its database lock, including requests that mix priority with other metadata. OAuth refresh/reconnect, disabled state, cooldowns, and unrelated operator edits committed before that locked mutation are preserved unless the request explicitly replaces those fields. Auth and concurrency-policy changes commit together or roll back together. The legacy `/auth-files/fields` route uses the same handler.
 
 Example request:
 
@@ -2432,7 +2432,7 @@ Editable fields:
 | `proxy_url` | string | Per-auth proxy URL; empty value clears it. |
 | `proxy-url` | string | Alias for `proxy_url`. |
 | `headers` | object string to string | Extra upstream headers. Empty string deletes a single header. |
-| `priority` | integer or numeric string | Credential selection priority. |
+| `priority` | integer, integer string, or `null` | Credential selection priority. `0` is explicit zero; `null` clears the priority override, and omission leaves it unchanged. Fractions, exponent notation, out-of-range integers, other types, and nested priority paths return `400` without applying auth or policy changes. |
 | `note` | string | Operator note; empty value clears it. |
 | `websockets` | boolean or string bool | Runtime websocket flag for supported auths. |
 | `disabled` | boolean or string bool | Updates auth disabled state and status. |

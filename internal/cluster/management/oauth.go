@@ -268,28 +268,31 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 	}
 	removeOAuthFieldPatchIdentifierFields(body)
 	removeOAuthFieldPatchConcurrencyFields(body)
-	changed, errPatch := applyOAuthFieldPatch(auth, body)
-	if errPatch != nil {
-		respondError(c, http.StatusBadRequest, "invalid body", errPatch)
-		return
-	}
 	policyChanged := concurrencyPatch.MaxInFlight.Set || concurrencyPatch.MaxInFlightByModel.Set
-	if !changed && !policyChanged {
+	if len(body) == 0 && !policyChanged {
 		respondError(c, http.StatusBadRequest, "no fields to update", nil)
 		return
 	}
-	if changed {
-		auth.UpdatedAt = time.Now().UTC()
-	}
+	var errPatch error
 	errWrite := h.repo.PatchAuthAndConcurrency(ctx, cluster.AuthConcurrencyPatchRequest{
-		CredentialID:          auth.ID,
-		Auth:                  auth,
-		AuthChanged:           changed,
+		CredentialID: auth.ID,
+		MutateAuth: func(current *coreauth.Auth) (bool, error) {
+			changed := false
+			changed, errPatch = applyOAuthFieldPatch(current, body)
+			if changed && errPatch == nil {
+				current.UpdatedAt = time.Now().UTC()
+			}
+			return changed, errPatch
+		},
 		PolicyPatch:           cluster.ConcurrencyPolicyPatch{MaxInFlight: concurrencyPatch.MaxInFlight, MaxInFlightByModel: concurrencyPatch.MaxInFlightByModel},
 		ExpectedPolicyVersion: concurrencyPatch.Version,
 	})
 	if errWrite != nil {
-		respondConcurrencyPolicyError(c, errWrite)
+		if errPatch != nil {
+			respondError(c, http.StatusBadRequest, "invalid body", errPatch)
+		} else {
+			respondConcurrencyPolicyError(c, errWrite)
+		}
 		return
 	}
 	if errRefresh := h.refreshAuths(ctx); errRefresh != nil {
@@ -692,6 +695,27 @@ func applyOAuthFieldPatch(auth *coreauth.Auth, fields map[string]json.RawMessage
 		value, errDecode := decodeOAuthFieldPatchValue(rawValue)
 		if errDecode != nil {
 			return false, fmt.Errorf("invalid field %s", fieldPath)
+		}
+		if rootOAuthField(metadataPath) == "priority" {
+			if metadataPath != "priority" {
+				return false, fmt.Errorf("invalid field %s", fieldPath)
+			}
+			if value != nil {
+				var number string
+				switch typed := value.(type) {
+				case json.Number:
+					number = typed.String()
+				case string:
+					number = strings.TrimSpace(typed)
+				default:
+					return false, fmt.Errorf("invalid field %s", fieldPath)
+				}
+				parsed, errInt := strconv.Atoi(number)
+				if errInt != nil {
+					return false, fmt.Errorf("invalid field %s", fieldPath)
+				}
+				value = parsed
+			}
 		}
 		if rootOAuthField(metadataPath) == "request_retry" {
 			if metadataPath != "request_retry" {
