@@ -2,20 +2,17 @@ package cluster
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	coreauth "github.com/router-for-me/CLIProxyAPIHome/internal/cliproxy/auth"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-// AuthConcurrencyPatchRequest combines an optional auth update with a presence-aware limiter policy update.
+// AuthConcurrencyPatchRequest combines an optional locked-current auth mutation with a presence-aware limiter policy update.
 type AuthConcurrencyPatchRequest struct {
 	CredentialID          string
-	Auth                  *coreauth.Auth
-	AuthChanged           bool
+	MutateAuth            func(*coreauth.Auth) (bool, error)
 	PolicyPatch           ConcurrencyPolicyPatch
 	ExpectedPolicyVersion *int64
 }
@@ -29,9 +26,6 @@ func (r *Repository) PatchAuthAndConcurrency(ctx context.Context, request AuthCo
 	if errValidate := validateConcurrencyPolicyPatchModelKeys(request.PolicyPatch); errValidate != nil {
 		return errValidate
 	}
-	if request.AuthChanged && request.Auth == nil {
-		return fmt.Errorf("auth is required")
-	}
 	db, errDB := r.database()
 	if errDB != nil {
 		return errDB
@@ -41,59 +35,21 @@ func (r *Repository) PatchAuthAndConcurrency(ctx context.Context, request AuthCo
 		if errPolicy := r.patchCredentialConcurrencyPolicyTx(ctx, tx, credentialID, request.PolicyPatch, request.ExpectedPolicyVersion, &policy); errPolicy != nil {
 			return errPolicy
 		}
-		if !request.AuthChanged {
+		if request.MutateAuth == nil {
 			return nil
 		}
-		return r.patchAuthTx(ctx, tx, credentialID, request.Auth)
+		var errPatch error
+		_, _, _, errMutate := (&Repository{db: tx}).MutateAuth(ctx, credentialID, "update", func(current *coreauth.Auth) bool {
+			changed := false
+			changed, errPatch = request.MutateAuth(current)
+			if current.ID != credentialID || current.Index != credentialID {
+				errPatch = fmt.Errorf("auth credential id does not match concurrency credential")
+			}
+			return changed && errPatch == nil
+		})
+		if errMutate != nil {
+			return errMutate
+		}
+		return errPatch
 	})
-}
-
-func (r *Repository) patchAuthTx(ctx context.Context, tx *gorm.DB, credentialID string, auth *coreauth.Auth) error {
-	if tx == nil {
-		return fmt.Errorf("database connection is nil")
-	}
-	if auth == nil {
-		return fmt.Errorf("auth is required")
-	}
-	record, errRecord := AuthToRecord(auth)
-	if errRecord != nil {
-		return errRecord
-	}
-	if record.UUID != credentialID || record.Index != credentialID {
-		return fmt.Errorf("auth credential id does not match concurrency credential")
-	}
-	existing := AuthRecord{}
-	errExisting := tx.WithContext(contextOrBackground(ctx)).Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "uuid = ?", credentialID).Error
-	if errors.Is(errExisting, gorm.ErrRecordNotFound) {
-		return ErrConcurrencyCredentialNotFound
-	}
-	if errExisting != nil {
-		return errExisting
-	}
-	sameJSON, errEqual := semanticJSONEqual([]byte(existing.AuthJSON), []byte(record.AuthJSON))
-	if errEqual != nil {
-		return errEqual
-	}
-	if sameJSON {
-		return nil
-	}
-	identityChanged := quotaCredentialIdentityChanged(existing, *record)
-	record.QuotaIdentityVersion = quotaCredentialIdentityVersion(existing)
-	if identityChanged {
-		record.QuotaIdentityVersion++
-	}
-	record.Version = existing.Version + 1
-	record.CreatedAt = existing.CreatedAt
-	if errUpdate := tx.WithContext(contextOrBackground(ctx)).Select("*").Where("uuid = ?", credentialID).Updates(record).Error; errUpdate != nil {
-		return errUpdate
-	}
-	if identityChanged {
-		if errDeleteSnapshot := tx.WithContext(contextOrBackground(ctx)).Where("credential_id = ?", credentialID).Delete(&QuotaSnapshotRecord{}).Error; errDeleteSnapshot != nil {
-			return errDeleteSnapshot
-		}
-		if errDeleteWindows := tx.WithContext(contextOrBackground(ctx)).Where("credential_id = ?", credentialID).Delete(&QuotaWindowRecord{}).Error; errDeleteWindows != nil {
-			return errDeleteWindows
-		}
-	}
-	return appendEvent(tx, "auth", "update", credentialID, record.Version)
 }

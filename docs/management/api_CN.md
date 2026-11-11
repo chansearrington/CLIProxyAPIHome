@@ -2385,7 +2385,7 @@ Query 参数：
 
 ### PATCH `/credentials/fields`
 
-更新可编辑 auth metadata。
+更新可编辑 auth metadata。在数据库锁内读取当前 auth，仅应用请求提供的字段；priority 与其他 metadata 混合更新也遵循此规则。加锁修改前已提交的 OAuth refresh/reconnect、disabled 状态、cooldown 及无关操作修改会保留，除非请求明确替换对应字段。Auth 与 concurrency-policy 修改一起提交或回滚。旧版 `/auth-files/fields` 使用同一个 handler。
 
 输入示例：
 
@@ -2422,7 +2422,7 @@ Selector 字段：
 | `proxy_url` | string | Per-auth proxy URL；空值清空。 |
 | `proxy-url` | string | `proxy_url` 的 alias。 |
 | `headers` | object string to string | 额外上游 headers。空字符串会删除单个 header。 |
-| `priority` | integer or numeric string | 凭证选择优先级。 |
+| `priority` | integer、integer string 或 `null` | 凭证选择优先级。`0` 表示显式零值，`null` 清除覆盖，省略则保持不变。小数、指数形式、超出整数范围、其他类型及 priority 的 nested path 返回 `400`，不会应用 auth 或 policy 修改。 |
 | `note` | string | 操作备注；空值清空。 |
 | `websockets` | boolean or string bool | 支持的 auth 的 runtime websocket flag。 |
 | `disabled` | boolean or string bool | 更新 auth disabled state 和 status。 |
