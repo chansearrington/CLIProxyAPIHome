@@ -222,14 +222,19 @@ func saveUsageTokenAccountingBackfillState(ctx context.Context, tx *gorm.DB, rec
 // canonical v2 breakdown. The indexed existence check remains cheap while the
 // resumable backfill is still draining historical rows.
 func (r *Repository) UsageTokenBreakdownV2Ready(ctx context.Context) (bool, error) {
-	db, errDB := r.database()
+	// Dashboard capability reads must not occupy SQLite's single writer connection,
+	// which also renews CPA subscription liveness under a 3 s deadline.
+	db, errDB := r.observabilityDatabase()
 	if errDB != nil {
 		return false, errDB
 	}
 	var record UsageRecord
 	// Match the partial index predicate even when PostgreSQL uses a generic plan.
+	// Ordering by id makes SQLite choose the partial id index instead of scanning
+	// the full version index.
 	result := db.WithContext(contextOrBackground(ctx)).Select("id").
 		Where(fmt.Sprintf(`"token_accounting_version" <> %d`, UsageTokenAccountingSchemaVersion)).
+		Order("id ASC").
 		Limit(1).
 		Find(&record)
 	if result.Error != nil {
