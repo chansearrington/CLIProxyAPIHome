@@ -80,7 +80,8 @@ func TestUsageTokenAccountingPendingQueriesUseLiteralVersion(t *testing.T) {
 		LogLevel:             logger.Info,
 		ParameterizedQueries: true,
 	})})
-	queryRepo := NewRepository(queryDB)
+	// The writer keeps its own logger, so readiness SQL appears in logs only via the read pool.
+	queryRepo := NewRepositoryWithObservabilityReadDB(db, queryDB)
 	ready, errReady := queryRepo.UsageTokenBreakdownV2Ready(ctx)
 	if errReady != nil || !ready {
 		t.Fatalf("empty database readiness = %t, err=%v", ready, errReady)
@@ -92,6 +93,9 @@ func TestUsageTokenAccountingPendingQueriesUseLiteralVersion(t *testing.T) {
 	predicate := fmt.Sprintf(`"token_accounting_version" <> %d`, UsageTokenAccountingSchemaVersion)
 	if strings.Count(logs.String(), predicate) != 2 {
 		t.Fatalf("both pending queries must use literal predicate %q; logs: %s", predicate, logs.String())
+	}
+	if strings.Count(logs.String(), "ORDER BY id ASC") != 2 {
+		t.Fatalf("both pending queries must order by id to use the partial index; logs: %s", logs.String())
 	}
 
 	now := time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC)
