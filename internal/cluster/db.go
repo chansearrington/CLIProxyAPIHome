@@ -488,8 +488,8 @@ func migrateUsageObservabilityIndexes(db *gorm.DB) error {
 			"accounting_total_tokens", "accounting_input_tokens", "uncached_input_tokens", "accounting_cache_read_tokens",
 			"accounting_cache_write_tokens", "accounting_output_tokens", "non_reasoning_output_tokens", "accounting_reasoning_tokens", "unclassified_tokens"`
 		statements = append(statements,
-			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_time ON "usage" ("timestamp" DESC, "id", `+dashboardColumns+`)`,
-			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_provider_time ON "usage" (LOWER("provider"), "timestamp" DESC, "id", `+dashboardColumns+`)`,
+			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_time_v1 ON "usage" ("timestamp" DESC, "id", `+dashboardColumns+`)`,
+			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_provider_time_v1 ON "usage" (LOWER("provider"), "timestamp" DESC, "id", `+dashboardColumns+`)`,
 		)
 	}
 	for index, statement := range statements {

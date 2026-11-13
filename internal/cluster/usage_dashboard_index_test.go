@@ -12,13 +12,23 @@ import (
 )
 
 func TestUsageObservabilityDashboardIndexesPreserveAmounts(t *testing.T) {
+	amounts := []float64{0.1, 0.2, 0.3}
+	var ascending, descending float64
+	for index, amount := range amounts {
+		ascending += amount
+		descending += amounts[len(amounts)-1-index]
+	}
+	// This fixture guards scan directions, not every possible floating-point summation difference.
+	if math.Float64bits(ascending) == math.Float64bits(descending) {
+		t.Fatal("fractional fixture does not distinguish ascending and descending sums")
+	}
 	repo, closeRepo := newBillingTestRepository(t, t.Context())
 	t.Cleanup(closeRepo)
 	db, errDB := repo.database()
 	if errDB != nil {
 		t.Fatal(errDB)
 	}
-	for _, name := range []string{"idx_usage_dashboard_time", "idx_usage_dashboard_provider_time"} {
+	for _, name := range []string{"idx_usage_dashboard_time_v1", "idx_usage_dashboard_provider_time_v1"} {
 		if errDrop := db.Exec("DROP INDEX " + name).Error; errDrop != nil {
 			t.Fatal(errDrop)
 		}
@@ -85,8 +95,28 @@ func TestUsageObservabilityDashboardIndexesPreserveAmounts(t *testing.T) {
 			}
 		}
 	}
+	var overviewQueries []UsageObservabilityOverviewQuery
+	var beforeOverviews []UsageObservabilityOverview
+	for _, provider := range []string{"", " CoDeX ", "claude"} {
+		query := UsageObservabilityOverviewQuery{From: &from, To: &to, Provider: provider, Timezone: "UTC", Interval: "hour"}
+		overview, errOverview := repo.UsageObservabilityOverview(t.Context(), query)
+		if errOverview != nil {
+			t.Fatal(errOverview)
+		}
+		overviewQueries = append(overviewQueries, query)
+		beforeOverviews = append(beforeOverviews, overview)
+	}
 	if errMigrate := migrateUsageObservabilityIndexes(db); errMigrate != nil {
 		t.Fatal(errMigrate)
+	}
+	for index, query := range overviewQueries {
+		after, errOverview := repo.UsageObservabilityOverview(t.Context(), query)
+		if errOverview != nil {
+			t.Fatal(errOverview)
+		}
+		if !reflect.DeepEqual(beforeOverviews[index].Totals, after.Totals) || !reflect.DeepEqual(beforeOverviews[index].Trend, after.Trend) {
+			t.Fatalf("provider %q overview totals or trend changed after indexing", query.Provider)
+		}
 	}
 	for index, query := range queries {
 		after, errList := repo.ListUsageObservabilityAggregates(t.Context(), query)
@@ -111,7 +141,7 @@ func TestUsageObservabilityDashboardCoveringPlans(t *testing.T) {
 	if errDB != nil {
 		t.Fatal(errDB)
 	}
-	for _, name := range []string{"idx_usage_dashboard_time", "idx_usage_dashboard_provider_time"} {
+	for _, name := range []string{"idx_usage_dashboard_time_v1", "idx_usage_dashboard_provider_time_v1"} {
 		if !db.Migrator().HasIndex(&UsageRecord{}, name) {
 			t.Fatalf("dashboard index %s was not migrated", name)
 		}
@@ -125,9 +155,9 @@ func TestUsageObservabilityDashboardCoveringPlans(t *testing.T) {
 		for _, group := range []string{"model", "provider", "credential", "user", "client_key", "endpoint", "home_ip", "executor_type", "status_code"} {
 			t.Run(provider+"/"+group, func(t *testing.T) {
 				query := UsageObservabilityRecordQuery{From: &from, To: &to, Provider: provider}
-				wantIndex := "idx_usage_dashboard_time"
+				wantIndex := "idx_usage_dashboard_time_v1"
 				if provider != "" {
-					wantIndex = "idx_usage_dashboard_provider_time"
+					wantIndex = "idx_usage_dashboard_provider_time_v1"
 				}
 				for name, scope := range map[string]*gorm.DB{
 					"metrics": usageObservabilityAggregateItemsQuery(db, query, group, "total_tokens", "desc"),
