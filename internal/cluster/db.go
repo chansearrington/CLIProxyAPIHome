@@ -479,6 +479,19 @@ func migrateUsageObservabilityIndexes(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_usage_home_port_time ON "usage" ("home_ip", "home_port", "timestamp" DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_quota_activity ON "usage" ("quota_credential_id", "quota_identity_version", "quota_identity_key", "created_at" DESC) WHERE "quota_credential_id" <> '' AND "quota_identity_version" > 0 AND "quota_identity_key" <> ''`,
 	}
+	if db.Dialector.Name() == "sqlite" {
+		// Cover dashboard scans without reading payload-heavy usage rows; retain time/id order for floating-point sums.
+		const dashboardColumns = `"provider", "model", "auth_index", "auth_type", "home_ip", "endpoint", "executor_type",
+			"failed", "fail_status_code", "upstream_status_code", "latency_ms", "ttft_ms", "api_key",
+			"input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "cache_read_tokens", "cache_read_tokens_present",
+			"cache_creation_tokens", "total_tokens", "token_accounting_version", "token_accounting_quality",
+			"accounting_total_tokens", "accounting_input_tokens", "uncached_input_tokens", "accounting_cache_read_tokens",
+			"accounting_cache_write_tokens", "accounting_output_tokens", "non_reasoning_output_tokens", "accounting_reasoning_tokens", "unclassified_tokens"`
+		statements = append(statements,
+			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_time_v1 ON "usage" ("timestamp" DESC, "id", `+dashboardColumns+`)`,
+			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_provider_time_v1 ON "usage" (LOWER("provider"), "timestamp" DESC, "id", `+dashboardColumns+`)`,
+		)
+	}
 	for index, statement := range statements {
 		// Retain the verified equivalent fleet index without a redundant full-table build.
 		if index == 0 && legacyPendingIndex {
