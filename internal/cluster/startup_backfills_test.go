@@ -86,26 +86,30 @@ func TestStartupBackfillsRepairLegacySnapshotImport(t *testing.T) {
 	ctx := context.Background()
 	source := openDatabaseSnapshotSQLiteTestDB(t, filepath.Join(t.TempDir(), "source.db"))
 	usageIDs := seedStartupBackfillRows(t, source, 0)
-	path := filepath.Join(t.TempDir(), "snapshot.zip")
-	if _, errExport := ExportDatabaseSnapshot(ctx, source, DatabaseSnapshotExportOptions{Path: path}); errExport != nil {
-		t.Fatal(errExport)
+	for _, version := range []int{17, currentDatabaseVersion} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "snapshot.zip")
+			if _, errExport := exportDatabaseSnapshotVersion(ctx, source, path, version); errExport != nil {
+				t.Fatal(errExport)
+			}
+			snapshot, errOpen := OpenDatabaseSnapshot(ctx, path)
+			if errOpen != nil {
+				t.Fatal(errOpen)
+			}
+			t.Cleanup(func() {
+				if errClose := snapshot.Close(); errClose != nil {
+					t.Errorf("close snapshot: %v", errClose)
+				}
+			})
+			// Target indexes have already been installed by a previous clean startup.
+			target := openDatabaseSnapshotSQLiteTestDB(t, filepath.Join(t.TempDir(), "target.db"))
+			if _, errImport := ImportDatabaseSnapshot(ctx, target, snapshot, nil); errImport != nil {
+				t.Fatal(errImport)
+			}
+			assertStartupBackfillRows(t, target, 0, usageIDs, defaultUsageServiceTier)
+			assertCleanStartupSkipsBackfillUpdates(t, target)
+		})
 	}
-	snapshot, errOpen := OpenDatabaseSnapshot(ctx, path)
-	if errOpen != nil {
-		t.Fatal(errOpen)
-	}
-	t.Cleanup(func() {
-		if errClose := snapshot.Close(); errClose != nil {
-			t.Errorf("close snapshot: %v", errClose)
-		}
-	})
-	// Target indexes have already been installed by a previous clean startup.
-	target := openDatabaseSnapshotSQLiteTestDB(t, filepath.Join(t.TempDir(), "target.db"))
-	if _, errImport := ImportDatabaseSnapshot(ctx, target, snapshot, nil); errImport != nil {
-		t.Fatal(errImport)
-	}
-	assertStartupBackfillRows(t, target, 0, usageIDs, defaultUsageServiceTier)
-	assertCleanStartupSkipsBackfillUpdates(t, target)
 }
 
 func seedStartupBackfillRows(t *testing.T, db *gorm.DB, pass int) []uint {
