@@ -99,7 +99,7 @@ func seedStartupBackfillRows(t *testing.T, db *gorm.DB, pass int) []uint {
 	now := time.Date(2026, time.November, 13, 0, 0, 0, 0, time.UTC)
 	var usageIDs []uint
 	for index, tier := range []any{nil, "   ", "default", "auto", ""} {
-		record := UsageRecord{Timestamp: now, ServiceTier: "auto", PayloadJSON: JSONB(`{}`), PayloadHash: fmt.Sprintf("startup-%d-%d", pass, index), CreatedAt: now}
+		record := UsageRecord{Timestamp: now, ServiceTier: "auto", PayloadJSON: JSONB(`{}`), CreatedAt: now}
 		if errCreate := db.Create(&record).Error; errCreate != nil {
 			t.Fatal(errCreate)
 		}
@@ -110,7 +110,7 @@ func seedStartupBackfillRows(t *testing.T, db *gorm.DB, pass int) []uint {
 		baseAmounts := []float64{0, 3, 0, 0, 0}
 		amounts := []float64{2, 3, 4, 0, -2}
 		multipliers := []float64{1, 1, 0.5, 1, 1}
-		charge := BillingChargeRecord{ID: fmt.Sprintf("startup-%d-%d", pass, index), UsageID: record.ID, PayloadHash: record.PayloadHash, Amount: amounts[index], BaseAmount: baseAmounts[index], BillingMultiplier: multipliers[index], PriceSnapshot: JSONB(`{}`), CreatedAt: now}
+		charge := BillingChargeRecord{ID: fmt.Sprintf("startup-%d-%d", pass, index), UsageID: record.ID, PayloadHash: fmt.Sprintf("startup-%d-%d", pass, index), Amount: amounts[index], BaseAmount: baseAmounts[index], BillingMultiplier: multipliers[index], PriceSnapshot: JSONB(`{}`), CreatedAt: now}
 		if errCreate := db.Create(&charge).Error; errCreate != nil {
 			t.Fatal(errCreate)
 		}
