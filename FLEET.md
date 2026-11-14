@@ -329,3 +329,24 @@ Nov 6 pre-1.1.8; ordinary configuration changes still require targeted backups o
 
 Full evidence, recovery launcher/expiry, first-attempt limitations and deployment-check corrections:
 [`ws-0047-upgrade-119-8064.md`](docs/fleet/ws-0047-upgrade-119-8064.md).
+
+## November 13 Home save fix + 503-burst fix (ws-0048)
+
+Home is **`cpa-home:1.1.9-claude-fleet-13860b9`** (immutable image `0a4c3a7c…927c018`). Same schema
+as 44a3c27, plus PR #34 (a panel priority/note save no longer writes back a stale sign-in) and PR #35
+(the dashboard capabilities probe runs on the read pool, not the single writer; this is the cause of the
+Nov 13 empty-503 bursts). Accepted 2026-11-13 19:47 CT with no rollback. Image-only rollback target:
+`cpa-home:1.1.9-claude-fleet-44a3c27` (`41924ea4…`).
+
+- **Node auto-patch updates are OFF** (`patch_updates=false`, Chanse 2026-11-13). Upgrades must be
+  scheduled and announced in advance, not silent. Catalog sync stays on hourly. Do not turn patch
+  updates back on until the scheduled-upgrade work (ws-0050) ships.
+- **A Home restart takes about 5.5 minutes**, because two startup backfills scan whole tables even when
+  they have nothing to change. Plan any restart's announced outage around that until it is fixed.
+- **Independent recovery route:** `~/.cpa-recovery/claude-direct` on the MacBook starts Claude Code
+  straight to Anthropic, using a healthy Home account's current access token read over SSH. It works
+  with Home down and never reads a refresh token.
+
+Evidence: [ws-0048 deploy record](docs/fleet/ws-0048-home-13860b9-deploy.md),
+[503 diagnosis](docs/fleet/ws-0049-503-bursts.md),
+[scheduled-upgrade research](docs/fleet/ws-0050-scheduled-upgrades-research.md).
