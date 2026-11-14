@@ -156,7 +156,14 @@ func AutoMigrateContext(ctx context.Context, db *gorm.DB) error {
 	}
 	ctx = contextOrBackground(ctx)
 	if db.Dialector.Name() == "postgres" {
-		return autoMigratePostgresContext(ctx, db, false, nil)
+		if errMigrate := autoMigratePostgresContext(ctx, db, false, nil); errMigrate != nil {
+			return errMigrate
+		}
+		// Older writers can add legacy rows even when the schema version is current.
+		if errBaseAmounts := migrateBillingBaseAmounts(db.WithContext(ctx)); errBaseAmounts != nil {
+			return errBaseAmounts
+		}
+		return migrateUsageServiceTiers(db.WithContext(ctx))
 	}
 
 	startedAt := time.Now()
@@ -738,16 +745,28 @@ func migrateUsageServiceTiers(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("database connection is nil")
 	}
+	const predicate = "service_tier IS NULL OR TRIM(service_tier) = ''"
+	// A sparse index also catches legacy rows inserted or changed after the first repair.
+	if errIndex := db.Exec(`CREATE INDEX IF NOT EXISTS idx_usage_service_tier_pending_v1 ON "usage" (id) WHERE ` + predicate).Error; errIndex != nil {
+		return errIndex
+	}
+	var pending bool
+	if errPending := db.Raw(`SELECT EXISTS (SELECT 1 FROM "usage" WHERE ` + predicate + ` LIMIT 1)`).Scan(&pending).Error; errPending != nil {
+		return errPending
+	}
+	if !pending {
+		return nil
+	}
 	if db.Migrator().HasColumn(&UsageRecord{}, "request_service_tier") {
 		return db.Exec(`UPDATE "usage"
 			SET "service_tier" = CASE
 				WHEN TRIM(COALESCE("request_service_tier", '')) <> '' THEN "request_service_tier"
 				ELSE ?
 			END
-			WHERE "service_tier" IS NULL OR TRIM("service_tier") = ''`, defaultUsageServiceTier).Error
+			WHERE `+predicate, defaultUsageServiceTier).Error
 	}
 	return db.Model(&UsageRecord{}).
-		Where("service_tier IS NULL OR TRIM(service_tier) = ''").
+		Where(predicate).
 		Update("service_tier", defaultUsageServiceTier).Error
 }
 

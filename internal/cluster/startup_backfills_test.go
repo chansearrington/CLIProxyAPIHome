@@ -47,6 +47,17 @@ func TestStartupBackfillsRepairLegacyAndSkipCleanRestart(t *testing.T) {
 			if errMigrate := AutoMigrate(db); errMigrate != nil {
 				t.Fatal(errMigrate)
 			}
+			// Simulate an existing v17 database upgrading without either sparse index.
+			for _, indexName := range []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1"} {
+				if errDrop := db.Exec("DROP INDEX IF EXISTS " + indexName).Error; errDrop != nil {
+					t.Fatal(errDrop)
+				}
+			}
+			if backend == "postgres" {
+				if errVersion := db.Model(&schemaMigrationRecord{}).Where("id = ?", schemaMigrationRecordID).Update("version", 17).Error; errVersion != nil {
+					t.Fatal(errVersion)
+				}
+			}
 			if errAlter := db.Exec(`ALTER TABLE "usage" ADD COLUMN request_service_tier TEXT`).Error; errAlter != nil {
 				t.Fatal(errAlter)
 			}
@@ -61,6 +72,9 @@ func TestStartupBackfillsRepairLegacyAndSkipCleanRestart(t *testing.T) {
 				}
 				assertStartupBackfillRows(t, db, pass, usageIDs, "priority")
 				assertCleanStartupSkipsBackfillUpdates(t, db)
+			}
+			if backend == "postgres" {
+				assertPostgresSchemaMigrationVersion(t, db, currentDatabaseVersion)
 			}
 		})
 	}

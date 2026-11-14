@@ -2214,10 +2214,24 @@ func migrateBillingIndexes(db *gorm.DB) error {
 	if errDefaults := db.Model(&BillingModelPriceRecord{}).Where("revision IS NULL OR revision < ?", 1).Update("revision", 1).Error; errDefaults != nil {
 		return errDefaults
 	}
-	if errBaseAmount := db.Model(&BillingChargeRecord{}).
-		Where("base_amount = ? AND amount <> ? AND billing_multiplier = ?", 0, 0, 1).
-		Update("base_amount", gorm.Expr("amount")).Error; errBaseAmount != nil {
+	if errBaseAmount := migrateBillingBaseAmounts(db); errBaseAmount != nil {
 		return errBaseAmount
 	}
 	return db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_model_price_active_unique ON billing_model_price (provider, model, service_tier, min_input_tokens) WHERE deleted_at IS NULL AND enabled = TRUE`).Error
+}
+
+func migrateBillingBaseAmounts(db *gorm.DB) error {
+	const predicate = "base_amount = 0 AND amount <> 0 AND billing_multiplier = 1"
+	// Keep literals identical in the index and probe so both backends can use the partial index.
+	if errIndex := db.Exec(`CREATE INDEX IF NOT EXISTS idx_billing_charge_base_amount_pending_v1 ON "billing_charge" (id) WHERE ` + predicate).Error; errIndex != nil {
+		return errIndex
+	}
+	var pending bool
+	if errPending := db.Raw(`SELECT EXISTS (SELECT 1 FROM "billing_charge" WHERE ` + predicate + ` LIMIT 1)`).Scan(&pending).Error; errPending != nil {
+		return errPending
+	}
+	if !pending {
+		return nil
+	}
+	return db.Model(&BillingChargeRecord{}).Where(predicate).Update("base_amount", gorm.Expr("amount")).Error
 }
