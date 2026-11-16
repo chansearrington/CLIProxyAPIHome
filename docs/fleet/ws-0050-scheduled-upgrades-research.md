@@ -76,3 +76,14 @@ task is active. Re-enabling starts any pending patch within about 2 minutes. `en
 
 Open for Chanse (after the swap): which channel(s) carry the announcements, the default time and lead
 time, and whether an orchestrator can postpone.
+
+## Chanse's decisions (review page `WSuBzXb6VJ`, submitted 2026-11-14 01:02 CT)
+
+| Question | Decision |
+|---|---|
+| Where announcements go | **The Hype Orchestrator's message board plus a hosted review page for Chanse** (his own answer; not the Fleet Inbox) |
+| Default time | **02:00 CT** |
+| Warning | **1 hour** before the upgrade (option C) |
+| Postponing | Any orchestrator can push an upgrade back **one night**; only Chanse or the coordinator can force it to run now |
+| MacBook (optional node, asleep at 02:00) | It **waits for a scheduled window while it is awake**, with its own announcement; no upgrade on wake |
+| Next fixes | **Bundle** them into one announced 02:00 upgrade: the startup backfill fix (PR #38), the usage-aggregate indexes (PR #36, pre-built), and this schedule gate |

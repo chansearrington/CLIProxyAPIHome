@@ -350,3 +350,12 @@ Nov 13 empty-503 bursts). Accepted 2026-11-13 19:47 CT with no rollback. Image-o
 Evidence: [ws-0048 deploy record](docs/fleet/ws-0048-home-13860b9-deploy.md),
 [503 diagnosis](docs/fleet/ws-0049-503-bursts.md),
 [scheduled-upgrade research](docs/fleet/ws-0050-scheduled-upgrades-research.md).
+
+## November 15 Home database off the share layer (ws-0053)
+
+Home's compose now binds `/mnt/cache/appdata/cpa-home/{cluster.yaml,data,logs,plugins}` directly, **not**
+`/mnt/user/...`. Through Unraid's FUSE share layer (`shfs`), the hourly mover, Duplicacy checks and Plex
+starved Home's single SQLite writer. Node heartbeats lapsed and the relay refused about 9.6 % of requests
+on 11-15. `appdata` is cache-only, so the files are identical. Every process that opens the live DB (the
+recovery launcher, backup/reorder scripts) must use the same `/mnt/cache` path; never mix FUSE and direct
+paths on a live SQLite WAL database. [Record](docs/fleet/ws-0053-home-direct-disk.md).
