@@ -53,6 +53,6 @@ Rollback: copy the `.pre-ws0053` compose back and `docker compose up -d --no-dep
 
 - **Verified under load:** 21:00-21:15 CT with the hourly mover running: 0 liveness failures, 0 "not active",
   0 503s, 3,429 200s; `shfs` at 9 % CPU; only 15 slow-SQL lines, all dashboard `COUNT(DISTINCT usage.id)`
-  at 0.66-0.74 s (they took about 10 s through FUSE). Hype Operations' relay-side counts for 21:00-22:00 are pending.
+  at 0.66-0.74 s (they took about 10 s through FUSE). Hype Operations' relay-side counts for 21:00-21:59 CT: 1 link-ended line (one minute), 30 of 8,586 front-door attempts refused, Claude 0 of 2,536 and Codex 8 of 4,809 provider records failed (three 499s, five 500s). The one drop had no Home-side event, which points to the relay Mac's network.
 - The ws-0048 "Results" claim that 13860b9 fixed the bursts was premature: the capabilities probe was one
   writer-starvation trigger and host I/O through `shfs` was another.
