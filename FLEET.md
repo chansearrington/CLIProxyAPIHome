@@ -360,7 +360,7 @@ on 11-15. `appdata` is cache-only, so the files are identical. Every process tha
 recovery launcher, backup/reorder scripts) must use the same `/mnt/cache` path; never mix FUSE and direct
 paths on a live SQLite WAL database. [Record](docs/fleet/ws-0053-home-direct-disk.md).
 
-## November 17 GPT 6.2 Astra and Sol (temporary model list)
+## November 17 GPT 6.2 Astra and Sol (temporary model list, reverted)
 
 OpenAI released `gpt-6.2-astra` and `gpt-6.2-sol` on 2026-11-17, and all our Codex accounts offer them (checked
 through Home's `/requests/api-call` against OpenAI's own Codex model list). The official CPA model list
@@ -369,6 +369,6 @@ points `catalog` and `codex-catalog` at the fork `chansearrington/models`, branc
 entries (Codex client entries are OpenAI's own; general entries clone `gpt-6-astra` / `gpt-6.1-sol`). Verified the
 same day: Home lists both, and all five nodes list them and returned 200 for one request on each model.
 
-While this is set, Home does **not** follow the official list (custom sources never fall back). When upstream
-adds 6.2, remove the override with `DELETE /v8/management/config/models` (that is also the rollback; before the
-change the key did not exist) and confirm both models are still listed.
+**Reverted the same day (16:36 CT):** upstream added both models, so the override was removed with
+`DELETE /v8/management/config/models`. Home again follows the official list; Home and all four minis still list
+both models and served `gpt-6.2-sol`. The fork `chansearrington/models` is no longer referenced by Home.
