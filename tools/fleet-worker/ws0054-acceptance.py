@@ -102,7 +102,7 @@ def node_probe(_payload):
         ('claude', '/v1/messages', {'model': haiku, 'max_tokens': 8,
           'messages': [{'role': 'user', 'content': 'Say OK.'}]}),
         ('codex', '/v1/responses', {'model': 'gpt-6.2-sol', 'input': 'Say OK.',
-          'reasoning': {'effort': 'low'}, 'max_output_tokens': 128, 'stream': False})]:
+          'reasoning': {'effort': 'low'}, 'max_output_tokens': 1024, 'stream': False})]:
         value, headers, latency = request_json(NODE_URL+path, key, body)
         # CPA8.0.69 cpa_trace.go: selected-time + auth-index + context UUID;
         # redisqueue/plugin.go sends that context UUID as Home usage.request_id.
@@ -112,6 +112,19 @@ def node_probe(_payload):
         prefix = 'msg_' if provider == 'claude' else 'resp_'
         require(re.fullmatch(prefix+r'[A-Za-z0-9_-]{1,128}', response_id), 'native_response_id_missing')
         require(not value.get('error'), 'native_response_error')
+        if provider == 'claude':
+            complete = bool(value.get('stop_reason')) and value['stop_reason'] != 'error'
+            blocks = value.get('content', [])
+            text_type = 'text'
+        else:
+            complete = value.get('status') == 'completed'
+            blocks = [block for item in value.get('output', []) if item.get('type') == 'message'
+                      for block in item.get('content', [])]
+            text_type = 'output_text'
+        # Inspect text in memory only; never include it in proof, logs or errors.
+        require(complete and any(block.get('type') == text_type and
+                isinstance(block.get('text'), str) and block['text'].strip() for block in blocks),
+                'native_answer_missing_or_unfinished')
         results.append({'provider': provider, 'model': body['model'], 'request_id': match.group(1),
                         'response_id': response_id, 'http_status': 200, 'latency_ms': latency})
     return results

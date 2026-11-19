@@ -1,5 +1,5 @@
 WS0054 HOME-ONLY MANUAL — PREPARATION, NOT APPROVED OR EXECUTED
-November 19: verdict 06:30Z; complete fresh HOT backup BEFORE the 07:00Z
+Friday November 20, 2026: verdict 06:30Z; complete fresh HOT backup BEFORE the 07:00Z
 notice (01:00 CT); cutover 08:00Z (02:00 CT). Nodes STAY 8.0.69; 8.0.76 deferred.
 
 READ THIS CORE FIRST
@@ -297,9 +297,15 @@ if test "$NEXT" = ACCEPT && bash -eu <<'SH'
 set +x
 set -a; . /mnt/user/appdata/cpa-home/.env; set +a
 export MANAGEMENT_PASSWORD
-DEADLINE=$(($(date +%s)+ACCEPT_SECONDS))
-until verify_home ready; do
-  test "$(date +%s)" -lt "$DEADLINE" || exit 1
+export READINESS_DEADLINE=$(($(date +%s)+ACCEPT_SECONDS))
+while :; do
+  REMAINING=$((READINESS_DEADLINE-$(date +%s)))
+  test "$REMAINING" -gt 0 || exit 1
+  if timeout --signal=KILL "$REMAINING" bash -eu -c 'verify_home ready'; then
+    test "$(date +%s)" -lt "$READINESS_DEADLINE" || exit 1
+    break
+  fi
+  test "$(date +%s)" -lt "$READINESS_DEADLINE" || exit 1
   # Crash loops/paused/foreign image are NOT tolerated until a timeout; inspect and route B.
   test "$(docker inspect cpa-home --format '{{.RestartCount}} {{.State.Paused}}')" = '0 false' || exit 1
   sleep 5
@@ -312,8 +318,8 @@ Use the existing absolute Ark ready-$ACCEPT_LABEL.json path printed by the Ark
 shell, and the same forward/rollback label. No new flags. Own keys stay on-box.
 Leave both ownership shells open. Do NOT rerun ready or overwrite the boundary.
 The helper itself rechecks the same IDs/container/image/node artifact inventory
-and exact usage joins after60s. N1 helperSHA4df180e3...a0f0fbb; tests12synthetic
-PASS; narrow N1 independent review PASS. Final ops review/live forward/rollback PENDING.
+and exact usage joins after60s. N1 helperSHAc343b6b7...4d9423f; tests13synthetic
+PASS; earlier N1 review covers prior bytes; new answer-validation review pending. Final ops review/live forward/rollback PENDING.
 
 6b — Back in the ORIGINAL ARK shell, consume the actual result, not a bare ok:
 ```sh

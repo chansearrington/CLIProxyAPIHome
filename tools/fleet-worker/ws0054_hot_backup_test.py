@@ -111,7 +111,7 @@ class HotBackupTests(unittest.TestCase):
             yield f, f.array / f.base.name
 
     def test_fresh_base_rejects_alias_traversal_existing_base_and_destination(self):
-        good = '/mnt/cache/appdata/cpa-home-build/ws0054-hot-20261119T1200Z'
+        good = '/mnt/cache/appdata/cpa-home-build/ws0054-hot-20261120T0500Z'
         with mock.patch.object(hot.os.path, 'lexists', return_value=False):
             self.assertEqual(hot.fresh_base(good), pathlib.Path(good))
             for bad in ('relative', good + '/', good + '/child', good + ';cmd',

@@ -16,8 +16,8 @@ SPEC = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_
 proof = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(proof)
 REQUESTS = ['01990a00-0000-7000-8000-000000000001', '01990a00-0000-7000-8000-000000000002']
-BOUNDARY = {'id': 10, 'timestamp': '2026-11-19 08:00:00', 'container_id': 'a'*64,
-            'started_at': '2026-11-19T07:59:00Z', 'expected_nodes': ['node-1']}
+BOUNDARY = {'id': 10, 'timestamp': '2026-11-20 08:00:00', 'container_id': 'a'*64,
+            'started_at': '2026-11-20T07:59:00Z', 'expected_nodes': ['node-1']}
 
 
 class AcceptanceTest(unittest.TestCase):
@@ -36,9 +36,12 @@ class AcceptanceTest(unittest.TestCase):
                 seen.append((self.path, body, self.headers['Authorization']))
                 i = len(seen)-1
                 self.send_response(200)
-                self.send_header('X-CPA-TRACE-ID', '20261119080001-fake-auth-index-'+REQUESTS[i])
+                self.send_header('X-CPA-TRACE-ID', '20261120080001-fake-auth-index-'+REQUESTS[i])
                 self.end_headers()
-                value = {'id': ('msg_' if i == 0 else 'resp_')+'synthetic', 'private_text': 'DO_NOT_SAVE'}
+                value = ({'id': 'msg_synthetic', 'stop_reason': 'end_turn',
+                          'content': [{'type': 'text', 'text': 'DO_NOT_SAVE'}]} if i == 0 else
+                         {'id': 'resp_synthetic', 'status': 'completed', 'output': [
+                             {'type': 'message', 'content': [{'type': 'output_text', 'text': 'DO_NOT_SAVE'}]}]})
                 self.wfile.write(json.dumps(value).encode())
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
@@ -56,10 +59,43 @@ class AcceptanceTest(unittest.TestCase):
             self.assertEqual(seen[0][1]['max_tokens'], 8)
             self.assertEqual(seen[1][1]['model'], 'gpt-6.2-sol')
             self.assertEqual(seen[1][1]['reasoning'], {'effort': 'low'})
+            self.assertEqual(seen[1][1]['max_output_tokens'], 1024)
             self.assertNotIn('fake-test-only-key', json.dumps(result))
             self.assertNotIn('DO_NOT_SAVE', json.dumps(result))
         finally:
             server.shutdown(); server.server_close(); thread.join()
+
+    def test_rejects_empty_unfinished_or_id_only_native_answers(self):
+        catalog = {'data': [{'id': 'claude-haiku-5-5'}, {'id': 'gpt-6.2-sol'}]}
+        claude = {'id': 'msg_synthetic', 'stop_reason': 'end_turn',
+                  'content': [{'type': 'text', 'text': 'DO_NOT_SAVE'}]}
+        codex = {'id': 'resp_synthetic', 'status': 'completed', 'output': [
+            {'type': 'message', 'content': [{'type': 'output_text', 'text': 'DO_NOT_SAVE'}]}]}
+        invalid = [
+            ('claude', {'id': 'msg_synthetic'}),
+            ('claude', dict(claude, content=[])),
+            ('claude', dict(claude, content=[{'type': 'thinking', 'thinking': 'DO_NOT_SAVE'}])),
+            ('claude', dict(claude, content=[{'type': 'text', 'text': '  '}])),
+            ('claude', dict(claude, stop_reason=None)),
+            ('claude', dict(claude, stop_reason='error')),
+            ('codex', {'id': 'resp_synthetic'}),
+            ('codex', dict(codex, status='incomplete', output=[])),
+            ('codex', dict(codex, status='incomplete')),
+            ('codex', dict(codex, output=[])),
+            ('codex', dict(codex, output=[{'type': 'reasoning', 'summary': []}])),
+            ('codex', dict(codex, output=[{'type': 'message', 'content': [
+                {'type': 'output_text', 'text': ''}]}])),
+        ]
+        for provider, value in invalid:
+            replies = [(catalog, {}, 1)]
+            answers = [value] if provider == 'claude' else [claude, value]
+            replies += [(answer, {'X-CPA-TRACE-ID': '20261120080001-fake-'+REQUESTS[i]}, 1)
+                        for i, answer in enumerate(answers)]
+            with self.subTest(provider=provider, value=value), \
+                    patch.object(proof, 'own_key', return_value='fake-test-only-key'), \
+                    patch.object(proof, 'request_json', side_effect=replies), \
+                    self.assertRaisesRegex(proof.ProofError, '^native_answer_missing_or_unfinished$'):
+                proof.node_probe({})
 
     def rows(self):
         c = sqlite3.connect(':memory:'); c.row_factory = sqlite3.Row
@@ -67,10 +103,10 @@ class AcceptanceTest(unittest.TestCase):
             CREATE TABLE usage(id INTEGER, timestamp TEXT, created_at TEXT, request_id TEXT,
               cpa_node_id TEXT, provider TEXT, model TEXT, failed INTEGER, quota_credential_id TEXT);
             INSERT INTO auth VALUES ('fake-credential-uuid',0,'active',NULL,'claude');''')
-        c.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?,?,?)', (11, '2026-11-19 08:00:01.1',
-            '2026-11-19 08:00:02', REQUESTS[0], 'node-1', 'claude', 'claude-haiku-5-5', 0, 'fake-credential-uuid'))
-        c.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?,?,?)', (99, '2026-11-19 08:00:03',
-            '2026-11-19 08:00:03', REQUESTS[1], 'ambient-node', 'codex', 'gpt-6.2-sol', 0, 'fake-credential-uuid'))
+        c.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?,?,?)', (11, '2026-11-20 08:00:01.1',
+            '2026-11-20 08:00:02', REQUESTS[0], 'node-1', 'claude', 'claude-haiku-5-5', 0, 'fake-credential-uuid'))
+        c.execute('INSERT INTO usage VALUES (?,?,?,?,?,?,?,?,?)', (99, '2026-11-20 08:00:03',
+            '2026-11-20 08:00:03', REQUESTS[1], 'ambient-node', 'codex', 'gpt-6.2-sol', 0, 'fake-credential-uuid'))
         rows = proof.usage_rows(c, BOUNDARY, [REQUESTS[0]])
         c.close()
         return rows
@@ -89,8 +125,8 @@ class AcceptanceTest(unittest.TestCase):
 
     def test_rejects_old_misattributed_disabled_and_duplicate_usage(self):
         row = self.rows()[0]
-        for field, value in [('id', 10), ('timestamp', '2026-11-19 07:59:59'),
-                             ('created_at', '2026-11-19 07:59:59'), ('node_id', 'wrong-node'),
+        for field, value in [('id', 10), ('timestamp', '2026-11-20 07:59:59'),
+                             ('created_at', '2026-11-20 07:59:59'), ('node_id', 'wrong-node'),
                              ('provider', 'codex'), ('model', 'wrong-model'), ('failed', 1),
                              ('auth_disabled', 1), ('auth_status', 'error'), ('auth_deleted', 'now'),
                              ('auth_provider', 'codex'), ('credential_uuid', None)]:
