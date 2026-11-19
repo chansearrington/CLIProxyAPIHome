@@ -64,15 +64,21 @@ class ManualTest(unittest.TestCase):
             @staticmethod
             def run(args, **_):
                 calls.append(tuple(args[:2]))
+                if args[2] == 'd'*64:
+                    raise subprocess.TimeoutExpired(args, 60)
             @staticmethod
             def check_output(args, **_):
                 return json.dumps([{'State': {'Paused': args[2] == 'b'*64}}])
+        Sub.TimeoutExpired = subprocess.TimeoutExpired
         namespace = {'subprocess': Sub, 'json': json}
         exec(compile(ast.Module(body=[release], type_ignores=[]), 'annex-r', 'exec'), namespace)
         namespace['release'](['a'*64, 'c'*64])
         with self.assertRaisesRegex(AssertionError, 'could not unpause fenced containers: '+'b'*12):
             namespace['release'](['a'*64, 'b'*64, 'c'*64])
         self.assertEqual([c for c in calls if c[0] == 'docker'].count(('docker', 'unpause')), 5)
+        calls.clear()  # an unpause that times out must not stop the next container's release
+        namespace['release'](['d'*64, 'c'*64])
+        self.assertEqual(calls.count(('docker', 'unpause')), 2)
 
     def test_readiness_deadline_routes_late_success_to_recovery(self):
         section = MANUAL.read_text().split('6 — ONE ACCEPTANCE CONTRACT', 1)[1]
