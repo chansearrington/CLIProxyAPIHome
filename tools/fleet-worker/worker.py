@@ -4,7 +4,9 @@ import argparse
 import fcntl
 import hashlib
 import json
+import logging
 import os
+import time
 from pathlib import Path
 import re
 import socket
@@ -253,8 +255,63 @@ def execute_job(settings, job, state):
         lease.check()
 
 
+def prune_state(settings, state, plan, current):
+    # Disabled plans omit Home's active job; offline/disabled cleanup cannot safely retire receipts.
+    if not plan.get('enabled'):
+        return
+    try:
+        deadline = time.monotonic() + 1
+        job = plan.get('job') or {}
+        protected = {current['version']}
+        manifest = json.loads((Path(settings['service_root']).expanduser()/'install-manifest.json').read_bytes())
+        protected.update((manifest.get('core_version'), manifest.get('core_upgrade', {}).get('from_version')))
+        protected.add((plan.get('accepted_release') or {}).get('version'))
+        for field in ('before', 'release'):
+            protected.add((job.get(field) or {}).get('version'))
+        archives, receipts = [], []
+        with os.scandir(state) as entries:
+            for entry in entries:
+                if time.monotonic() >= deadline:
+                    return  # Never choose newest archives from an incomplete scan.
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz', entry.name):
+                    archives.append((entry.stat(follow_symlinks=False).st_mtime, entry.name))
+                elif re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json', entry.name) and entry.name != job.get('id', '')+'.json':
+                    receipts.append((entry.stat(follow_symlinks=False).st_mtime, entry.name))
+        archives.sort(reverse=True)
+        keep = {name for _, name in archives[:2]} | {version+'.tar.gz' for version in protected if version}
+        cutoff = time.time() - 7*24*60*60
+        deleted = 0
+        for modified, name in archives[2:] + sorted(receipts):
+            if deleted >= 100 or time.monotonic() >= deadline:
+                break
+            path = state/name
+            try:
+                if name.endswith('.tar.gz'):
+                    if name in keep:
+                        continue
+                else:
+                    if modified >= cutoff:
+                        continue
+                    # Bound JSON reads and preserve unknown/in-progress receipt formats.
+                    with path.open('rb') as stream:
+                        result = json.loads(stream.read(65537))
+                    if result.get('id') != name[:-5] or result.get('status') not in ('success', 'failed', 'blocked'):
+                        continue
+                path.unlink()
+                deleted += 1
+            except Exception:
+                logging.warning('fleet_state_prune_file_failed')
+    except Exception:
+        # Cleanup must never stop job execution or expose receipt tokens through exceptions.
+        logging.warning('fleet_state_prune_failed')
+
+
 def run(settings, state):
-    plan = rpc(settings, 'GET', inventory(settings))
+    current = inventory(settings)
+    plan = rpc(settings, 'GET', current)
+    prune_state(settings, state, plan, current)
     accepted=plan.get('accepted_release')
     if accepted and plan.get('verified_node_ids'):
         receipt={'schema':'home-fleet-accepted-core/v1','version':accepted['version'],'sha256':accepted['sha256'],

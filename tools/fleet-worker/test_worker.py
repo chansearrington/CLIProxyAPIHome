@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -74,5 +75,130 @@ class WorkerTests(unittest.TestCase):
             with patch.object(worker,'inventory',return_value=release):
                 with self.assertRaisesRegex(worker.WorkerError,'installed_binary_needs_reconciliation'):
                     worker.install_binary({'service_root':str(root)},{'operation':'upgrade','release':release},root,None)
+
+class RetentionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.state = root/'state'
+        self.state.mkdir()
+        self.service = root/'service'
+        self.service.mkdir()
+        self.settings = {'service_root': str(self.service)}
+        self.manifest = self.service/'install-manifest.json'
+        self.manifest.write_text(json.dumps({'core_version': '8.0.3', 'core_upgrade': {'from_version': '8.0.2'}}))
+        self.current = {'version': '8.0.3'}
+        self.plan = {'enabled': True, 'status': 'current'}
+        self.now = 2000000
+
+    def put(self, name, value, age=8*86400):
+        path = self.state/name
+        path.write_text(json.dumps(value))
+        os.utime(path, (self.now-age, self.now-age))
+        return path
+
+    def receipt(self, number, status='success', age=8*86400):
+        identifier = '00000000-0000-4000-8000-%012d' % number
+        return self.put(identifier+'.json', {'id': identifier, 'token': 'fake-token', 'status': status}, age)
+
+    def prune(self):
+        with patch.object(worker.time, 'time', return_value=self.now), patch.object(worker.time, 'monotonic', return_value=0):
+            worker.prune_state(self.settings, self.state, self.plan, self.current)
+
+    def test_archives_keep_newest_two_installed_rollback_accepted_and_job_versions(self):
+        for version in range(1, 11):
+            self.put('8.0.%d.tar.gz' % version, {}, age=(11-version)*100)
+        self.plan.update(accepted_release={'version': '8.0.4'}, job={
+            'id': 'fake-active', 'before': {'version': '8.0.5'}, 'release': {'version': '8.0.6'}})
+        self.prune()
+        self.assertEqual({p.name for p in self.state.iterdir()}, {
+            '8.0.%d.tar.gz' % version for version in (2, 3, 4, 5, 6, 9, 10)})
+        before = {p.name: p.read_bytes() for p in self.state.iterdir()}
+        self.prune()
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.state.iterdir()})
+
+    def test_receipts_keep_active_recent_boundary_running_and_unknown(self):
+        for number, status in enumerate(('success', 'failed', 'blocked'), 1):
+            self.receipt(number, status)
+        active = self.receipt(4)
+        self.plan['job'] = {'id': active.stem}
+        retained = [active, self.receipt(5, age=86400), self.receipt(6, age=7*86400),
+                    self.receipt(7, status='running'), self.receipt(8, status='pending'),
+                    self.receipt(9, status='unknown'), self.receipt(10, age=-1)]
+        self.prune()
+        self.assertEqual({p.name for p in self.state.iterdir()}, {p.name for p in retained})
+
+    def test_unrelated_nested_symlink_malformed_and_mismatched_files_are_untouched(self):
+        for name in ('settings.json', 'accepted-core.json', 'latest.json', 'run.lock', 'bad.tar.gz'):
+            self.put(name, {})
+        for name in ('catalog-backups', 'ws0045-before', 'ws0045-source', 'ws0047-node'):
+            directory = self.state/name
+            directory.mkdir()
+            (directory/'8.0.1.tar.gz').write_text('keep')
+        malformed = self.receipt(1)
+        malformed.write_text('{')
+        os.utime(malformed, (0, 0))
+        self.put('00000000-0000-4000-8000-000000000002.json', {'id': 'wrong', 'status': 'success'})
+        oversized = self.receipt(3)
+        oversized.write_text(' ' * 65537 + '{}')
+        os.utime(oversized, (0, 0))
+        target = self.service/'keep'
+        target.write_text('keep')
+        (self.state/'8.0.0.tar.gz').symlink_to(target)
+        (self.state/'00000000-0000-4000-8000-000000000004.json').symlink_to(target)
+        before = {p.name for p in self.state.iterdir()}
+        with self.assertLogs(level='WARNING') as logs:
+            self.prune()
+        self.assertEqual(before, {p.name for p in self.state.iterdir()})
+        self.assertEqual(target.read_text(), 'keep')
+        self.assertNotIn('fake-token', ''.join(logs.output))
+
+    def test_disabled_or_missing_enabled_plan_preserves_old_active_receipt(self):
+        receipt = self.receipt(1)
+        for plan in ({'enabled': False}, {}):
+            self.plan = plan
+            self.prune()
+            self.assertTrue(receipt.exists())
+
+    def test_delete_limit_makes_progress_across_runs(self):
+        for number in range(205):
+            self.receipt(number)
+        self.prune()
+        self.assertEqual(len(list(self.state.iterdir())), 105)
+        self.prune()
+        self.assertEqual(len(list(self.state.iterdir())), 5)
+        self.prune()
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_incomplete_scan_and_expired_budget_do_not_delete(self):
+        receipt = self.receipt(1)
+        with patch.object(worker.time, 'monotonic', side_effect=[0, 2]):
+            worker.prune_state(self.settings, self.state, self.plan, self.current)
+        self.assertTrue(receipt.exists())
+        with patch.object(worker.time, 'monotonic', side_effect=[0, 0, 2]):
+            worker.prune_state(self.settings, self.state, self.plan, self.current)
+        self.assertTrue(receipt.exists())
+
+    def test_cleanup_errors_are_redacted_and_do_not_stop_idle_poll(self):
+        self.receipt(1)
+        with patch.object(Path, 'unlink', side_effect=OSError('fake-sensitive-error')):
+            with self.assertLogs(level='WARNING') as logs:
+                self.prune()
+        self.assertNotIn('fake-sensitive-error', ''.join(logs.output))
+        self.manifest.write_text('{')
+        with patch.object(worker, 'inventory', return_value=self.current), patch.object(worker, 'rpc', return_value=self.plan):
+            with self.assertLogs(level='WARNING') as logs:
+                self.assertTrue(worker.run(self.settings, self.state)['ok'])
+        self.assertIn('fleet_state_prune_failed', ''.join(logs.output))
+
+    def test_enabled_plan_replays_old_active_receipt_without_executing(self):
+        receipt = self.receipt(1)
+        self.plan['job'] = {'id': receipt.stem, 'token': 'fake-token', 'operation': 'catalog'}
+        with patch.object(worker, 'inventory', return_value=self.current), patch.object(worker, 'rpc', side_effect=[self.plan, 1]), patch.object(worker, 'execute_job') as execute:
+            self.assertTrue(worker.run(self.settings, self.state)['ok'])
+        execute.assert_not_called()
+        self.assertTrue(receipt.exists())
+
 
 if __name__=='__main__':unittest.main()
