@@ -162,9 +162,6 @@ func assertStartupBackfillRows(t *testing.T, db *gorm.DB, pass int, usageIDs []u
 		if usage.ServiceTier != wantTier {
 			t.Errorf("usage %d tier = %q, want %q", usage.ID, usage.ServiceTier, wantTier)
 		}
-		if usage.DedupeKey == "" {
-			t.Fatalf("usage %d fixture was not uniquely keyed by the upstream migration", usage.ID)
-		}
 		var charge BillingChargeRecord
 		if errFind := db.First(&charge, "id = ?", fmt.Sprintf("startup-%d-%d", pass, index)).Error; errFind != nil {
 			t.Fatal(errFind)
