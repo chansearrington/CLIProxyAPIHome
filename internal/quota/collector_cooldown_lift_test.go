@@ -239,9 +239,10 @@ func (s *repoMutatorStore) Save(_ context.Context, auth *coreauth.Auth) (string,
 
 func (s *repoMutatorStore) Delete(context.Context, string) error { return nil }
 
-func (s *repoMutatorStore) MutateAuthState(ctx context.Context, id string, mutate func(auth *coreauth.Auth) bool) (*coreauth.Auth, error) {
-	auth, _, _, errMutate := s.repo.MutateAuth(ctx, id, "update", mutate)
-	return auth, errMutate
+var _ coreauth.StateMutator = (*repoMutatorStore)(nil)
+
+func (s *repoMutatorStore) MutateAuthState(ctx context.Context, id string, mutate func(auth *coreauth.Auth) coreauth.StateMutation) (*coreauth.Auth, error) {
+	return cluster.NewRuntimeAdapter(s.repo, "").MutateAuthState(ctx, id, mutate)
 }
 
 // advancingClock returns a later instant on every call, so the probe start,

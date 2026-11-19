@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDispatchAllowsUnpricedModelForUserKey(t *testing.T) {
+func TestDispatchAllowsUnpricedModelForUserKeyByDefault(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -27,9 +27,8 @@ func TestDispatchAllowsUnpricedModelForUserKey(t *testing.T) {
 		t.Fatalf("CreateAPIKey() error = %v", errCreateKey)
 	}
 
-	_, _, errAllowed := repo.AllowedDispatchIDsForAPIKeyModel(ctx, userKey, "gpt-new")
-	if errAllowed != nil {
-		t.Fatalf("unpriced dispatch error = %v, want allowed independently of price configuration", errAllowed)
+	if _, _, errAllowed := repo.AllowedDispatchIDsForAPIKeyModel(ctx, userKey, "gpt-new"); errAllowed != nil {
+		t.Fatalf("unpriced dispatch error = %v, want allowed", errAllowed)
 	}
 	if _, _, errAdmin := repo.AllowedDispatchIDsForAPIKeyModel(ctx, "admin-key", "gpt-new"); errAdmin != nil {
 		t.Fatalf("admin key dispatch error = %v, want no billing gate", errAdmin)
@@ -43,12 +42,12 @@ func TestDispatchAllowsUnpricedModelForUserKey(t *testing.T) {
 		t.Fatalf("zero-priced dispatch error = %v, want allowed", errPriced)
 	}
 	if _, _, errPrefixed := repo.AllowedDispatchIDsForAPIKeyModel(ctx, userKey, "aistudio/gpt-new"); errPrefixed != nil {
-		t.Fatalf("prefixed model dispatch error = %v, want allowed via bare model price", errPrefixed)
+		t.Fatalf("prefixed model dispatch error = %v, want allowed", errPrefixed)
 	}
 
-	// Missing price rules must not become an availability gate.
+	// A price configured for one model does not restrict dispatch of other models.
 	if _, _, errUnpriced := repo.AllowedDispatchIDsForAPIKeyModel(ctx, userKey, "gpt-other"); errUnpriced != nil {
-		t.Fatalf("dispatch for another unpriced model failed: %v", errUnpriced)
+		t.Fatalf("dispatch for another unpriced model error = %v, want allowed", errUnpriced)
 	}
 	allow := true
 	if _, errSettings := repo.UpdateBillingSettings(ctx, BillingSettingsPatch{AllowUnpricedModels: &allow}); errSettings != nil {

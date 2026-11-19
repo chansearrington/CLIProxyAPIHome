@@ -1,0 +1,28 @@
+PR54 R2 repair report — model gpt-6.1-sol[1m]
+
+Changed:
+internal/cliproxy/auth/result.go:310 preserves credential refresh diagnostics on a late stream_truncated result, while retaining per-model diagnostic.
+internal/cluster/refresh_dispatch_reload_test.go:11 tests unknown and transient refresh fencing through database store, transition, full save, reload and real selector refusal after retry expiry.
+internal/cluster/usage_dedupe_backfill.go:24 installs sparse pending index; :93 marks historical duplicates legacy-duplicate:<ID>, which cannot equal exec:/sha256: event keys. Unique event index and lookups stay unchanged. Marking is restart-safe; no rows removed or billed again.
+internal/cluster/db.go:203 invokes repair under current-schema PostgreSQL locks too.
+internal/cluster/usage_dedupe_index_test.go:61 asserts pending query EXPLAIN uses sparse index.
+internal/cluster/usage_dedupe_test.go:151 requires duplicate processed markers, zero warm scans/hashing and late old-writer repair.
+internal/cluster/usage_dedupe_pending_test.go:9 exercises same/cross-batch duplicates and actual SQLite/PostgreSQL warm startups and old-writer repair.
+docs/fleet/ws-0059-home-1110.md records evidence, corrected cost description and limits; ws-0059-r2-plan.txt records scope.
+
+Commands and actual results:
+git merge origin/fleet — normal merge 777bde3 includes b45bae9.
+Ark run-go.sh, golang:1.26-bookworm only; no local Go tools.
+New regression checks before fix: refresh diagnostics replaced by stream_truncated; duplicate keys remained blank; pending EXPLAIN used primary-key full-tail scan. All reproduced. Fixed focused run cluster PASS 0.431s.
+Final go test -json -vet=off -count=1 ./... with owned disposable PostgreSQL17-bookworm: TEST_EXIT=0; 36 test-bearing packages PASS; 14 no-test packages; 2371 top-level tests PASS; 5394 passes including subtests; 0 failures; 2 opt-in measurement skips (TestConcurrencyAdmissionMeasure, TestHeavyStatisticsPostgresMeasure).
+Earlier full R2 run failed only on invalid-JSON test fixture; corrected and reran, not counted as a pass.
+go vet ./...: VET_EXIT=0, no findings.
+gofmt -l .: no filenames.
+CGO_ENABLED=1 go build -o /out/ws0059-home-r2 ./cmd/home: BUILD_EXIT=0.
+Binary /mnt/user/appdata/cpa-home-build/tmp/ws0059-home-r2 SHA256 bc902cd4abcc35fb7b6a9ed887c16fc3ef5059aff02c4b90358b0ca1d7d386f7.
+848 Go/module source files byte-identical to Ark; manifest SHA256 41ba62aae50c0d68cd084fa1d69fdd5ad0ed53fcdc2c08eff7e92cce2ba84cfa.
+git diff --check clean; owned disposable PostgreSQL container absent after cleanup.
+Receipt: /mnt/user/appdata/cpa-home-build/tmp/ws0059-r2-postgres-test.json; local /tmp/ws0059-r2-postgres-test-final.json.
+
+Skipped/not checked: production-size migration timing and independent review. No image build, deployment, production access or backup access. Pending index first creation and duplicate marker writes still require first-start time/disk measurement. Bare-source binary has no embedded production panel and is not deployable.
+Task52: final commit/push/PR update recorded in lead handoff after completion.

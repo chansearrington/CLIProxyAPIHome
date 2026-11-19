@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPIHome/internal/auth/oautherror"
@@ -95,7 +96,18 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 		// must not be shared between different authoritative repositories.
 		key = fmt.Sprintf("%p:%s", journal, key)
 	}
-	result, errRefresh, _ := codexRefreshGroup.Do(key, func() (any, error) {
+	var ownsRefresh atomic.Bool
+	resultCh := codexRefreshGroup.DoChan(key, func() (value any, errRefresh error) {
+		defer func() {
+			if recover() != nil {
+				value, errRefresh = nil, NewRefreshOutcomeUnknownError(ClientID, refreshToken, "transport", nil)
+				if journal == nil {
+					rememberRefreshOutcome(errRefresh)
+				}
+				log.WithField("grant_sha256_prefix", refreshGrantFingerprint(ClientID, refreshToken)[:6]).Error("codex refresh panic recovered; grant remains fenced")
+			}
+		}()
+		ownsRefresh.Store(true)
 		if journal != nil {
 			return journalRefresh(ctx, journal, refreshToken, func() (*CodexTokenData, error) {
 				return o.refreshTokens(ctx, refreshToken)
@@ -108,10 +120,24 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 		rememberRefreshOutcome(errTokens)
 		return tokens, errTokens
 	})
-	if errRefresh != nil {
-		return nil, errRefresh
+	var result singleflight.Result
+	select {
+	case <-ctx.Done():
+		if !ownsRefresh.Load() {
+			return nil, ctx.Err()
+		}
+		// Keep the owner's exchange outcome, especially a known token rotation.
+		// Only waiters may leave without waiting for that exchange to finish.
+		result = <-resultCh
+	case result = <-resultCh:
 	}
-	tokens, ok := result.(*CodexTokenData)
+	if errContext := ctx.Err(); errContext != nil && !ownsRefresh.Load() {
+		return nil, errContext
+	}
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	tokens, ok := result.Val.(*CodexTokenData)
 	if !ok || tokens == nil {
 		return nil, fmt.Errorf("token refresh failed: invalid single-flight result")
 	}

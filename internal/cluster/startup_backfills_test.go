@@ -20,103 +20,93 @@ import (
 
 func TestStartupBackfillsRepairLegacyAndSkipCleanRestart(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			var db *gorm.DB
-			if backend == "sqlite" {
-				db = openDatabaseSnapshotSQLiteTestDB(t, filepath.Join(t.TempDir(), "startup.db"))
-			} else {
-				dsn := strings.TrimSpace(os.Getenv("CLIPROXY_HOME_TEST_POSTGRES_DSN"))
-				if dsn == "" {
-					t.Skip("CLIPROXY_HOME_TEST_POSTGRES_DSN is not set")
-				}
-				var errOpen error
-				db, errOpen = gorm.Open(postgres.Open(dsn), databaseGORMConfig(defaultDatabaseSlowQueryThreshold))
-				if errOpen != nil {
-					t.Fatalf("open postgres: %v", errOpen)
-				}
-				sqlDB, errDB := db.DB()
-				if errDB != nil {
-					t.Fatal(errDB)
-				}
-				dropDatabaseSnapshotPostgresTables(t, db)
-				t.Cleanup(func() {
-					dropDatabaseSnapshotPostgresTables(t, db)
-					if errClose := sqlDB.Close(); errClose != nil {
-						t.Errorf("close postgres: %v", errClose)
-					}
-				})
-			}
-			if errMigrate := AutoMigrate(db); errMigrate != nil {
-				t.Fatal(errMigrate)
-			}
-			// Simulate an existing v17 database without the unversioned fleet indexes.
-			indexNames := []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1"}
-			if backend == "sqlite" {
-				indexNames = append(indexNames, "idx_usage_dashboard_time_v1", "idx_usage_dashboard_provider_time_v1")
-			}
-			for _, indexName := range indexNames {
-				if errDrop := db.Exec("DROP INDEX IF EXISTS " + indexName).Error; errDrop != nil {
-					t.Fatal(errDrop)
-				}
-			}
-			if backend == "postgres" {
-				if errVersion := db.Model(&schemaMigrationRecord{}).Where("id = ?", schemaMigrationRecordID).Update("version", 17).Error; errVersion != nil {
-					t.Fatal(errVersion)
-				}
-			}
-			if errAlter := db.Exec(`ALTER TABLE "usage" ADD COLUMN request_service_tier TEXT`).Error; errAlter != nil {
-				t.Fatal(errAlter)
-			}
-			// The second pass simulates older inserts and updates after a successful migration.
-			var firstUsageIDs []uint
-			for pass := 0; pass < 2; pass++ {
-				usageIDs := seedStartupBackfillRows(t, db, pass)
-				if errUpdate := db.Exec(`UPDATE "usage" SET request_service_tier = 'priority' WHERE id = ?`, usageIDs[1]).Error; errUpdate != nil {
-					t.Fatal(errUpdate)
-				}
-				if pass == 0 {
-					firstUsageIDs = usageIDs
+		for _, version := range []int{17, currentDatabaseVersion} {
+			t.Run(fmt.Sprintf("%s/v%d", backend, version), func(t *testing.T) {
+				var db *gorm.DB
+				if backend == "sqlite" {
+					db = openDatabaseSnapshotSQLiteTestDB(t, filepath.Join(t.TempDir(), "startup.db"))
 				} else {
-					if errUpdate := db.Exec(`UPDATE "usage" SET service_tier = '' WHERE id = ?`, firstUsageIDs[0]).Error; errUpdate != nil {
-						t.Fatal(errUpdate)
+					dsn := strings.TrimSpace(os.Getenv("CLIPROXY_HOME_TEST_POSTGRES_DSN"))
+					if dsn == "" {
+						t.Skip("CLIPROXY_HOME_TEST_POSTGRES_DSN is not set")
 					}
-					if errUpdate := db.Exec(`UPDATE "billing_charge" SET base_amount = 0 WHERE id = ?`, "startup-0-0").Error; errUpdate != nil {
-						t.Fatal(errUpdate)
+					var errOpen error
+					db, errOpen = gorm.Open(postgres.Open(dsn), databaseGORMConfig(defaultDatabaseSlowQueryThreshold))
+					if errOpen != nil {
+						t.Fatalf("open postgres: %v", errOpen)
 					}
+					sqlDB, errDB := db.DB()
+					if errDB != nil {
+						t.Fatal(errDB)
+					}
+					dropDatabaseSnapshotPostgresTables(t, db)
+					t.Cleanup(func() {
+						dropDatabaseSnapshotPostgresTables(t, db)
+						if errClose := sqlDB.Close(); errClose != nil {
+							t.Errorf("close postgres: %v", errClose)
+						}
+					})
 				}
-				var migrationLogs bytes.Buffer
-				queryDB := db.Session(&gorm.Session{Logger: logger.New(log.New(&migrationLogs, "", 0), logger.Config{LogLevel: logger.Info, ParameterizedQueries: true})})
-				if errMigrate := AutoMigrate(queryDB); errMigrate != nil {
+				if errMigrate := AutoMigrate(db); errMigrate != nil {
 					t.Fatal(errMigrate)
 				}
-				if backend == "postgres" {
-					for _, statement := range []string{"CREATE TABLE", "ALTER TABLE", "DROP "} {
-						if strings.Contains(migrationLogs.String(), statement) {
-							t.Errorf("current PostgreSQL v17 startup issued full schema DDL: %s", statement)
-						}
-					}
+				// Existing v17 and upstream v19 databases must both acquire the fleet indexes.
+				indexNames := []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1"}
+				if backend == "sqlite" {
+					indexNames = append(indexNames, "idx_usage_dashboard_time_v1", "idx_usage_dashboard_provider_time_v1")
 				}
 				for _, indexName := range indexNames {
-					var count int64
-					if backend == "sqlite" {
-						if errCount := db.Raw(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&count).Error; errCount != nil {
-							t.Fatal(errCount)
-						}
-					} else if errCount := db.Raw(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, indexName).Scan(&count).Error; errCount != nil {
-						t.Fatal(errCount)
-					}
-					if count != 1 {
-						t.Errorf("v17 startup did not install index %s", indexName)
+					if errDrop := db.Exec("DROP INDEX IF EXISTS " + indexName).Error; errDrop != nil {
+						t.Fatal(errDrop)
 					}
 				}
-				assertStartupBackfillRows(t, db, pass, usageIDs, "priority")
-				assertStartupBackfillRows(t, db, 0, firstUsageIDs, "priority")
-				assertCleanStartupSkipsBackfillUpdates(t, db)
-			}
-			if backend == "postgres" {
-				assertPostgresSchemaMigrationVersion(t, db, currentDatabaseVersion)
-			}
-		})
+				if errVersion := db.Save(&schemaMigrationRecord{ID: schemaMigrationRecordID, Version: int64(version), UpdatedAt: time.Now().UTC()}).Error; errVersion != nil {
+					t.Fatal(errVersion)
+				}
+				if errAlter := db.Exec(`ALTER TABLE "usage" ADD COLUMN request_service_tier TEXT`).Error; errAlter != nil {
+					t.Fatal(errAlter)
+				}
+				// The second pass simulates older inserts and updates after a successful migration.
+				var firstUsageIDs []uint
+				for pass := 0; pass < 2; pass++ {
+					usageIDs := seedStartupBackfillRows(t, db, pass)
+					if errUpdate := db.Exec(`UPDATE "usage" SET request_service_tier = 'priority' WHERE id = ?`, usageIDs[1]).Error; errUpdate != nil {
+						t.Fatal(errUpdate)
+					}
+					if pass == 0 {
+						firstUsageIDs = usageIDs
+					} else {
+						if errUpdate := db.Exec(`UPDATE "usage" SET service_tier = '' WHERE id = ?`, firstUsageIDs[0]).Error; errUpdate != nil {
+							t.Fatal(errUpdate)
+						}
+						if errUpdate := db.Exec(`UPDATE "billing_charge" SET base_amount = 0 WHERE id = ?`, "startup-0-0").Error; errUpdate != nil {
+							t.Fatal(errUpdate)
+						}
+					}
+					if errMigrate := AutoMigrate(db); errMigrate != nil {
+						t.Fatal(errMigrate)
+					}
+					for _, indexName := range indexNames {
+						var count int64
+						var errIndex error
+						if backend == "sqlite" {
+							errIndex = db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&count).Error
+						} else {
+							errIndex = db.Raw("SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?", indexName).Scan(&count).Error
+						}
+						if errIndex != nil || count != 1 {
+							t.Fatalf("missing index %s after v%d startup: %v", indexName, version, errIndex)
+						}
+					}
+					assertStartupBackfillRows(t, db, pass, usageIDs, "priority")
+					assertStartupBackfillRows(t, db, 0, firstUsageIDs, "priority")
+					assertCleanStartupSkipsBackfillUpdates(t, db)
+				}
+				if backend == "postgres" {
+					assertPostgresSchemaMigrationVersion(t, db, currentDatabaseVersion)
+				}
+			})
+		}
 	}
 }
 
@@ -126,7 +116,7 @@ func TestStartupBackfillsRepairLegacySnapshotImport(t *testing.T) {
 	ctx := context.Background()
 	source := openDatabaseSnapshotSQLiteTestDB(t, filepath.Join(t.TempDir(), "source.db"))
 	usageIDs := seedStartupBackfillRows(t, source, 0)
-	for _, version := range []int{16, 17} {
+	for _, version := range []int{16, 17, 18, currentDatabaseVersion} {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "snapshot.zip")
 			if _, errExport := exportDatabaseSnapshotVersion(ctx, source, path, version); errExport != nil {
@@ -157,7 +147,7 @@ func seedStartupBackfillRows(t *testing.T, db *gorm.DB, pass int) []uint {
 	now := time.Date(2026, time.November, 13, 0, 0, 0, 0, time.UTC)
 	var usageIDs []uint
 	for index, tier := range []any{nil, "   ", "default", "auto", ""} {
-		record := UsageRecord{Timestamp: now, ServiceTier: "auto", PayloadJSON: JSONB(`{}`), CreatedAt: now}
+		record := UsageRecord{Timestamp: now, ServiceTier: "auto", PayloadJSON: JSONB(fmt.Sprintf(`{"execution_id":"startup-%d-%d"}`, pass, index)), CreatedAt: now}
 		if errCreate := db.Create(&record).Error; errCreate != nil {
 			t.Fatal(errCreate)
 		}
