@@ -1,0 +1,5 @@
+Goal: bound failed OpenClaw catalog candidate backups while preserving the active candidate and rollback.
+Scope: catalog_sync.py retention helper and OpenClaw call; test_catalog_sync.py synthetic tests. Existing Claude caller keeps its behavior. No config, exports, dependencies, API, deployment or timeout changes.
+Acceptance: repeated schema failures, command exceptions and runtime failures retain current + latest previous candidate, before/candidate bytes intact; runtime rollback preserves unrelated changes; whole Python suite passes. Commit, push and PR to fleet, never merge/deploy.
+Sequence: trace shared helper/callers -> add regression -> observe failure -> minimal fix -> full local Python suite (explicit brief) -> commit/push/PR. Separate read-only SSH investigation of Nov15 gateway unload; no remote writes.
+Risk: existing mtime sorting can delete the new current candidate when an older directory is future-dated. Explicitly protect the active directory; rollback uses in-memory original fields and current candidate before.json remains on disk.
