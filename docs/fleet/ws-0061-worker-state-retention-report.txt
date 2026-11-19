@@ -1,0 +1,39 @@
+Worker state retention — builder report
+Model ID: gpt-6.1-sol[1m]
+
+Changes
+- tools/fleet-worker/worker.py:258 adds guarded top-level cleanup; :311 calls it after a successful Home plan and before executing the offered task.
+- tools/fleet-worker/test_worker.py:79 adds eight temp-directory tests.
+- tools/fleet-worker/README.md:52 describes retention, replay safeguards, budgets and checks.
+- docs/fleet/ws-0061-worker-state-retention.md is the agent working plan.
+
+Keep rules and why
+- Keep the two newest versioned release tarballs by file modification time, plus installed version, manifest current/rollback versions, Home-accepted version, and offered task before/target versions. These exceptions protect recovery even when recent downloads are newer than the installed core.
+- Rollback actually uses the verified service-root cli-proxy-api.VERSION.bak binary, not tarballs. No service-root file is removed.
+- Remove only terminal success/failed/blocked UUID receipts older than seven days with a matching embedded task ID. Seven days preserves a full week for diagnosis/report retries. Always retain the current Home task regardless of age: Home can offer an expired active task again for reconciliation.
+- Keep running, pending, unknown, malformed and oversized receipts. Skip all cleanup if Home is unavailable or disabled; disabled plans hide active tasks.
+- Never recurse. Ignore symlinks, settings, locks, latest/accepted records, staged binaries, catalog-backups and ws0045-before/ws0045-source/ws0047-node directories.
+- Maximum 100 removals per poll; one-second cooperative work budget; receipt JSON reads capped at 65,537 bytes. Incomplete directory scans delete nothing. Filesystem calls can exceed the budget if the filesystem stalls. Exceptions produce fixed log codes without values and do not stop execution.
+
+Checks and actual results
+From tools/fleet-worker, sequentially:
+1. python3 -I -m unittest discover -p '*test*.py'
+   Python 3.14.7: Ran 85 tests in 12.421s; OK (skipped=1).
+2. /usr/bin/python3 -I -m unittest discover -p '*test*.py'
+   Python 3.9.6: Ran 85 tests in 8.580s; FAILED (errors=31, skipped=1).
+3. Same full 3.9.6 command on untouched fleet base 86dfb08:
+   Ran 77 tests in 4.237s; FAILED (errors=31, skipped=1).
+   All 31 reported error cases match: ws0054 acceptance one-digit timestamp fractions are unsupported by Python 3.9 fromisoformat; ws0054 backup fixtures use sqlite3.Connection.serialize which Python 3.9 lacks. No rehearsal tooling was changed. Follow-up task #57 records this existing compatibility gap.
+4. python3 -I -m unittest discover -p 'test_*.py'
+   Runtime worker/catalog suite: Ran 30 tests in 1.422s; OK.
+5. /usr/bin/python3 -I -m unittest discover -p 'test_*.py'
+   Runtime worker/catalog suite: Ran 30 tests in 2.635s; OK.
+6. git diff --check: exit 0, no output.
+
+The first focused new-test run found two fixture issues (real monotonic budget in a count assertion, modified fixture timestamps becoming recent). Tests now use fixed clocks and explicit old timestamps; production behavior was not changed to hide those failures.
+
+Not verified / risk
+No installation, rollout, live directory cleanup, SSH, Ark commands, Go checks or real-machine acceptance was performed. Full folder discovery is not green on Python 3.9 because of the verified baseline failures above. Cleanup deliberately preserves unknown files and skips disabled/offline periods. If an entire directory scan consistently exceeds one second, cleanup safely does nothing; pathological folders may need a later cursor-based approach. Independent pre-merge review belongs to the lead.
+
+PR: https://github.com/chansearrington/CLIProxyAPIHome/pull/56 (base fleet, branch ws-0061/worker-state-retention).
+Task state: #56 remains in progress because full-folder Python 3.9 verification has baseline failures; PR delivery itself is finished. Compatibility follow-up #57 remains pending. Independent lead review and any future rollout remain separate. No merge is authorized.
