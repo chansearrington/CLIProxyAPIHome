@@ -55,8 +55,8 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.64** on all five machines (verified native requests, running-process
-  banners and artifact hashes on 2026-11-10; ws-0047). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.69** on all five machines (running binary SHA-256 `e2d9d0cc…69967138` read on each
+  machine and native Claude/GPT 6.2 requests through every node on 2026-11-19; ws-0054). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -89,7 +89,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   3,461,537,792 bytes, full integrity check `ok`, SHA-256
   `595c33ef8bb1baec302286c5719d035120f2a7d3da5a48e9cff4572c4987fc97`.
 
-## Whole-day usage reporting indexes (ws-0051, not deployed)
+## Whole-day usage reporting indexes (ws-0051, deployed 2026-11-19 in ws-0054)
 
 - The SQLite-only migration adds `idx_usage_dashboard_time_v1` and
   `idx_usage_dashboard_provider_time_v1`, covering aggregate fields in timestamp-descending,
@@ -124,7 +124,7 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   See the [private evidence and maintenance review page](https://agents.thebearingtons.com/inbox/a/Eb56Hfumrq)
   (source: `docs/fleet/ws-0051-usage-aggregate-day.html`).
 
-## Home 1.1.9 fallback source (ws-0054, not deployed)
+## Home 1.1.9 fallback source (ws-0054, deployed 2026-11-19 as `7091c86`)
 
 The fallback retains the approved fleet baseline `945907b` (including PR #43's locked
 status-toggle save and PR #45's model-alert scripts) plus PR #36 covering indexes and
@@ -136,8 +136,7 @@ The existing version-16/17 snapshot mappings and fenced Codex refresh runtime ar
 SQLite installs the additive indexes idempotently at startup. Already-current PostgreSQL
 17 installs the sparse indexes and repairs late legacy writes under the existing migration
 and API-binding locks, without running full schema DDL. No Home 1.1.10, dedupe, Guardian
-or refresh-engine integration is included. This source note is not deployment acceptance:
-Ark tests/build, independent review and full-copy image/startup/rollback rehearsal are pending.
+or refresh-engine integration is included. Deployed and accepted on 2026-11-19; see the November 19 section below.
 The pre-existing deployed runtime's credential-reload fencing gap is not fixed by these indexes.
 
 ## Account additions
@@ -392,8 +391,8 @@ Nov 13 empty-503 bursts). Accepted 2026-11-13 19:47 CT with no rollback. Image-o
 - **Node auto-patch updates are OFF** (`patch_updates=false`, Chanse 2026-11-13). Upgrades must be
   scheduled and announced in advance, not silent. Catalog sync stays on hourly. Do not turn patch
   updates back on until the scheduled-upgrade work (ws-0050) ships.
-- **A Home restart takes about 5.5 minutes**, because two startup backfills scan whole tables even when
-  they have nothing to change. Plan any restart's announced outage around that until it is fixed.
+- ~~A Home restart takes about 5.5 minutes~~ Fixed by ws-0054 (2026-11-19): a restart now reaches
+  "schema migration completed" in about 1 s. Only the first start of a new index build is slow.
 - **Independent recovery route:** `~/.cpa-recovery/claude-direct` on the MacBook starts Claude Code
   straight to Anthropic, using a healthy Home account's current access token read over SSH. It works
   with Home down and never reads a refresh token.
@@ -423,3 +422,30 @@ same day: Home lists both, and all five nodes list them and returned 200 for one
 **Reverted the same day (16:36 CT):** upstream added both models, so the override was removed with
 `DELETE /v8/management/config/models`. Home again follows the official list; Home and all four minis still list
 both models and served `gpt-6.2-sol`. The fork `chansearrington/models` is no longer referenced by Home.
+
+## November 19 Home upgrade (ws-0054)
+
+Home is **`cpa-home:1.1.9-claude-fleet-7091c86`** (immutable image `43bac183…cf35bf8`): the ws-0048 line
+plus PR #36 (whole-day usage indexes), corrected PR #38 (sparse indexes; the two startup backfills no longer
+rescan whole tables) and PR #43 (status toggle can no longer silently drop a disable). Schema stays 17.
+Nodes stay on CPA 8.0.69. Image-only rollback target: `cpa-home:1.1.9-claude-fleet-13860b9` (`0a4c3a7c…`).
+
+- **First start builds four indexes** on the 46 GB database: 8.5 min (10:48–10:56 CT). Later restarts take
+  about 1 s to finish migrations.
+- **Outage was 10:48–10:56 CT as planned, then 11:03–11:45 CT by mistake.** The readiness check compared the
+  new container with the deleted old one and failed a healthy Home; the automatic rollback stopped it and then
+  refused to start the old image because `binhex-krusader` (`/mnt`) and `claude-code` (`/`) have broad writable
+  host mounts. Chanse started the container by hand at 11:45. Both checks are fixed in the manual (PR #48).
+- **Accepted after recovery:** exact reviewed schema with all four indexes; every account, key, setting and
+  history row matched the pre-upgrade snapshot; all 1,058 panel files byte-identical; all five nodes healthy
+  with Copilot loaded; native Claude Haiku and GPT 6.2 Sol requests through all five nodes joined to usage,
+  60 s stable. Fleet policy restored exactly; `patch_updates` stays false; restart policy `unless-stopped`.
+- **Backups (two newest verified):** HOT `/mnt/disk18/cpa-home-disaster-backups/ws0054-hot-20261119T154551Z/`
+  (46,233,739,264 B, FULL integrity ok, SHA matched on both devices) and COLD
+  `data/backups/home-cold-ws0054-20261119T164721Z.db` (quick, SHA and FULL integrity PASS). The Nov 6 and
+  Nov 10 snapshots were removed under the two-version rule.
+- The Claude Code model menu on all five machines now lists only 1M-context options and adds GPT 6.2 Sol
+  (Medium/High) and GPT 6.2 Astra High at `[1m]` (Chanse). Home's listed context sizes (272K/500K) are
+  catalog labels, not limits; `[1m]` in the session model sets the window.
+
+Record: [ws-0054 deploy record](docs/fleet/ws-0054-home-7091c86-deploy.md).
