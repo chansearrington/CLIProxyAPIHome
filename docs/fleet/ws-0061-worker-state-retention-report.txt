@@ -35,4 +35,5 @@ The first focused new-test run found two fixture issues (real monotonic budget i
 Not verified / risk
 No installation, rollout, live directory cleanup, SSH, Ark commands, Go checks or real-machine acceptance was performed. Full folder discovery is not green on Python 3.9 because of the verified baseline failures above. Cleanup deliberately preserves unknown files and skips disabled/offline periods. If an entire directory scan consistently exceeds one second, cleanup safely does nothing; pathological folders may need a later cursor-based approach. Independent pre-merge review belongs to the lead.
 
-Task state: #56 delivery in progress until PR exists; full-folder Python 3.9 issue separately tracked as #57 pending. No merge is authorized.
+PR: https://github.com/chansearrington/CLIProxyAPIHome/pull/56 (base fleet, branch ws-0061/worker-state-retention).
+Task state: #56 remains in progress because full-folder Python 3.9 verification has baseline failures; PR delivery itself is finished. Compatibility follow-up #57 remains pending. Independent lead review and any future rollout remain separate. No merge is authorized.
