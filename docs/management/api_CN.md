@@ -4878,7 +4878,10 @@ fragment、token 或凭据。旧策略没有公告地址时仍可读取，但不
 绝不醒来就升级。后来发现的新版本需要自己的公告与窗口；可通过 postponed 替代旧可选窗口。
 
 Home 向 announcement_url POST，下游负责同时可靠地接受 Hype Orchestrator 留言板消息和托管审核页后才返回 2xx。
-不发送管理密钥，也不能证明读者已阅读。基础 JSON：
+不发送管理密钥，也不能证明读者已阅读。若 Home 环境变量 `FLEET_ANNOUNCE_TOKEN` 已配置，
+仅此请求添加 `Authorization: Bearer <token>`；未配置则不发送该头，保持旧接收器兼容。
+通过私有环境配置向 Home 和接收器提供同一高强度密钥，绝不能放入 URL、策略或 JSON。
+包括认证请求在内都不跟随重定向。基础 JSON：
 
 ```json
 {"phase":"scheduled","target_version":"8.0.30","window_start":"2026-11-19T02:00:00-06:00","nodes":["00000000-0000-4000-8000-000000000001"]}
@@ -4895,10 +4898,12 @@ phase 包括 `scheduled`、`reminder`、`started`、`done`、`rollback`、`rolle
 投递超时 20 秒，不跟随重定向，失败至少五分钟后重试。公告状态跨重启保存，投递至少一次；接收方必须用
 `Idempotency-Key` 去重，该值就是持久化 notice ID，位于请求头而非 JSON。日志仅包含 phase 和 HTTP 状态码，
 不包含 URL 路径、查询参数或响应正文。普通消息最多 20 条，超过 24 小时过期，历史记录丢弃/过期；未确认的
-门控公告安全重建。done、rollback、rolled_back、rollback_failed 不受此数量或期限限制，4xx 也不删除，
-持续退避重试，间隔最多一小时。普通旧消息的永久 4xx 拒绝会使相关窗口失败并重新公告，而不是永久堵塞队列。
+门控公告安全重建。done、rollback、rolled_back、rollback_failed 不受此数量或期限限制，临时失败
+持续退避重试，间隔最多一小时。408、429 仍为临时失败；其余 4xx 永久丢弃被拒绝的单条公告，
+历史写入 operation=announcement、status=rejected_<phase>，不把投递拒绝误记为 rollback_failed。
+scheduled/reminder/started 被拒绝只延期其自身窗口并重新公告；普通旧回执被拒绝不重排其他窗口。
 只有 scheduled（至少提前一小时）、reminder 和 started 都成功后才能派发升级；投递太晚或失败则安排下一晚。
-完成消息一直留队直到被接受，队列非空时不派发后续升级；回滚有上述 15 分钟安全例外。已运行任务始终可对账。等待补丁窗口期间目录同步照常，
+完成消息一直留队直到被接受或永久拒绝并记录，队列非空时不派发后续升级；回滚有上述 15 分钟安全例外。已运行任务始终可对账。等待补丁窗口期间目录同步照常，
 同一公告窗口可包含固定 CPA 补丁及现有目录协调；Home 镜像升级仍是人工操作。
 
 ### POST `/fleet/postpone`
