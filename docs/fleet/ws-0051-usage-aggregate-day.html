@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Whole-day usage</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../theme.css">
+</head>
+<body data-fb-section-comments>
+<main>
+<header class="page-head">
+<p class="eyebrow">ws-0051 · engineering evidence · 2026-11-13</p>
+<h1 class="page-title">Whole-day usage</h1>
+<ul class="meta"><li>Code change only</li><li>No production access</li><li>10-second limit unchanged</li></ul>
+<p class="page-sub">Whole-day Management aggregates run in 1.36–4.81 seconds on the verified backup after adding two reporting indexes. The overview remains a separate performance limitation.</p>
+</header>
+<section id="situation" class="summary">
+<h2>The situation</h2>
+<p>Home's Management usage aggregate can fail after ten seconds when asked for a whole day. Breaking the day into small pieces works but makes reporting slow and awkward. The separate dashboard overview already exceeds the same budget.</p>
+<p>This work measured the November 10 verified backup on the Ark, not the live database. The backup contains 3,050,397 usage records. November 8 contains 139,725 records and provides a complete busy-day benchmark. It cannot reproduce November 13 traffic because that traffic is newer than the backup.</p>
+</section>
+<section id="cause">
+<h2>Why it is slow</h2>
+<p>The existing provider-and-time and time indexes find the right rows, but do not hold the fields needed to total them. SQLite repeatedly fetches those fields from a large table that also contains request payloads. The aggregate repeats the work for group counts, metrics and latency percentiles. The overview runs 23 statements and repeats these scans for several rankings.</p>
+<p>The limit comes from <code>internal/cluster/management/server.go:84–89</code>, where <code>requestContext</code> gives the request ten seconds. Queueing for a heavy-statistics slot shares that same budget. This change does not raise the limit, increase the connection pool, or move reads onto the writer.</p>
+<p>The route is registered at <code>internal/managementhttp/server.go:233</code>; the handler is <code>ListUsageAggregates</code> in <code>internal/cluster/management/usage_observability.go:189</code>. Repository execution starts at <code>internal/cluster/usage_observability.go:765</code>, with metrics and percentile SQL built by the existing shared query functions. The four-connection read-only pool remains separate from SQLite's single writer.</p>
+</section>
+<section id="fix">
+<h2>The smallest verified fix</h2>
+<p>Add two SQLite-only covering indexes in the existing <code>migrateUsageObservabilityIndexes</code> migration. One starts with timestamp; the other starts with the same case-insensitive provider expression as the filter. Both hold the fields required by every aggregate grouping, so SQLite can read reporting values from the index instead of fetching the payload-heavy table rows.</p>
+<p>Both retain <code>timestamp DESC, id</code> ordering before the reporting fields. An earlier ascending-order experiment changed floating-point addition by approximately 0.000000000000009; it was rejected. The final definitions preserve complete response hashes and the exact stored bits of aggregate amounts in the tested cases.</p>
+<p>Final names are <code>idx_usage_dashboard_time_v1</code> and <code>idx_usage_dashboard_provider_time_v1</code>. Independent review added the version suffix before first deployment, so a stale pre-review same-name index cannot satisfy this migration accidentally. Measurements used identical column and ordering definitions under the earlier unversioned names; renaming changes no indexed values or scan order.</p>
+<p>No handler, response field, filter, group, sorting rule, pagination rule, token expression, percentile rule or PostgreSQL query changes. API documentation is unchanged because the contract is unchanged.</p>
+</section>
+<section id="timings">
+<h2>Whole-day measurements</h2>
+<p>Actual repository queries, November 8, 00:00–24:00 UTC, all nine grouping choices with no provider filter, Codex, and Claude. Runs used the real Go SQLite driver inside <code>golang:1.26-bookworm</code> on the Ark. Timings include the three aggregate queries, not network transit. Cache temperature differs across sequential runs; these are measured observations, not a cold-cache guarantee.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Request</th><th>Before</th><th>After</th></tr></thead>
+<tbody>
+<tr><td>Codex, grouped by model</td><td>15.213 s</td><td>2.024 s</td></tr>
+<tr><td>Codex, grouped by provider</td><td>3.339 s</td><td>1.421 s</td></tr>
+<tr><td>Codex, grouped by credential</td><td>4.601 s</td><td>2.505 s</td></tr>
+<tr><td>All providers, grouped by model</td><td>6.856 s</td><td>2.652 s</td></tr>
+<tr><td>All providers, grouped by provider</td><td>6.833 s</td><td>2.628 s</td></tr>
+<tr><td>All providers, grouped by credential</td><td>8.682 s</td><td>4.670 s</td></tr>
+<tr><td>All 27 measured aggregate cases</td><td>3.339–15.213 s</td><td>1.361–4.813 s</td></tr>
+</tbody></table></div>
+<p><code>EXPLAIN QUERY PLAN</code> changes from <code>USING INDEX idx_usage_provider_lower_time</code> to <code>USING COVERING INDEX idx_usage_dashboard_provider_time_v1</code>. Date bounds and the normalized provider filter remain index search constraints.</p>
+<p>Full JSON fingerprints match in all 27 cases. Direct <code>math.Float64bits</code> comparisons also match for all 34 returned amounts across model, provider and credential groups, with no provider filter, Codex and Claude. Those nine complete responses are byte-for-byte identical, including their sorting.</p>
+<div class="callout"><p class="callout-title">Overview is not fixed</p><p>On November 9, Codex overview improves from 26.427 to 10.851 seconds, Claude from 25.233 to 9.968 seconds, and all-provider overview from 42.401 to 17.502 seconds. It still repeats enough work to exceed the unchanged ten-second budget. This PR does not claim otherwise.</p></div>
+</section>
+<section id="build-cost">
+<h2>Build time and disk space</h2>
+<p>The exact final definitions took 85.141 and 89.483 seconds to build with Home's Go driver on the 3.05-million-row backup; total migration time was 174.700 seconds. This is a measured maintenance cost, not a safe upper bound for today's larger live database.</p>
+<p>The timestamp index occupies 913,195,008 bytes and the provider/timestamp index 951,427,072 bytes: 1,864,622,080 bytes total, approximately 1.74 GiB of permanent space on this backup. This also adds ongoing index-maintenance work when usage rows are written. A second exact-definition build sampled open sort files every 20 ms. Peak sort-file size was 932,003,351 bytes (about 889 MiB), with a peak rollback journal of 949,528 bytes. That instrumented repeat took 118.818 and 120.562 seconds, 239.482 seconds total, illustrating real timing variation. The same migration with both indexes already present took 1.945 ms. Reserve substantially more than the measured roughly 0.87 GiB temporary peak, plus 1.74 GiB permanent growth, for a larger live database; these measurements are not a production-space cap.</p>
+<p>Smaller alternatives: a billing-only covering index took 14.871 seconds plus 0.961 seconds to analyze, but did not remove usage-table fetches; a diagnostic sum improved only from 3.949 to 3.083 seconds. It was rejected. Two materially narrower usage indexes (identity and latency fields, without token totals) took 85.305 and 89.355 seconds to build, essentially the same build time, yet whole-day all-provider credential aggregation still took 9.227 seconds versus 4.670 seconds with the selected indexes. Codex/model took 4.495 versus 2.024 seconds. The narrower pair saved approximately 369 MiB of permanent index space but did not provide a shorter maintenance window or enough margin under the request budget. It was rejected.</p>
+</section>
+<section id="checks">
+<h2>Verification</h2>
+<p>Exact code commit <code>f17d078</code> was extracted with <code>git archive | ssh tar -x</code> into a new private Ark source directory. Final output:</p>
+<pre><code>VERIFY_HEAD=f17d078
+FORMAT_OK
+VET_CLEAN
+FOCUSED_TESTS_OK
+COMPILE_OK_OUTPUT_REMOVED</code></pre>
+<p><code>gofmt</code> is clean. <code>go vet ./...</code> returned zero findings on this head. Focused tests returned 134 passing results including subtests and six skipped PostgreSQL-only results; top-level counts were 55 passed and four skipped, with zero failures. Packages passed after review follow-ups: cluster (0.963 s), management (1.512 s), managementhttp (0.031 s). Compilation succeeded with <code>go build -o /out/test-output ./cmd/home</code>, and the output binary was removed.</p>
+<details><summary>Focused test command</summary><pre><code>go test -vet=off -count=1 -p=1 -json ./internal/cluster ./internal/cluster/management ./internal/managementhttp -run 'UsageObservability|ListUsageAggregates|GetUsageOverview|FleetPending|HeavyStatistics|Capabilities|ManagementRoutes'</code></pre><p>The six skipped results are the PostgreSQL overview, overview client groups, overview client-group top-N, live-summary PostgreSQL subtest, aggregate-P95 PostgreSQL subtest, and heavy-statistics PostgreSQL measurement. No isolated PostgreSQL service was configured.</p></details>
+<p>Independent Sonnet 5.5 source review returned no blocking findings. Follow-ups addressed before readiness: versioned index names, overview totals/trend before-and-after comparisons (excluding time-dependent Live data), a Go-side fixture guard for scan-direction sensitivity, and fleet maintenance/rollback notes. The equal-time fixture guards the time and ID directions, not the presence of an explicit ID column, which may otherwise be supplied by SQLite's rowid.</p>
+<p>The regression test first failed against the unchanged migration with <code>dashboard index idx_usage_dashboard_time was not migrated</code>. It now checks migration creation and repeatability, covering query plans for every grouping and mixed-case/empty/missing provider filters, and exact before/after fractional charges including equal timestamps and a credential-group value assertion.</p>
+<p>All Go formatting, tests, vet and compilation ran only inside disposable Ark containers, using private source/output directories, array-backed caches and a 3 GB executable temporary filesystem. The original backup was mounted read-only and opened with <code>mode=ro&amp;immutable=1</code>. A private writable copy was verified byte-for-byte before experiments. No live database, live container, runtime policy, image, or fleet lock was touched.</p>
+</section>
+<section id="deployment">
+<h2>Required deployment sequence</h2>
+<div class="callout"><p class="callout-title">Do not ship as an ordinary restart</p><p>Missing indexes would be built at Home start and hold startup for several minutes. Building them on a running SQLite database also holds the database write lock and can interrupt ingestion and liveness writes. Operator locks coordinate maintenance; they do not remove this database lock.</p></div>
+<ol>
+<li>Use a separately approved and announced overnight maintenance window, with independent direct recovery positively tested, all four fleet locks and fleet policy paused. The measured 175-second build is a floor for planning, not the total maintenance-window length. Today's larger database and competing disk activity can take longer.</li>
+<li>Check free array and temporary-file space first. Preserve both SQLite temporary-directory settings and place sort files on the data volume, not the small container temporary filesystem. Account for the permanent index sizes and temporary/journal reserve below.</li>
+<li>Before the image swap, pre-build the two indexes on the current database using exactly this commit's names and definitions. Treat the build as a disruptive maintenance operation. Do not improvise a live command from this report.</li>
+<li>Read <code>sqlite_master</code> and <code>PRAGMA index_xinfo</code> and verify both complete definitions against a freshly migrated isolated database at this commit. Names alone are insufficient: <code>IF NOT EXISTS</code> does not check that an existing same-name index has the right columns or order. Recheck query plans and a whole-day response.</li>
+<li>Only after the definitions are verified, swap the reviewed image. The migration's <code>IF NOT EXISTS</code> statements then do no rebuilding. Complete normal fleet acceptance before restoring policy and releasing locks. Keep independent recovery available throughout.</li>
+</ol>
+<p>No deployment or production index creation is part of ws-0051. The code-only PR must not be merged or deployed by this helper.</p>
+</section>
+<section id="details">
+<h2>Evidence and limits</h2>
+<details><summary>Technical record</summary>
+<ul>
+<li>Base: requested fleet commit <code>2d5fbf1</code>; current fleet <code>13860b9</code> merged normally.</li>
+<li>Original backup: <code>/mnt/user/appdata/cpa-home/data/backups/home-pre-119-20261110T184515Z.db</code>; pending-accounting fleet index is present.</li>
+<li>Private Ark work: <code>/mnt/user/appdata/cpa-home-build/ws0051-usage/</code>. Safe measurement logs and harness remain there; the private writable database was removed after measurements. Safe logs and the benchmark harness were retained; the original backup is untouched.</li>
+<li>Before copying, array had 22 TB free; Docker disk had 74 GB free. No builder pruning or production-tag image build.</li>
+<li>Source change: <code>internal/cluster/db.go</code>; regression: <code>internal/cluster/usage_dashboard_index_test.go</code>.</li>
+<li>PR: <a href="https://github.com/chansearrington/CLIProxyAPIHome/pull/36">fleet PR #36</a>, open and not merged.</li>
+<li>Model: <code>gpt-6.1-sol[1m]</code>. Requested commit attribution is preserved separately; it is not a claim about the executing model.</li>
+<li>Task state: investigation, implementation, measurement, verification, independent-review follow-ups, documentation and PR delivery complete. PR remains open for the lead's merge review; no merge or deployment performed. Built-in task tools were not returned by tool discovery; a local working checklist tracked the steps.</li>
+</ul>
+<p>No performance fix is claimed for the 24-hour overview, health last-error lookups, or usage-record listing. No live November 13 reproduction, no production acceptance, no concurrent-load guarantee, and no full test suite run are claimed. PostgreSQL-specific tests may skip without a configured isolated PostgreSQL service; PostgreSQL behavior is unchanged by the SQLite-only migration branch.</p>
+</details>
+</section>
+<p class="page-foot">ws-0051 · measurements and code only · no production changes</p>
+</main>
+</body>
+</html>
