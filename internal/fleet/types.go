@@ -24,6 +24,7 @@ type Policy struct {
 	PatchUpdates    bool         `json:"patch_updates"`
 	IntervalSeconds int          `json:"interval_seconds"`
 	Nodes           []NodePolicy `json:"nodes"`
+	AnnouncementURL string       `json:"announcement_url,omitempty"`
 }
 
 type Inventory struct {
@@ -73,12 +74,40 @@ type Result struct {
 }
 
 type Rollout struct {
-	Approved  bool                 `json:"approved"`
-	Release   Release              `json:"release"`
-	Completed map[string]Inventory `json:"completed"`
-	Phase     string               `json:"phase"`
-	Error     string               `json:"error,omitempty"`
-	Rollback  []string             `json:"rollback,omitempty"`
+	Approved        bool                 `json:"approved"`
+	Release         Release              `json:"release"`
+	Completed       map[string]Inventory `json:"completed"`
+	Phase           string               `json:"phase"`
+	Error           string               `json:"error,omitempty"`
+	Rollback        []string             `json:"rollback,omitempty"`
+	RollbackFailed  bool                 `json:"rollback_failed,omitempty"`
+	Window          *Window              `json:"window,omitempty"`
+	OptionalWindows map[string]*Window   `json:"optional_windows,omitempty"`
+}
+
+// Window is pinned to its rollout's verified release, never to Latest.
+type Window struct {
+	ID          string    `json:"id"`
+	WindowStart time.Time `json:"window_start"`
+	Nodes       []string  `json:"nodes"`
+	AnnouncedAt time.Time `json:"announced_at"`
+	StartedAt   time.Time `json:"started_at"`
+	Reminder    bool      `json:"reminder"`
+	Closed      bool      `json:"closed"`
+}
+
+type Announcement struct {
+	Phase         string    `json:"phase"`
+	TargetVersion string    `json:"target_version"`
+	WindowStart   time.Time `json:"window_start"`
+	Nodes         []string  `json:"nodes"`
+}
+
+// Notice is an at-least-once delivery receipt; ID is sent as the Idempotency-Key header.
+type Notice struct {
+	ID       string `json:"id"`
+	WindowID string `json:"window_id"`
+	Announcement
 }
 
 type Event struct {
@@ -90,17 +119,24 @@ type Event struct {
 }
 
 type State struct {
-	Schema     int                  `json:"schema"`
-	Revision   int64                `json:"revision"`
-	Policy     Policy               `json:"policy"`
-	Nodes      map[string]NodeState `json:"nodes"`
-	Active     *Job                 `json:"active,omitempty"`
-	Rollout    *Rollout             `json:"rollout,omitempty"`
-	Latest     *Release             `json:"latest,omitempty"`
-	LastCheck  time.Time            `json:"last_check"`
-	CheckLease time.Time            `json:"check_lease"`
-	CheckError string               `json:"check_error,omitempty"`
-	History    []Event              `json:"history"`
+	Schema           int                  `json:"schema"`
+	Revision         int64                `json:"revision"`
+	Policy           Policy               `json:"policy"`
+	Nodes            map[string]NodeState `json:"nodes"`
+	Active           *Job                 `json:"active,omitempty"`
+	Rollout          *Rollout             `json:"rollout,omitempty"`
+	Latest           *Release             `json:"latest,omitempty"`
+	LastCheck        time.Time            `json:"last_check"`
+	CheckLease       time.Time            `json:"check_lease"`
+	CheckError       string               `json:"check_error,omitempty"`
+	RateLimitReset   time.Time            `json:"rate_limit_reset"`
+	CheckRetryAt     time.Time            `json:"check_retry_at"`
+	Notices          []Notice             `json:"announcements,omitempty"`
+	NoticeLease      time.Time            `json:"announcement_lease"`
+	NoticeRetryAt    time.Time            `json:"announcement_retry_at"`
+	NoticeError      string               `json:"announcement_error,omitempty"`
+	PostponedTargets map[string]bool      `json:"postponed_targets,omitempty"`
+	History          []Event              `json:"history"`
 }
 
 type Plan struct {

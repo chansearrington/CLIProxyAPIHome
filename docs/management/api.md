@@ -4854,8 +4854,8 @@ Successful writes return `{ "status": "ok" }`.
 Home already refreshes provider model definitions on startup and every three hours. Fleet
 maintenance extends that control plane to registered node-local executors; it does not create a
 second model-definition downloader or place a coordinator on an operator laptop. All endpoints
-below require the existing Management API authentication and are available under both
-`/v0/management` and `/v8/management`.
+below require the existing Management API authentication. Use the `/v8/management` prefix;
+legacy `/v0/management` compatibility is not part of this contract.
 
 ### GET `/fleet`
 
@@ -4865,8 +4865,22 @@ and the last 100 `history` events. Task lease tokens and catalog metadata are om
 from Management reads. Node IDs are the existing mTLS client certificate IDs.
 
 `check_error: "release_requires_review"` means the latest stable release is outside the current
-major/minor patch line. Network/verification failures retain the previous verified release and
-report `release_check_failed`. Offline or unregistered executors cannot be mistaken for proof.
+major/minor patch line. Network/verification failures retain the previous verified release. Safe
+cause codes include `rate_limited`, `release_http_403`, `release_network_error`,
+`invalid_release_json`, and `archive_checksum_mismatch`. `rate_limit_reset` is GitHub's reset
+instant, when provided; `check_retry_at` is Home's earliest retry (at least the configured check
+interval, and at least the reset plus one minute or `Retry-After`). Policy writes do not bypass
+that backoff. Release checks continue while patch updates or fleet maintenance are paused;
+no GitHub token is required. Offline or unregistered executors cannot be mistaken for proof.
+
+`rollout.release` is the exact verified artifact pinned to the announced target, independent of
+later `latest` discoveries. `rollout.window` contains `id`, `window_start`, ordered node IDs in
+`nodes`, `announced_at`, `started_at`, `reminder` and `closed`. `rollout.optional_windows` maps
+optional node IDs to their own windows. `announcements` is the durable pending delivery queue;
+`announcement_error`, `announcement_retry_at`, and `announcement_lease` show delivery health.
+`postponed_targets` records the once-per-target orchestrator postponement limit. These are
+additive fields in the existing protected database KV state (`schema: 1`), not a migration or
+new database schema version.
 
 ### PUT `/fleet/policy`
 
@@ -4878,6 +4892,7 @@ credentials or selected agent models. Initial policy is disabled. Example:
   "enabled": true,
   "catalog_sync": true,
   "patch_updates": true,
+  "announcement_url": "https://hooks.example.invalid/fleet-announcements",
   "interval_seconds": 3600,
   "nodes": [
     {"id": "00000000-0000-4000-8000-000000000001", "name": "Always-on canary", "required": true},
@@ -4888,10 +4903,14 @@ credentials or selected agent models. Initial policy is disabled. Example:
 ```
 
 `interval_seconds` must be 300–86400; node IDs must be unique UUIDs, with at most 64 entries.
-Enabled patch updates require at least one required node. Required nodes roll out in policy
-order, beginning with the canary, with one active mutation across the fleet. Offline optional
-nodes catch up when they return and do not block required nodes. Changing policy while a task
-is active returns `409`; let that task complete or reconcile before changing ownership.
+Enabled patch updates require at least one required node and `announcement_url`, an HTTP(S)
+webhook without URL user information or a fragment. A previously stored enabled policy without
+a hook remains readable but cannot dispatch a new upgrade. Required nodes roll out in policy
+order, beginning with the canary, with one active mutation across the fleet. Optional sleeping
+nodes do not block required nodes and never upgrade immediately on wake: each needs its own
+announced window while awake. Changing policy while a task or announcement delivery is active
+returns `409`. Node membership/order changes with pending windows also return `409`; hold the
+release first. Changing the hook re-announces pending windows with a fresh notice period.
 
 Catalog tasks use Home's current model registry. The OpenClaw adapter adds shared models and
 fills missing metadata, preserves explicit defaults/fallbacks/aliases/session pins, retains older
@@ -4904,13 +4923,78 @@ those hashes again, preserve the previous binary, restart their node in place an
 Claude/Codex probes. Failed upgrades queue reverse-order rollback; that release then remains
 latched until explicitly reviewed. Genuine upstream quota is never reset or bypassed.
 
+#### Announced windows and webhook contract
+
+A new eligible target schedules the next **02:00 America/Chicago** window at least one hour
+away. Time-zone data is embedded, including DST; on the spring-forward day when 02:00 does
+not exist, the window begins at 03:00. A window admits new upgrade jobs for one hour. An
+already issued task must always reconcile, even after the window closes. Offline required
+nodes or a missed window cause a next-night postponement and a fresh announcement. Optional
+nodes have separate announcements and must report awake during their own window. A newer
+release never changes an announced artifact; it needs its own scheduled notice/window after
+the current required rollout completes. Pending older optional windows may be superseded
+with a `postponed` notice when a newer required target is scheduled.
+
+Home POSTs this plain JSON object to `announcement_url` (no Management key is sent):
+
+```json
+{
+  "phase": "scheduled",
+  "target_version": "8.0.30",
+  "window_start": "2026-11-19T02:00:00-06:00",
+  "nodes": ["00000000-0000-4000-8000-000000000001"]
+}
+```
+
+Phases are `scheduled`, `reminder`, `started`, `done`, `rolled_back`, and `postponed`. `nodes`
+contains certificate IDs in rollout order. `done` closes a required or optional window;
+`rolled_back` is sent only after the entire reverse rollback succeeded. A rollback failure is
+recorded in fleet history and `rollout.rollback_failed`, never reported as a successful rollback.
+The external hook is responsible for posting to the Hype Orchestrator's message board **and**
+a hosted review page, and returning 2xx only when delivery to both is accepted durably. Home
+cannot prove that downstream readers have seen a message.
+
+Delivery has a 20-second timeout, does not follow redirects, and retries failures no earlier
+than five minutes later. Pending notices and receipts survive restart. Delivery is at least
+once: the hook must deduplicate the `Idempotency-Key` header. Home sends only the four payload
+fields above, not internal queue IDs, credentials, or provider response text.
+
+New dispatch requires successful `scheduled` delivery at least one hour before the window,
+plus successful `reminder` and `started` delivery. Missing or failed delivery blocks upgrades;
+a failed gating notice postpones to a newly announced next-night window. Delayed delivery
+that leaves less than one hour also reschedules. Completion notices remain queued until
+accepted; no following upgrade dispatches while a notice remains undelivered. Rollback and
+reconciliation remain available for safety. Catalog reconciliation continues normally while
+waiting for a patch window; one window may bundle the pinned CPA patch with existing catalog
+work. Home image upgrades remain manual, outside this API.
+
+### POST `/fleet/postpone`
+
+Pushes a pending window by 24 hours, retaining the exact target and sending `postponed` then
+a new `scheduled` notice. If that shifted time has already passed, the next Chicago window
+with a full one-hour lead is used instead. Body:
+
+```json
+{"target_version":"8.0.30", "node_id":"00000000-0000-4000-8000-000000000003", "force":false}
+```
+
+Omit `node_id` to address the required-node window; provide it for an optional node's window.
+One normal postponement is allowed per target across all windows, persisted across restarts.
+`force:true` allows an operator to exceed that limit; it never skips announcements or runs an
+upgrade immediately. Orchestrator adapters must not set `force`; the existing Management
+credential is privileged and this endpoint does not introduce separate role authentication.
+Malformed input returns `400`; wrong target, a started/closed window, an active task/delivery,
+or a second unforced postponement returns `409`. Success returns the updated fleet state.
+
 ### POST `/fleet/releases/:version/approve`
 ### POST `/fleet/releases/:version/hold`
 
-Records an explicit decision on the exact currently verified candidate. Approval permits its
-serial rollout, including a major/minor transition, or retries a previously failed candidate.
-Hold prevents automatic installation of that candidate. A mismatched candidate or an active
-operation returns `409`. These routes do not accept arbitrary URLs, shell commands or artifacts.
+Records an explicit decision on the exact currently verified candidate. Approval schedules its
+announced serial rollout, including a major/minor transition, or retries a previously failed
+candidate; it never bypasses the window or notice gate. Hold cancels pending windows and
+prevents automatic installation of that candidate. A mismatched candidate, an active operation,
+or a partially executed rollout/rollback returns `409`. Finish/reconcile an in-progress rollout
+before reviewing another target. These routes do not accept arbitrary URLs, shell commands or artifacts.
 
 ### Node executor protocol
 

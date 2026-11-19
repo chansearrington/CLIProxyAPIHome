@@ -1,9 +1,10 @@
 package management
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/fleet"
-	"net/http"
 )
 
 func (h *Handler) GetFleet(c *gin.Context) {
@@ -31,6 +32,25 @@ func (h *Handler) PutFleetPolicy(c *gin.Context) {
 	defer cancel()
 	if errSet := fleet.New(h.repo).SetPolicy(ctx, policy); errSet != nil {
 		respondError(c, http.StatusConflict, "fleet_policy_failed", errSet)
+		return
+	}
+	h.GetFleet(c)
+}
+
+func (h *Handler) PostponeFleet(c *gin.Context) {
+	var request struct {
+		TargetVersion string `json:"target_version"`
+		NodeID        string `json:"node_id"`
+		Force         bool   `json:"force"`
+	}
+	if errBind := c.ShouldBindJSON(&request); errBind != nil || request.TargetVersion == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_fleet_postponement"})
+		return
+	}
+	ctx, cancel := h.requestContext(c)
+	defer cancel()
+	if errPostpone := fleet.New(h.repo).Postpone(ctx, request.TargetVersion, request.NodeID, request.Force); errPostpone != nil {
+		respondError(c, http.StatusConflict, "fleet_postpone_failed", errPostpone)
 		return
 	}
 	h.GetFleet(c)
