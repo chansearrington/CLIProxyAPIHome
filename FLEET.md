@@ -293,7 +293,7 @@ The laptop fleet coordinator is superseded by Home's DB-backed `/fleet` control 
 certificate-bound node-local executors. See [Home-native migration](docs/fleet/ws-0031-home-native-fleet.md).
 The always-on canary/required nodes continue while the optional MacBook sleeps. Model defaults
 remain explicit operator choices; menu sync does not promote generations automatically.
-Before manual fleet maintenance, pause Home fleet policy and let any active task finish/reconcile,
+Before manual fleet maintenance, take the decision-979 hold (`flock …/fleet-jobs/979.lock touch …/fleet-jobs/979-HOLD`, see [ws-0055](docs/fleet/ws-0055-auto-979.md); remove it after acceptance), pause Home fleet policy and let any active task finish/reconcile,
 then follow the normal fleet-lock procedure. Do not install a competing laptop coordinator.
 
 ## November 6 Home recovery
