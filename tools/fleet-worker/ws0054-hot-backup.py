@@ -161,8 +161,9 @@ def mount_for(path, text):
 
 def check_devices(source_dev, stage_dev, target_dev, cache, array):
     require(source_dev == stage_dev == 44 and target_dev == 2322 and source_dev != target_dev, 'wrong_device')
-    require(cache == {'mount': '/mnt/cache', 'filesystem': 'btrfs', 'device': '/dev/nvme1n1p1',
-                      'major_minor': f'{os.major(44)}:{os.minor(44)}'}, 'wrong_cache_mount')
+    # btrfs: mountinfo shows the filesystem's own anon device (live: 0:43), not the subvolume st_dev 44.
+    require({k: v for k, v in cache.items() if k != 'major_minor'} == {'mount': '/mnt/cache', 'filesystem': 'btrfs',
+            'device': '/dev/nvme1n1p1'} and set(cache) == {'mount', 'filesystem', 'device', 'major_minor'}, 'wrong_cache_mount')
     require(array == {'mount': '/mnt/disk18', 'filesystem': 'xfs', 'device': '/dev/md18p1',
                       'major_minor': f'{os.major(2322)}:{os.minor(2322)}'}, 'wrong_array_mount')
     return {'source_dev': source_dev, 'stage_dev': stage_dev, 'destination_dev': target_dev,
