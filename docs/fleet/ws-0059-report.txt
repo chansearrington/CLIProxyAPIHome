@@ -1,0 +1,43 @@
+Home 1.1.10 source preparation — builder handoff
+
+Draft integration PR: https://github.com/chansearrington/CLIProxyAPIHome/pull/54
+Branch: ws-0059/home-1110
+Application integration merge: ae3bcf0; current fleet merge: 6d6ae3c; evidence documentation: b8c71d4.
+Standalone deployed-line M2 fix: https://github.com/chansearrington/CLIProxyAPIHome/pull/51 (0ebdf5f).
+
+Changes
+- Normal merge of earlier PR46/521b092 (exact upstream v1.1.10 ancestor cc067723) into fleet248ebb9; then merge fleetf53d4a8. Includes deployed7091c86, scheduled upgrades PR47 and catalog retention PR50. No rebase/history rewrite.
+- internal/cliproxy/auth/manager.go:2148: persisted unknown-refresh error now blocks dispatch through the existing shared predicate.
+- internal/cliproxy/auth/result.go:285,727,1152: disabled successes preserve account display/diagnostics; broad model-error semantics restored; display persistence uses blocking model state separately.
+- internal/cliproxy/auth/result_mutator_test.go:1269: upstream assertion adapted to require fleet's exact retained LastError, not erase it. Existing fleet account-status tests unchanged.
+- internal/cluster/refresh_dispatch_reload_test.go:11: fake persisted credential reload/index/projection/selector refusal, with expired retry deadline.
+- internal/cluster/codex_refresh_legacy_test.go:52: assert effective dispatch fence, not intentionally unpersisted runtime flag.
+- internal/cluster/db.go:151: future PostgreSQL schema is rejected by the coordinated migration gate. Schema identity/snapshot mappings remain upstream19; current-version sparse repairs stay locked.
+- internal/cluster/startup_backfills_test.go: retained newer fleet index identity/rebuild checks, late updates and versions16/17/18/19 snapshot coverage while adapting integration schema expectations.
+- docs/fleet/ws-0059-home-1110.md:42,101: SQL cost explanation, exact isolated rehearsal flags/log markers, timing limits and rollback notes.
+
+Checks actually run
+All Go tools ran only on Ark through run-go.sh / golang:1.26-bookworm, isolated /src/ws0059. No production service/path mounted.
+1. Original three account-status test groups reproduced failing before fixes. New reload/index regression reproduced failing before predicate fix.
+2. Focused repaired auth/cluster tests passed (0.030s/1.250s).
+3. Iterative full failures recorded in main evidence document; never counted as passes. They exposed the deliberate diagnostic assertion conflict, refresh-block adoption predicate and future-schema gate conflict.
+4. FINAL: CLIPROXY_HOME_TEST_POSTGRES_DSN pointed solely at owned fake PostgreSQL17-bookworm tmpfs database; go test -json -vet=off -count=1 ./... exited0.36 test-bearing packages passed,14 no-test packages,2369 top-level tests passed,5388 passes including nested subtests,0failures,2skips. Skips: opt-in TestConcurrencyAdmissionMeasure and TestHeavyStatisticsPostgresMeasure. Disposable PG container removed/absence confirmed.
+5. go vet ./... exited0 (no historical warning). gofmt -l . emitted no filenames. CGO_ENABLED=1 go build -o /out/ws0059-home ./cmd/home exited0.
+Real final output:
+TEST_EXIT=0
+VET_EXIT=0
+BUILD_EXIT=0
+FORMAT [no filenames]
+6. Ark Python merged catalog suite:14 tests,0.032s,OK.
+7. git diff --check clean; all847 tracked Go/module files byte-matched Ark; manifest SHA256 d6f8ab9260f34f06f719422ab7631877dc6eddf7b8cbb3c1f22741aac49d23c8. Required exact release/current-fleet/deployed/PR47 ancestry checks passed.
+
+Binary: /mnt/user/appdata/cpa-home-build/tmp/ws0059-home
+SHA256: fb793e38ba33594f9945a53e8d2f82267976d19761e6606aa7082a6f29544d3a
+It is a bare-panel source check, NOT a deployable image.
+Full JSON receipt: /mnt/user/appdata/cpa-home-build/tmp/ws0059-postgres-test.json (local /tmp/ws0059-postgres-test-final.json).
+
+Task state: builder source task40 and standalone fix task44 complete. Parent integration task26 remains in_progress for independent review, lead-owned task42 large-copy rehearsal and eventual announced window. This builder did not announce or authorize any window.
+
+NOT RUN: production-size first start (lead owns it), image build/panel mirror, deployment, native live probes, rollback19 rehearsal or independent review. Dedupe is synchronous before serving;500-row batches are not a downtime estimate. Never restore stale authorizations; empty-current-journal/no-writer rollback gates still apply.
+
+Exact model ID: gpt-6.1-sol[1m]. No helpers launched by this builder.
