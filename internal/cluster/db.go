@@ -157,7 +157,14 @@ func AutoMigrateContext(ctx context.Context, db *gorm.DB) error {
 	}
 	ctx = contextOrBackground(ctx)
 	if db.Dialector.Name() == "postgres" {
-		return autoMigratePostgresContext(ctx, db, false, nil)
+		state, errState := readPostgresSchemaMigrationState(ctx, db)
+		if errState != nil {
+			return errState
+		}
+		if state.Version > currentDatabaseVersion {
+			return nil
+		}
+		return autoMigratePostgresContext(ctx, db, true, nil)
 	}
 
 	startedAt := time.Now()
@@ -185,11 +192,22 @@ func autoMigratePostgresContext(ctx context.Context, db *gorm.DB, runWhenCurrent
 		schemaMigrationPollInterval,
 		schemaMigrationWaitTimeout,
 		runWhenCurrent,
-		postgresSchemaMigrationOperations(db, startedAt, ctx, func(lockedCtx context.Context, tx *gorm.DB, _ int64, requiredVersion int64) error {
+		postgresSchemaMigrationOperations(db, startedAt, ctx, func(lockedCtx context.Context, tx *gorm.DB, currentVersion int64, requiredVersion int64) error {
 			lockedDB := tx.WithContext(lockedCtx)
 			// Acquire the binding lock before schema/row locks to match live API key writes.
 			if errLock := lockAPIKeyMutationTransaction(lockedDB); errLock != nil {
 				return errLock
+			}
+			if currentVersion == requiredVersion && afterSchema == nil {
+				// Seed legacy grant fences even when upstream already marked the schema current.
+				if errOutcomes := migrateCodexRefreshOutcomes(lockedDB); errOutcomes != nil {
+					return errOutcomes
+				}
+				// Older writers can add legacy rows; repair under the migration lock without rerunning schema DDL.
+				if errBaseAmounts := migrateBillingBaseAmounts(lockedDB); errBaseAmounts != nil {
+					return errBaseAmounts
+				}
+				return migrateUsageServiceTiers(lockedDB)
 			}
 			if errSchema := autoMigrateSchema(lockedDB); errSchema != nil {
 				return errSchema
@@ -753,16 +771,28 @@ func migrateUsageServiceTiers(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("database connection is nil")
 	}
+	const predicate = "service_tier IS NULL OR TRIM(service_tier) = ''"
+	// A sparse index also catches legacy rows inserted or changed after the first repair.
+	if errIndex := db.Exec(`CREATE INDEX IF NOT EXISTS idx_usage_service_tier_pending_v1 ON "usage" (id) WHERE ` + predicate).Error; errIndex != nil {
+		return errIndex
+	}
+	var pending bool
+	if errPending := db.Raw(`SELECT EXISTS (SELECT 1 FROM "usage" WHERE ` + predicate + ` LIMIT 1)`).Scan(&pending).Error; errPending != nil {
+		return errPending
+	}
+	if !pending {
+		return nil
+	}
 	if db.Migrator().HasColumn(&UsageRecord{}, "request_service_tier") {
 		return db.Exec(`UPDATE "usage"
 			SET "service_tier" = CASE
 				WHEN TRIM(COALESCE("request_service_tier", '')) <> '' THEN "request_service_tier"
 				ELSE ?
 			END
-			WHERE "service_tier" IS NULL OR TRIM("service_tier") = ''`, defaultUsageServiceTier).Error
+			WHERE `+predicate, defaultUsageServiceTier).Error
 	}
 	return db.Model(&UsageRecord{}).
-		Where("service_tier IS NULL OR TRIM(service_tier) = ''").
+		Where(predicate).
 		Update("service_tier", defaultUsageServiceTier).Error
 }
 

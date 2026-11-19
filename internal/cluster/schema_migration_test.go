@@ -712,8 +712,8 @@ func TestAutoMigratePostgresSchemaVersionGate(t *testing.T) {
 	if errLock := <-lockDone; errLock != nil {
 		t.Fatalf("release postgres migration lock: %v", errLock)
 	}
-	if errFast != nil {
-		t.Fatalf("current schema waited on advisory lock: %v", errFast)
+	if !errors.Is(errFast, context.DeadlineExceeded) {
+		t.Fatalf("current-schema backfills did not honor the migration lock and deadline: %v", errFast)
 	}
 
 	if errDrop := db.Migrator().DropTable(&schemaMigrationRecord{}); errDrop != nil {

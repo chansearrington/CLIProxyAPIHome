@@ -763,7 +763,7 @@ type availabilityFingerprintValue struct {
 	modelResetUnix  int64
 	modelObservedAt time.Time
 	modelQuota      quotaFingerprint
-	warningsDigest uint64
+	warningsDigest  uint64
 }
 
 // fingerprintUnix normalizes a time for fingerprint comparison.
