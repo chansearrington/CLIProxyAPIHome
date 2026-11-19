@@ -705,15 +705,15 @@ func TestAutoMigratePostgresSchemaVersionGate(t *testing.T) {
 	}
 
 	releaseLock, lockDone := holdPostgresSchemaMigrationLock(t, db)
-	fastCtx, cancelFast := context.WithTimeout(context.Background(), time.Second)
+	fastCtx, cancelFast := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	errFast := AutoMigrateContext(fastCtx, db)
 	cancelFast()
 	releaseLock()
 	if errLock := <-lockDone; errLock != nil {
 		t.Fatalf("release postgres migration lock: %v", errLock)
 	}
-	if errFast != nil {
-		t.Fatalf("current schema waited on advisory lock: %v", errFast)
+	if errFast == nil || !strings.Contains(errFast.Error(), "wait for database schema migration coordination") || !errors.Is(errFast, context.DeadlineExceeded) {
+		t.Fatalf("current schema bypassed migration lock for fleet indexes: %v", errFast)
 	}
 
 	if errDrop := db.Migrator().DropTable(&schemaMigrationRecord{}); errDrop != nil {
@@ -728,8 +728,8 @@ func TestAutoMigratePostgresSchemaVersionGate(t *testing.T) {
 	if errUpdate := db.Model(&schemaMigrationRecord{}).Where("id = ?", schemaMigrationRecordID).Update("version", higherVersion).Error; errUpdate != nil {
 		t.Fatalf("set higher postgres schema version: %v", errUpdate)
 	}
-	if errMigrate := AutoMigrateContext(ctx, db); errMigrate != nil {
-		t.Fatalf("check higher postgres schema version: %v", errMigrate)
+	if errMigrate := AutoMigrateContext(ctx, db); errMigrate == nil || !strings.Contains(errMigrate.Error(), "newer than required version") {
+		t.Fatalf("higher postgres schema version was not rejected: %v", errMigrate)
 	}
 	assertPostgresSchemaMigrationVersion(t, db, higherVersion)
 

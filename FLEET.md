@@ -103,16 +103,16 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   Every inserted or updated usage row now also maintains two wide indexes: extra disk space
   and write work are deliberate costs, not free acceleration. Current production is larger
   than this backup; these timings and space figures are not upper bounds.
-- Do not let the next image swap build these indexes at startup. Pre-build the exact versioned
-  names and definitions from `migrateUsageObservabilityIndexes` in a separately approved,
-  announced overnight maintenance window, under all four fleet locks with fleet policy paused
-  and independent direct recovery available. `CREATE INDEX` blocks SQLite writes, including
-  ingestion and liveness; plan it as a disruptive maintenance operation. Set both
-  `SQLITE_TMPDIR` and `TMPDIR` to the data volume, never the production container's small
-  `/tmp`, and reserve substantially more than the measured sort peak plus permanent growth.
-  Compare complete `sqlite_master` definitions and `PRAGMA index_xinfo` against a freshly
-  migrated isolated database before swapping the image. Names alone are not a definition check.
-  With both definitions already present, the measured migration was a **1.9 ms** no-op.
+- For ws-0054, build missing indexes only during stopped-Home startup inside the approved,
+  announced outage, under all four fleet locks with fleet policy paused and independent direct
+  recovery available. Never pre-build them on the running production writer during preparation.
+  `CREATE INDEX` blocks SQLite writes, including ingestion and liveness; include the measured
+  current-copy first-build time in the announced outage budget. Set both `SQLITE_TMPDIR` and
+  `TMPDIR` to the data volume, never the production container's small `/tmp`, and reserve
+  substantially more than the measured sort peak plus permanent growth. Compare complete
+  `sqlite_master` definitions and `PRAGMA index_xinfo` against a freshly migrated isolated
+  database. Names alone are not a definition check. With both definitions already present,
+  the earlier measured migration was a **1.9 ms** no-op; that is not a first-build estimate.
 - Rollback, only as an approved maintenance action, is
   `DROP INDEX IF EXISTS idx_usage_dashboard_time_v1;` and
   `DROP INDEX IF EXISTS idx_usage_dashboard_provider_time_v1;`. This restores the old query
@@ -123,6 +123,19 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   above the unchanged 10 s request budget. No production change occurred in ws-0051.
   See the [private evidence and maintenance review page](https://agents.thebearingtons.com/inbox/a/Eb56Hfumrq)
   (source: `docs/fleet/ws-0051-usage-aggregate-day.html`).
+
+## Home 1.1.9 fallback source (ws-0054, not deployed)
+
+The fallback combines the deployed 1.1.9 fleet engine with PR #36 covering indexes and
+PR #38 sparse legacy-row guards. Source and portable snapshots remain **version 17**;
+version 18 belongs to upstream's later dedupe schema and must not label this fallback.
+The existing version-16/17 snapshot mappings and fenced Codex refresh runtime are unchanged.
+SQLite installs the additive indexes idempotently at startup. Already-current PostgreSQL
+17 installs the sparse indexes and repairs late legacy writes under the existing migration
+and API-binding locks, without running full schema DDL. No Home 1.1.10, dedupe, Guardian
+or refresh-engine integration is included. This source note is not deployment acceptance:
+Ark tests/build, independent review and full-copy image/startup/rollback rehearsal are pending.
+The pre-existing deployed runtime's credential-reload fencing gap is not fixed by these indexes.
 
 ## Account additions
 
