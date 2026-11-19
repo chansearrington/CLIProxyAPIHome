@@ -133,7 +133,7 @@ func seedStartupBackfillRows(t *testing.T, db *gorm.DB, pass int) []uint {
 	now := time.Date(2026, time.November, 13, 0, 0, 0, 0, time.UTC)
 	var usageIDs []uint
 	for index, tier := range []any{nil, "   ", "default", "auto", ""} {
-		record := UsageRecord{Timestamp: now, ServiceTier: "auto", PayloadJSON: JSONB(`{}`), CreatedAt: now}
+		record := UsageRecord{Timestamp: now, ServiceTier: "auto", PayloadJSON: JSONB(fmt.Sprintf(`{"execution_id":"startup-%d-%d"}`, pass, index)), CreatedAt: now}
 		if errCreate := db.Create(&record).Error; errCreate != nil {
 			t.Fatal(errCreate)
 		}
@@ -161,6 +161,9 @@ func assertStartupBackfillRows(t *testing.T, db *gorm.DB, pass int, usageIDs []u
 		}
 		if usage.ServiceTier != wantTier {
 			t.Errorf("usage %d tier = %q, want %q", usage.ID, usage.ServiceTier, wantTier)
+		}
+		if usage.DedupeKey == "" {
+			t.Fatalf("usage %d fixture was not uniquely keyed by the upstream migration", usage.ID)
 		}
 		var charge BillingChargeRecord
 		if errFind := db.First(&charge, "id = ?", fmt.Sprintf("startup-%d-%d", pass, index)).Error; errFind != nil {
