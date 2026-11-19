@@ -126,8 +126,11 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
 
 ## Home 1.1.9 fallback source (ws-0054, not deployed)
 
-The fallback combines the deployed 1.1.9 fleet engine with PR #36 covering indexes and
-PR #38 sparse legacy-row guards. Source and portable snapshots remain **version 17**;
+The fallback retains the approved fleet baseline `945907b` (including PR #43's locked
+status-toggle save and PR #45's model-alert scripts) plus PR #36 covering indexes and
+PR #38 sparse legacy-row guards on the deployed 1.1.9 engine. A concurrent credential deletion
+during a status toggle now reports an error instead of a silent success. Source and portable
+snapshots remain **version 17**;
 version 18 belongs to upstream's later dedupe schema and must not label this fallback.
 The existing version-16/17 snapshot mappings and fenced Codex refresh runtime are unchanged.
 SQLite installs the additive indexes idempotently at startup. Already-current PostgreSQL

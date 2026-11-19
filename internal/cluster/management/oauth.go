@@ -223,9 +223,12 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 		return
 	}
 	disabled := *req.Disabled
-	applyAuthDisabledStatus(auth, disabled)
-	if _, errUpsert := h.repo.UpsertAuth(ctx, auth, "update"); errUpsert != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update auth: %v", errUpsert)})
+	// Mutate the locked latest record so a refresh or reconnect since the lookup is kept.
+	if _, _, _, errMutate := h.repo.MutateAuth(ctx, auth.ID, "update", func(current *coreauth.Auth) bool {
+		applyAuthDisabledStatus(current, disabled)
+		return true
+	}); errMutate != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update auth: %v", errMutate)})
 		return
 	}
 	if errRefresh := h.refreshAuths(ctx); errRefresh != nil {
