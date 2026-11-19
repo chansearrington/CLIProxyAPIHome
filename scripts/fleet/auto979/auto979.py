@@ -388,7 +388,9 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
         event["notices"] = sorted({notice for q in quotas.values() for notice in q["assumptions"]})
         event["reason"] = "order_unchanged" if wanted == live else "weekly_renewal_order_differs"
         # Debounce: write only when the previous run computed the same order (one noisy read never writes).
-        stable = baseline is not None and baseline.get("last_wanted") == wanted
+        # The earlier sample must be recent (two scheduled runs), so a pass after a hold or errors never pairs with old data.
+        stable = (baseline is not None and baseline.get("last_wanted") == wanted
+                  and 0 <= (now - timestamp(baseline["observed_at"])).total_seconds() <= 600)
         if wanted != live and not stable:
             event["reason"] = "order_differs_waiting_for_stable_repeat"
         if mode == "apply" and rebaseline and wanted != live:

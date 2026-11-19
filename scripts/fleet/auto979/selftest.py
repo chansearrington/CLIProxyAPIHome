@@ -245,6 +245,22 @@ def execution():
         assert run("apply") == 0 and len(home.writes) > before  # repeated twice: applied
         window["used"] = old_used
         assert run("apply") == 0 and run("apply") == 0
+        # A pass after a long hold/error gap never pairs with an old sample: it waits for a fresh repeat.
+        stalejob, stalebackups = root / "stale", root / "stale-backups"
+        a.private_dir(stalejob)
+        stalebackups.mkdir()
+        stale = FakeHome(rows, details)
+        stale.details["fake-02"]["windows"][0]["used"] = 100
+        def at(t):
+            for detail in stale.details.values():
+                detail["generated_at"] = a.iso(t)
+            return lambda: t
+        later = NOW + dt.timedelta(seconds=700)
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert a.execute(stale, cfg, "shadow", stalejob, stalebackups, clock=at(NOW)) == 0
+            assert a.execute(stale, cfg, "apply", stalejob, stalebackups, clock=at(later)) == 0 and not stale.writes
+            assert a.execute(stale, cfg, "apply", stalejob, stalebackups, clock=at(later + dt.timedelta(seconds=300))) == 0
+        assert len(stale.writes) == 11
         # The rule owns the order: a hand edit is put back once the order repeats (pin with a holdout or the hold).
         before = len(home.writes)
         x, y = home.rows[0], home.rows[1]
