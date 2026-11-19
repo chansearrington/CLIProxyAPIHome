@@ -320,6 +320,7 @@ def review_cases():
         assert not home.writes and not (applyjob / "979-STOP.json").exists()
         last = json.loads((applyjob / "979-apply.jsonl").read_text().splitlines()[-1])
         assert last["baseline_reason"] == "rebaseline_after_gap" and last["readback_ok"] is None
+        assert last["reason"] == "apply_deferred_after_gap"
         for path in root.rglob("*.json*"):
             assert "@" not in path.read_text(), path.name
     print("PASS reset tolerance, historical reset, two unknown slots, held/reserve without quota, outage rebaseline, no email files")

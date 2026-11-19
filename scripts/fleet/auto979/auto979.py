@@ -376,6 +376,8 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
         event["weekly"] = public["weekly"]
         event["notices"] = sorted({notice for q in quotas.values() for notice in q["assumptions"]})
         event["reason"] = "order_unchanged" if wanted == live else "weekly_renewal_order_differs"
+        if mode == "apply" and rebaseline and wanted != live:
+            event["reason"] = "apply_deferred_after_gap"
         if mode == "apply" and wanted != live and not rebaseline:
             require(credentials(home, cfg) == rows, "credentials_changed_during_plan")
             wall = clock()
