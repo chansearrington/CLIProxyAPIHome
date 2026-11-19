@@ -21,3 +21,13 @@ Cause: UNKNOWN. An external termination with orderly shutdown is established; pe
 
 Limits: candidate backup write failures before both files finish are outside this focused fix; existing worker serialization remains assumed. Tests use synthetic config and mocked gateway/network, not a live deploy. Lead must independently review before any merge/deployment.
 Task states: implementation ready for PR; read-only investigation finished with unknown actor, not a proven root cause.
+
+Rollout (lead, 2026-11-19 ~15:30 CT, after PR #50 merge f53d4a8):
+- All five machines (MacBook, Moxy, Lara, Chip, Hyper) switched the worker pointer
+  ~/.openclaw/services/cpa-home-fleet-worker/current from bundle 80bc72a639456aed to
+  c09e8fbd6c41ed77 (atomic symlink replace). Only catalog_sync.py changed
+  (SHA-256 3098e99106eed780..., matches fleet f53d4a8); worker.py unchanged (70c746cbd33683cc...).
+- Next run after the switch on each machine: ok (MacBook/Chip/Hyper "current", Moxy
+  "operation_active", Lara ran a real catalog job: "success"). No new stderr (the 230-byte
+  Lara/Chip stderr files date from Oct 29, an unrelated python3 SDK warning).
+- Rollback: point `current` back at 80bc72a639456aed (both bundles kept on every machine).
