@@ -1,0 +1,102 @@
+{
+  "status": "verified local packet integration; isolated rehearsal only; not deployment approval",
+  "source_commit": "7091c86b562063b5c401f63d6d04c8c4f70658a2",
+  "source_archive_sha256": "ef1cd0019c9bcb256d3abe0cd7ba1f951b530894a694d23c870d97c74a32412d",
+  "image_id": "sha256:43bac183f39e9324a91fe80a123b72e0bd5d5be4b103c45f3f56dda87cf35bf8",
+  "excluded_runtime": "newer fleet c2980cf and PR47/44 are not in the tested image",
+  "declared_build_inputs": {
+    "model_bytes": 132057,
+    "model_sha256": "4a52db3f1e4cdc10d045347f758b875fb2c4cbc148ae48ded43afb27037bd0e9",
+    "panel_files": 1060,
+    "panel_bytes": 6996739,
+    "panel_http_routes": 1058,
+    "panel_nonroutes": 2,
+    "panel_manifest_sha256": "00746734c8b4a3bd9d2a22a4a1c24bc0fce78578a197c338afa5839b186c7cab",
+    "panel_tree_sha256": "5fe4b7d356b925748bbb8d4df07bc3a30c55a1eb99706582b60b4daec75f6b67",
+    "binary_sha256": "ccd9485c26a006e0933e614d6d90bd0f49b507658e34eb123db572649dba7cb9"
+  },
+  "packet_sha256": {
+    "rehearsal.json": "19b0126bde403118542215bce405e0832795b2d1f45d1925578a8bb22b8d42e3",
+    "parallel-seed-integrity.json": "9be92fd8735bb360aa98ce29b3230abac69cb6741c8fdbbb39c1a58f99f9f26a",
+    "final-preservation.json": "48fe660ae8fac2468c88c4ab8ddc2a49d58b7a1ef4802e8fd3aa7b5ea9ec481c",
+    "schema-before.json": "4a3d6ffa2bfc00fabe1b65d774b3bd278201602b121fcfcff5e77deeae3404c5",
+    "schema-after-candidate.json": "6f4f59669bf3f59d7302a8f275daa00d1b561870a0f901f5a1de5fc3a3e1f953",
+    "schema-after-old.json": "6f4f59669bf3f59d7302a8f275daa00d1b561870a0f901f5a1de5fc3a3e1f953",
+    "clean-index-reference-schema-shaped.json": "1f309dbaa8d89f3503ba84ed6f2fba628a7264531849f343d71d2dbfa91ece22",
+    "postgres-journal-nested.json": "0f8c56796cb5fb56b32f3cf9897f5d6a30f779f32eed0ea8c78ce67628e0c1f5",
+    "postgres-journal-nested.log": "3ac28ef15629475c3bcb35c90d3308e4079f8fde739424abf220be6fe012aa46",
+    "go-focused.log": "bfa4dc2709ceca4d6164c2995ac5ce54ca8ef82ef5b237f0bda95aa387d166ec",
+    "cleanup.json": "9ae905f42c781a977ce97eeb6a8b804570c19242e46701aeffb4cd39b1b590ae"
+  },
+  "phases": {
+    "first": {"management_seconds": 333.87, "node_transport_seconds": 336.02, "http_resp_smoke_pass": true, "peak_observed_wal_bytes": 1256212752, "peak_observed_sqlite_temp_bytes": 1221992619},
+    "second": {"management_seconds": 0.67, "node_transport_seconds": 2.9, "http_resp_smoke_pass": true, "peak_observed_wal_bytes": 86552, "peak_observed_sqlite_temp_bytes": 0},
+    "old": {"management_seconds": 0.67, "probe_seconds": 0.68, "http_resp_smoke_run": false, "limit": "management reopen only; completed indexes do not bound partial-index rollback startup"},
+    "reupgrade": {"management_seconds": 0.66, "probe_seconds": 0.67, "http_resp_smoke_run": false, "limit": "management reopen only"}
+  },
+  "environment": {
+    "readonly_root": true,
+    "tmpfs_bytes": 67108864,
+    "network": "none",
+    "both_sqlite_temp_variables_on_data": true,
+    "sample_interval_seconds": 0.1,
+    "observed_peaks_are_absolute_bounds": false
+  },
+  "seed_integrity": {"result": ["ok"], "exit": 0, "seconds": 792.66, "concurrent_with_startup": true},
+  "schema": {
+    "before_objects": 272,
+    "after_objects": 276,
+    "unchanged_baseline_objects": true,
+    "only_four_approved_indexes_added": true,
+    "candidate_old_packets_byte_identical": true,
+    "strict_historical_layout_sql_xinfo_matches": 4,
+    "empty_reference_auth_rows": 0,
+    "empty_reference_copies_rows_or_index_definitions": false,
+    "empty_reference_proves_http_readiness": false,
+    "fresh_go_model_reference_acceptable": false,
+    "reference_limit": "Stage historical-layout packet as index-reference.json; fresh Go-model CIDs48/47 differ from historical45/44; do not weaken strict xinfo."
+  },
+  "protected_counts_total_undeleted": {
+    "auth": [22, 21],
+    "api_key": [11, 6],
+    "channel_group": [7, 2],
+    "model_group": [1, 0],
+    "channel_group_detail": [31, 20],
+    "model_group_detail": [0, 0],
+    "billing_model_price": [66, 66]
+  },
+  "protected_config_rows": 17,
+  "all_eight_protected_table_fingerprints_preserved": true,
+  "clone_only_exclusions": ["auth.next_refresh_after", "auth_json.next_refresh_after", "config.plugins"],
+  "clone_only_isolation": ["refresh delayed", "plugin config empty", "fleet enabled/patch/catalog false", "synthetic management password and enrollment CA", "local external IP", "redacted attached logs"],
+  "plugin_state_fully_end_to_end_tested": false,
+  "live_full_config_and_stable_state_remain_strict": true,
+  "old_reopen_proves_refresh_protocol_safety": false,
+  "io_limit": "Mover remained busy through04:34:36Z; first observed idle04:35:06Z. IO is advisory, not a cancel gate: parity record-only, never wait; known running mover waits UP TO600s pre-stop while Home serves, then proceeds with overlap=true if still running. Idle proceeds immediately; unknown/error/malformed/missing/hashbad/timeout proceeds with sanitized code and overlap=null. Never disable jobs/schedules. Add UP TO10min to maintenance planning, not a promise, outage bound or changed announcement.",
+  "test_runs": {
+    "full_packages_exit0": 36,
+    "nonverbose_full_proves_no_skips": false,
+    "original_focused_top_passes": 143,
+    "original_focused_top_pg_skips": 2,
+    "original_focused_nested_skips": 5,
+    "separate_pg_passes": 89,
+    "separate_pg_skips": 0,
+    "final_journal_parent_groups": 2,
+    "final_journal_all_nested_pass": true,
+    "final_journal_all_skips": 0,
+    "raw_focused_checksum_required": true,
+    "normalized_focused_hash_differs_by_cr_bytes": 7
+  },
+  "planning_caps_not_measured_maxima": {
+    "ready_seconds": 900,
+    "rollback_seconds": 600,
+    "failure_path_minutes_before_stop_copy_recreate_overhead": 25,
+    "cold_validation_each_bound_seconds": 1800,
+    "cold_validation_after_start_all_required": ["quick", "sha", "full"],
+    "coordinator_owns_actual_announcement": true
+  },
+  "rehearsal_cleanup_receipt_confirmed_by_lead": true,
+  "rehearsal_cleanup_remaining_own_databases_containers_processes": 0,
+  "remaining_gates": ["focused D1 and final metadata review", "HOT helper file-safety source approval and prospective consumer", "fresh actual HOT before notice", "future input inventory validation/checksums and staging", "fresh recovery; IO is advisory only, not a quiet-evidence gate", "announced authorized cutover and strict live acceptance", "future global backup retention and lock release", "final PR and hosted review publication"],
+  "production_operations_by_integration_executor": 0
+}

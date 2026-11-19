@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Upgrade Readiness</title>
+<!-- Existing hosted review theme; one reading column, operational details in the agent runbook. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="../theme.css">
+</head>
+<body data-fb-section-comments>
+<main>
+<header class="page-head">
+  <p class="eyebrow">Fleet maintenance · November 19, 2026</p>
+  <h1 class="page-title">Home upgrade readiness</h1>
+  <ul class="meta"><li>Preparation only</li><li>Smaller Home update selected</li><li>Nodes unchanged</li></ul>
+  <p class="page-sub">What tonight's smaller update includes, what remains unproven, and how recovery stays under the lead's control.</p>
+</header>
+<section id="decision" class="summary">
+  <h2>The smaller update is selected</h2>
+  <p>Tonight's plan keeps Home on its existing 1.1.9 family. It adds the reviewed account-save correction and two database improvements: faster reporting lookups and guards that avoid repeating old cleanup scans at startup. The selected starting point is <b>945907b</b>, with the reporting indexes and corrected cleanup changes added.</p>
+  <p><b>Home 1.1.10 is off tonight.</b> Its separate proposal remains a draft, with four test failures still open: a pre-existing refresh-journal safety gap and three account-status failures. No image was built for that proposal, so its first startup time is unmeasured. Its new database structures are not requirements for tonight's smaller update.</p>
+  <p>The CPA nodes remain on <b>8.0.69</b>. Updating them to 8.0.76 is a separate, later announced job. Automatic node patching stays off.</p>
+</section>
+<section id="readiness">
+  <h2>Not cleared to cut over yet</h2>
+  <p class="lede">Preparation checks and independent review are complete for this exact Home-only image. First startup reached node transport in 336.02 seconds during the isolated rehearsal. The recommendation is conditional: a fresh, fully verified backup must finish before the 1:00 am notice, and the coordinator must pass every live-window check. Otherwise, postpone to the next announced window. Nothing on this page claims a production upgrade or live acceptance.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Gate</th><th>Current position</th></tr></thead>
+      <tbody>
+        <tr><td>Account-save correction</td><td>Independently reviewed and merged into the selected starting point.</td></tr>
+        <tr><td>Exact smaller-update image and tests</td><td>Application source is pinned at 7091c86 and its source review passed without findings. The image is cpa-home:1.1.9-claude-fleet-7091c86, identity 43bac183…cf35bf8. The full run passed 36 packages; the focused run passed 143 top-level tests with two top-level PostgreSQL skips. A separate PostgreSQL run passed 89 tests without skips. The original focused run also skipped five nested branches. Separate PostgreSQL testing, including both final refresh-journal test groups and all their nested branches, passed without skips and covers those omissions. The original skips remain recorded rather than being erased. The nonverbose full run does not prove that every test ran without skips. Newer fleet changes are excluded.</td></tr>
+        <tr><td>Startup and old-image recovery on current-size data</td><td>First start reached management in 333.87 seconds and node transport in 336.02 seconds. Warm restart took 0.67 and 2.90 seconds. Old-image reopen and re-upgrade passed management checks only, at 0.67/0.68 and 0.66/0.67 seconds; they were not full live-request acceptance. First and warm starts passed all 1,058 panel routes, refused unencrypted RESP and passed certificate-protected configuration and heartbeat checks.</td></tr>
+        <tr><td>Panel and database definitions</td><td>The exact existing model catalog and all 1,060 embedded panel files matched. Every original database definition stayed unchanged; only four approved indexes were added. All four match a separate empty reference with the historical table layout, including the strict column details. That tiny reference proves index installation, not an empty database's web readiness.</td></tr>
+        <tr><td>Independent recovery access</td><td>Initial direct reply passed. Repeat it without a CPA connection immediately before the lead's cutover.</td></tr>
+        <tr><td>Real requests and final acceptance</td><td>Future lead work, not a preparation pass.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><p class="callout-title">Missing proof means no-go</p><p>The lead does not weaken a gate to meet the clock. An incomplete image, rehearsal, backup, request check or final review means canceling this window.</p></div>
+</section>
+<section id="backup">
+  <h2>Backup work is split around the outage</h2>
+  <p>Before the <b>1:00 am Central notice</b>, make and fully verify a fresh, consistent backup while Home continues running. This disaster copy must be on a <b>different physical storage device</b> from the live database. A different folder on the same cache disk does not count. A separate array disk has been identified; the actual backup and its final device and checksum checks are still pending. The approved method fully checks a fresh SSD staging copy, copies those exact bytes to the separate disk, requires matching checksums, then removes the staging copy.</p>
+  <p><b>Disk activity is advisory and cannot cancel the upgrade.</b> Record parity status without waiting for it, even if active or unknown. If the hourly mover is running, wait <b>up to ten minutes while Home keeps serving</b>, then proceed even if it is still running and record the overlap. An idle mover needs no wait. Missing, unreadable, malformed or failed status checks also proceed with a short, safe error code; unknown is never called idle. A missing or changed status helper is not run and cannot block the real input checks. Even a failure to save this advisory is recorded safely without canceling. Do not disable jobs or schedules.</p>
+  <p>The live database is on its own NVMe disk; parity uses a separate array disk. The loaded rehearsal worked while the mover ran from 04:32:05 through 04:34:36 UTC, with the first idle observation at 04:35:06. That supports treating the overlap as information, not a no-go condition. The reviewed status helper stays unchanged. The advisory and its checked caller passed their narrow review. The new backup-command integration passed its focused review; actual backup and live checks remain separate.</p>
+  <p>After the advisory, the real safety checks still apply. Stop Home and positively confirm that it cannot restart itself. A supported instant-copy operation may then make the cold migration-recovery copy. It must succeed, have a different file identity, match the source size, and leave the stopped database and its journal state unchanged. A nonempty journal blocks a main-file-only copy.</p>
+  <p><b>The instant copy shares physical disk blocks with the live file.</b> It protects against migration changes, not failure of that disk. That is why the fully verified disaster copy on another device remains mandatory.</p>
+  <p>Start the selected image after the cold-copy gates pass. Run the quick database check, checksum and full integrity check afterward at low priority. <b>All three must pass before acceptance.</b> Stagger them until nodes reconnect if they interfere with heartbeats. Keep the disaster copy if any cold-copy check fails.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Observed preparation work</th><th>Result and limit</th></tr></thead>
+      <tbody>
+        <tr><td>Fully guarded normal copy</td><td>148.4 seconds; 45,358,354,432 bytes. Full integrity passed in 785.19 seconds. This is a verified rehearsal seed, not tonight's actual disaster backup.</td></tr>
+        <tr><td>Live journal growth during that copy</td><td>5,512,560 bytes, sampled every 0.1 seconds; below the 1 GiB growth limit.</td></tr>
+        <tr><td>Measured normal copy + quick check + checksum</td><td>595.26 seconds of historical observed work with shared warm cache. Quick check and checksum were rejected as pre-start gates; all checks must pass after startup before acceptance.</td></tr>
+        <tr><td>Instant cold copy and selected-image startup</td><td>The cold-copy measurements were 0.0037–0.0039 seconds on the same disk. First full-clone startup reached node transport in 336.02 seconds under load; its concurrent full seed check passed in 792.66 seconds. Neither is a live-window guarantee.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The outage estimate is now the actual instant cold-copy operation plus measured Home startup. The 148.4-second normal hot copy does not predict the cold copy or the array transfer. The raw rehearsal packet now records 548.10 seconds copying, 431.65 seconds flushing and 525.33 seconds checking the checksum. Total elapsed time was 1,511.10 seconds, including 6.02 seconds of other overhead. With the 1,100.2-second verified hot staging step, total observed work was 43 minutes, 31.3 seconds. The checksums matched before staging was removed; the disposable rehearsal copy was also removed. None of this is tonight's fresh backup, which still must pass. Begin well before the 1:00 am notice, around midnight or earlier; starting at 1:00 am would miss that gate. Keep at least 20% of cache capacity free after reserving space for both a 45 GB hot staging copy and a worst-case 45 GB copy-on-write reserve. The raw space packet used the actual 2 TB cache capacity: 618,974,871,552 bytes, or 30.94%, remained after the 96,636,764,160-byte reserve. Recheck that in the window. The 595.26-second observation is a verification cost, <b>not the startup gate or a promised outage</b>. The readiness plan allows up to 15 minutes for the new image and 10 minutes for old-image recovery. These are planning limits, not measured worst cases or an outage promise. A failure path could use 25 minutes plus stopping, copying and replacement overhead. Add up to ten minutes of pre-stop mover waiting to the maintenance estimate; Home continues serving throughout that wait. It does not extend the outage estimate by ten minutes or change an announcement here. The coordinator must choose the actual announced allowance. None of these measurements is an upper bound or a promise. The checks after startup still all have to pass; their 30-minute limits are not outage estimates.</p>
+</section>
+<section id="protection">
+  <h2>What stays protected</h2>
+  <ul>
+    <li><b>All 21 undeleted saved accounts, plus deleted history.</b> Preserve identities, priorities, weights, access settings and sign-in requirements. The database has 22 account rows in total, including one historical deleted row; the sign-in list intentionally shows only 20 and leaves out a configuration-backed entry. Match the expected list to the 21 undeleted identities, while hashing stable settings for all 22 rows. A changed, missing or restored historical row must fail acceptance. Also check the filtered sign-in list and full configuration, without reading rotating sign-in grants. The twelve shared Claude accounts and four Codex accounts do not need reauthorization in the baseline. The private thirteenth Claude fallback is already disabled and needs sign-in; that pre-existing exception stays visible.</li>
+    <li><b>All six undeleted original keys and their permissions.</b> Preserve all 11 historical key rows, all seven channel-group rows and the one deleted model-group row too. Compare saved fingerprints rather than exposing keys. Include the parent groups' disabled and deleted state, not just key bindings; save only hashes.</li>
+    <li><b>Today's authorizations and history.</b> Never restore an older full database over newer sign-ins. Compare settings, history and billing without hiding real changes.</li>
+    <li><b>Every awake node.</b> Include the optional laptop if awake. An asleep optional laptop is explicitly skipped, not awakened, upgraded or silently dropped after the change.</li>
+    <li><b>The whole panel.</b> Verify all 1,060 embedded files. The 1,058 served files are checked through HTTP; the two metadata files are not web routes and must not be counted as successful web requests.</li>
+    <li><b>Existing storage safeguards.</b> Keep direct-disk paths, both database temporary-folder settings, the read-only container and the existing 64 MiB temporary space.</li>
+  </ul>
+  <p>Database index names alone are not proof. Compare complete definitions and index details before stopping Home and again after startup. Tonight keeps source version 17; the SQLite database does not have a populated version-number marker. Forward acceptance requires all four exact new definitions. For old-image recovery, first prove there is no writer, then freeze the observed structure: every original definition must remain unchanged, and only the four approved indexes may have been added. If startup failed partway, zero to four exact additions are allowed. Recovery must match that frozen record; it never installs indexes just to satisfy the check.</p>
+  <p>The final clone check preserved fingerprints for all eight protected tables, including historical accounts, keys and parent groups. The clone deliberately delayed credential refresh, removed plugin configuration, disabled maintenance and used an isolated password and certificate setup. Its comparison excludes only the declared refresh-delay fields and plugin row. <b>This does not fully test plugin state.</b> The live acceptance check still requires unchanged full configuration; it does not inherit those exclusions.</p>
+  <p>The rehearsal used a read-only container, 64 MiB temporary space and no network access, with both database temporary-folder settings on the data volume. The observed first-start journal and temporary-file peaks were 1,256,212,752 and 1,221,992,619 bytes. Warm restart used 86,552 and zero bytes. Sampling was every 0.1 seconds, so these are observed peaks, not guaranteed limits.</p>
+</section>
+<section id="recovery">
+  <h2>A failed check does not give up recovery control</h2>
+  <p>The lead's renewable operation locks belong to a local control shell that remains open if an SSH connection or a checked step fails. Each real safety-check action is isolated, and its failure blocks the next forward step. The disk-activity advisory is explicitly excluded; its errors never trigger recovery. The old one-piece cutover controller is not reused.</p>
+  <p>Recovery covers an unchanged running Home, a stopped old Home after a backup failure, a replacement that left no container, and a paused or repeatedly crashing candidate. Before any old image starts, disable automatic restart first and prove the candidate stopped and unpaused, or prove it absent with no other writer.</p>
+  <p>Then read the current database with its journal visible. The refresh journal must exist, be readable and be empty. <b>Unknown or nonempty means no old-image start.</b> Never restart the candidate between that check and starting the old image. Keep the current database and journal; do not erase evidence or restore stale sign-ins.</p>
+  <p>Starting the old image is not the end of recovery. It must pass the same real requests, panel, account, history and 60-second stability checks before normal scheduling and lock release. The stopped-state database record is tied to the old image, this operation and the current startup attempt. Any unexpected definition, changed original object or changed record blocks acceptance; escalate rather than changing the database to satisfy the check. If the safe path is unavailable, remain stopped with independent recovery available and escalate.</p>
+</section>
+<section id="acceptance">
+  <h2>How success will be proved</h2>
+  <p>Each reachable awake node makes a tiny native Claude and Codex request using its own saved key on that machine. The key never travels to the lead. The exact response trace must match fresh Home usage for the right node, model and enabled account, after both the saved readiness row number and time.</p>
+  <p>The helper then checks the same container, start identity, image and awake-node set for at least 60 seconds. The panel and protected account/settings/history checks run again afterward. This narrower Home-only check <b>does not claim all six keys were live-tested</b>; their settings and permissions are preserved by fingerprints.</p>
+  <p>The selected build also pins the whole existing embedded model catalog and all panel files. That catalog includes Fable 5.2 but not GPT 6.2. After startup, the coordinator checks Home's own model list for GPT 6.2 Astra and Sol within ten minutes. If they are absent, record a known, nonblocking startup-fetch issue and recheck at the next three-hour refresh; that alone is not a rollback trigger. The separate real GPT 6.2 request checks remain mandatory because nodes may already have cached models.</p>
+  <p>The native helper now has an exact laptop-side command, a checked result format and twelve passing synthetic tests. Its corrected inventory checks include binary hashes, not just version labels. The narrow helper review passed; the final operational review passed, while live use remains pending. Its native-request result alone cannot stand in for panel, preservation or backup checks.</p>
+</section>
+<section id="schedule">
+  <h2>Window and closeout</h2>
+  <p>The preparation verdict reaches the lead by <b>12:30 am Central</b>. If cleared, the lead sends the <b>1:00 am</b> warning for the <b>2:00 am</b> Home-only window, including the measured outage budget. Missing evidence means no-go, not an unannounced late start.</p>
+  <p>After success or verified recovery, restore the saved catalog schedule with node patching still off. Keep only the two newest fully verified database backup versions in total across the cache backup folder and the separate array disk, across all operation names, remove only explicitly identified superseded files and owned temporary work, read back lock release, then send the all-clear. A partial or quick-check-only copy never counts as verified retention.</p>
+</section>
+<p>The operator's final rehearsal cleanup receipt is confirmed: owned rehearsal databases, keys, containers and processes were removed; the selected image, build inputs and sanitized evidence remain. This does not close future backup retention or release the future window's locks. The revised backup helper passed its independent source review and a tiny synthetic Linux check. Its future command and shared result checker passed focused review, including a correction that prevents failed or late initial verification from passing a later check. They require a real successful invocation, matching private records and the current backup file and checksum; records alone cannot pass. This version uses Python’s standard SQLite backup method in a short-lived restricted child. It has not had a full-size rehearsal, so the earlier 43-minute observation does not establish its speed or deadline. A fresh actual backup before the notice and the final private input inventory and byte staging remain required. The source reviews are complete; this report is not live acceptance. The count-fix review passed on its unchanged source. <a href="https://github.com/chansearrington/CLIProxyAPIHome/pull/48">Draft pull request 48</a> contains the reviewed source and tools, not an approval to deploy. Both checks passed on its initial source-and-tools head, 3d58ec8, at 06:07:31 UTC. A later documentation commit needs a new check; this is not a blanket pass for future changes. The earlier billing block was historical. The exact tested image remains the primary evidence because the pull request’s test context includes newer fleet changes.</p>
+<p class="page-foot">ws-0054 upgrade preparation · Selected Home 1.1.9 bundle · Isolated rehearsal recorded · Actual backup and final gates pending</p>
+</main>
+</body>
+</html>
