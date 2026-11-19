@@ -449,3 +449,30 @@ Nodes stay on CPA 8.0.69. Image-only rollback target: `cpa-home:1.1.9-claude-fle
   catalog labels, not limits; `[1m]` in the session model sets the window.
 
 Record: [ws-0054 deploy record](docs/fleet/ws-0054-home-7091c86-deploy.md).
+
+## November 19 evening: Home 1.1.10 (ws-0062)
+
+Home is **`cpa-home:1.1.10-claude-fleet-97804d6`** (image `d04a1857…`): upstream 1.1.10 merged into the fleet line
+(PR #54, two independent review rounds), plus PRs #49, #51, #52, #55 and #56. Schema 17 → 19, which adds the usage
+dedupe key and its sparse pending index. Deployed 2026-11-19 with the leads paused by the Hype Orchestrator.
+
+- **Outage 21:50–22:10Z (20 min), no rollback.** A stop-time snapshot took 70 s:
+  `data/backups/home-pre-1110-20261119T215033Z.db`, an exact copy because Home was stopped. The first 1.1.10 start
+  ran its one-time dedupe over ~4.1 M usage rows in **1,123 s**. Later starts skip it: zero rows are pending.
+- **Accepted:**
+  - 5/5 nodes healthy;
+  - 21/21 accounts, matching the snapshot;
+  - panel 200;
+  - 112 requests after start with 0 failed;
+  - no fences or stalls.
+- **Rollback:** stop Home, restore that snapshot, and use `cpa-home-build/ws0062/docker-compose.old.yml` (7091c86).
+  This is only valid before new authorizations accumulate. After that, use the journal-aware new image with the
+  current DB.
+- **Scheduled, announced node upgrades are ON** (ws-0050/ws-0060):
+  - Home sends notices with `FLEET_ANNOUNCE_TOKEN` (in `.env`) to the Ark receiver at `100.110.133.6:8766`
+    (User Script `cpa-fleet-announce`, run at array start).
+  - The MacBook launchd job `com.cpa-home.fleet-announce` relays them to the Hype Orchestrator.
+  - Node patches roll only in announced 02:00 CT windows, canary first.
+  - The MacBook is an optional node with no `optional_window`, so it does not auto-upgrade.
+- Full-size rehearsals must never copy or delete a DB-sized file on `/mnt/cache` while Home is live. That caused
+  relay errors on 11-19 at 20:16Z.
