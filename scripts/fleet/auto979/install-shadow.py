@@ -37,7 +37,8 @@ def main():
         runner = (destination / "run-shadow.sh").read_text()
         a.require("--shadow" in runner and "--apply" not in runner, "runner_not_shadow")
         install_cron(Path("/boot/config/plugins/dynamix"), destination / "run-shadow.sh")
-        subprocess.run(["/usr/local/sbin/update_cron"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Unraid ships update_cron with "#/bin/bash" (no "!"), so exec it through bash.
+        subprocess.run(["/bin/bash", "/usr/local/sbin/update_cron"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(json.dumps({"installed": "shadow_only", "schedule": "*/5 * * * *", "home_writes": 0}))
         return 0
     except Exception as error:
