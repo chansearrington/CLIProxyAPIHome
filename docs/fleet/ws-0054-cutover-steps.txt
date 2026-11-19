@@ -1,0 +1,475 @@
+WS0054 HOME-ONLY MANUAL — PREPARATION, NOT APPROVED OR EXECUTED
+Friday November 20, 2026: verdict 06:30Z; complete fresh HOT backup BEFORE the 07:00Z
+notice (01:00 CT); cutover 08:00Z (02:00 CT). Nodes STAY 8.0.69; 8.0.76 deferred.
+
+READ THIS CORE FIRST
+This is NOT a script to source/run wholesale. Paste ONE checked block at a time.
+Missing image, measured budget, critical manifest/native helper or fresh review = NO-GO.
+Optional I/O status is advisory only: missing/error/busy NEVER cancels the upgrade.
+No historical full-DB restore. Keep current DB/WAL and Home-owned refresh grants.
+No node restart/install, policy patches=true, forged receipt or live index prep.
+
+Ownership: the four renewable fleet-lock holds own a LOCAL interactive Bash,
+not SSH. That local shell must remain open if SSH or any check fails. On the Ark,
+outer shell has errexit OFF; every action runs in a separate `bash -eu` child.
+The explicit NEXT latch prevents pasting the next block after a failed gate.
+Never put `set -e` in either ownership shell; never use an unchecked paste tail.
+
+State / failure                         Required route (locks stay held)
+Before stop, old still running          A: verify unchanged old, restore policy.
+Old stopped; backup or CAS failed       B: fence writers, fresh journal, old start.
+Recreate failed, ZERO managed container B: prove no other writer, journal, recreate old.
+Candidate present, paused/crash-looping B: restart OFF FIRST; stop/unpause; journal.
+Journal missing/unreadable/nonempty     C: NO OLD START. Stopped escalation or reviewed
+                                        journal-aware new-image/current-DB recovery.
+B requires full old-image native/preservation/panel/60s acceptance BEFORE policy
+restore/release, not merely a listening port. C never deletes journal rows or
+restores stale authorizations. No candidate resume after the empty-journal gate.
+
+0 — BEFORE MUTATION: LEAD ONLY, ANNOUNCED WINDOW, INDEPENDENT RECOVERY
+Repeat actual direct completion AND retained no-CPA network proof; keep available:
+```sh
+/Users/chansearrington/.cpa-recovery/claude-direct --model claude-haiku-4-5-20251001 --tools '' --disable-slash-commands --no-session-persistence -p 'Reply with exactly DIRECT_RECOVERY_OK and nothing else.'
+```
+Require exit 0/exact sentinel. Network observation command remains PENDING from
+recovery owner. No inference is run by the preparation/documentation executor.
+Acquire four canonical renewable holds with fleet-lock; their FINAL command is
+`bash --noprofile --norc -i`, NOT ssh. Exact nesting is in the companion runbook.
+Inside that held LOCAL shell, keep it open through failure/reconnection/recovery:
+```sh
+set +e
+set +x
+if ssh -o IdentitiesOnly=yes -o IdentityAgent=none -i /Users/chansearrington/.ssh/cronos_ark root@100.110.133.6; then
+  printf '%s\n' 'SSH ended; do NOT exit this lock owner until acceptance/recovery and policy readback.'
+else
+  printf '%s\n' 'SSH failed; locks still owned here. Reconnect; reconcile actual state before any action.'
+fi
+```
+Check/renew all four locks immediately before stop, CAS and recovery. Busy,
+unknown or expired ownership forbids mutation. Never steal another owner's lock.
+
+1 — ARK OWNERSHIP SHELL: BIND REVIEWED INPUTS; NO SECRETS IN OUTPUT
+```sh
+set +e
+set +x
+umask 077
+export BUILD=/mnt/cache/appdata/cpa-home-build/ws0054-20261118T2055Z
+export WS="$BUILD/window-$(date -u +%Y%m%dT%H%M%SZ)"
+export DATA=/mnt/cache/appdata/cpa-home/data/home.db
+export COMPOSE=/mnt/cache/appdata/cpa-home/docker-compose.yml
+export OLD_TAG=cpa-home:1.1.9-claude-fleet-13860b9
+export OLD_IMAGE=sha256:0a4c3a7c21e139dc177d70daeb4885db2a9e163fa18de0b04e619f859927c018
+export NEW_TAG=cpa-home:1.1.9-claude-fleet-7091c86
+export NEW_IMAGE=sha256:43bac183f39e9324a91fe80a123b72e0bd5d5be4b103c45f3f56dda87cf35bf8
+export READY_SECONDS=900 ROLLBACK_SECONDS=600
+export TARGET_SCHEMA=17
+export PROOF=/mnt/cache/appdata/cpa-home-build/ws0048-2d5fbf1/swap.py
+export INPUT_SUMS=PENDING_REVIEWED_INPUT_CHECKSUM_FILE
+NEXT=INPUTS
+```
+INPUT_SUMS creation/validation is FUTURE LEAD WORK; Annex D gives the exact
+file inventory, creation rules and checks. Never fill it from guessed values.
+EXCLUDE optional IO script/test/status-only receipts from INPUT_SUMS; a missing or
+hashbad IO helper is recorded unavailable by Annex I, NEVER an indirect hard stop.
+Critical manual/native/source/backup/provenance hash gates remain unchanged.
+Stage byte-identical clean-index-reference-schema-shaped.json AS index-reference.json
+(SHA1f309dba...1ece22). Its empty historical-layout fixture copied before CREATE TABLE
+only, NOrows/indexdefinitions; exact7091 image installed4/4matching SQL/xinfo.
+Do NOTuse fully fresh Go-model clean-index-reference.json: CID48/47vs45/44 would
+falsely fail strictxinfo. auth0tinyreference proves indexinstallation, NOTemptyDBHTTP.
+Final schema-after-candidate/old SHA6f4f5966...e1f953 both; before272→after276objects,
+alloriginalobjects unchanged. Long identity lists stay in private input files.
+CHOSEN TONIGHT: 1.1.9 fleet13860b9 +PR36 +correctedPR38, source17. PR43 independent review PASS and merged fleet945907b; selected base EXACT945907b
++PR36+correctedPR38. Model-alert45 is Python/doc-neutral. Actual7091 image is pinned above;
+full-clone first/warm/old/reupgrade packets now verified locally; see DATA below.
+SQLite home_schema_migration is normally EMPTY; use physical manifests. No fork18/20.
+READY900s/ROLLBACK600s are PLANNING CAPS (15/10min), not measured maxima or an
+outage promise. First node transport measured336.02s; old completed-index reopen
+0.68s does NOTbound old0-3index scans. Failure path may consume25min PLUS stop/
+copy/recreate overhead. Add UP TO10min pre-stop mover wait to the maintenance
+estimate; Home continues serving during that wait. It is NOT an outage upper bound
+or a changed announcement. Coordinator owns the actual announcement/total budget.
+
+Before section2, paste verify_home, io_advisory and verify_native from Annexes
+V, I and N, plus the shared hot_backup definition from Annex D. Its create action
+is future coordinator-only BEFOREnotice; both cutover calls use verify only.
+Their bytes are reviewed with this core. They are checks, not deployment drivers.
+Annex N's request command runs in a SECOND LOCAL laptop terminal, NOT on Ark;
+leave the original local lock owner and its Ark SSH shell open throughout.
+
+2 — INPUT GATE AND PAUSE (failure routes A; no stop yet)
+```sh
+if test "$NEXT" = INPUTS && bash -eu <<'SH'
+set +x
+set -a; . /mnt/user/appdata/cpa-home/.env; set +a
+export MANAGEMENT_PASSWORD
+python3 -I - <<'PY'
+import os,re,subprocess
+assert re.fullmatch(r'cpa-home:1\.1\.9-claude-fleet-[0-9a-f]{7,40}',os.environ['NEW_TAG'])
+assert re.fullmatch(r'sha256:[0-9a-f]{64}',os.environ['NEW_IMAGE']) and os.environ['NEW_IMAGE']!=os.environ['OLD_IMAGE']
+assert os.environ['TARGET_SCHEMA']=='17'
+for key in ('READY_SECONDS','ROLLBACK_SECONDS'): assert os.environ[key].isdigit() and int(os.environ[key])>0
+for tag,key in (('OLD_TAG','OLD_IMAGE'),('NEW_TAG','NEW_IMAGE')):
+    assert subprocess.check_output(['docker','image','inspect',os.environ[tag],'--format','{{.Id}}'],text=True).strip()==os.environ[key]
+PY
+test -f "$INPUT_SUMS"
+sha256sum -c "$INPUT_SUMS"
+mkdir -m 700 "$WS"
+verify_home preflight
+SH
+then NEXT=PAUSE; else NEXT=RECOVERY; printf '%s\n' 'STOP inputs: old unchanged; route A.'; fi
+```
+INPUT_SUMS must also bind the chosen source17 image to full tests/review and
+production-shaped cold/warm startup, exact index SQL/xinfo, all old structures
+preserved and old-image/current-data reopen. PR43 independent PASS is merged in exact base945907b. 1.1.10 is OFF tonight, not an unmeasured substitute.
+
+Paste **Annex P** from the companion runbook now. It is the exact checked
+block (not an external helper/controller); the NEXT latch is evaluated in this
+held shell. Do not paste the next forward block after a failure.
+
+3 — BACKUPS: VERIFIED HOT ON ANOTHER DEVICE BEFORE OUTAGE
+Before the01:00CT notice: fresh guarded SSDstage read-only pinned backup API from
+EXACT/cache live source, monitor BEFOREBEGIN, <=600s/+1GiBgrowth,0.1s sampling.
+FULLintegrity+SHA onstage, then PLAINcross-device copy to raw
+/mnt/disk18/cpa-home-disaster-backups/<ws0054-window>/ (root0700/umask077).
+ArraySHA mustMATCH stageSHA; only then deleteSSDstage. No/user/share path.
+Observeddevices:cache44,btrfs,/dev/nvme1n1p1;disk18=2322,xfs,/dev/md18p1,
+9,053,034,598,400bytesfree. Recheck finalfiledevice/free, not just folder name.
+Cache must remain>=20%free AFTER45GBhotstage+45GBworstcasecoldCoWreserve;
+Actual-window device/headroom/verified HOT result PENDING. Raw operator packets
+now record rehearsal arraycopy548.10s+fsync431.65s+SHA525.33s (components1505.08s),
+totalelapsed1511.10s INCLUDING6.02soverhead, not just the component sum.
+HOTstage1100.2s+array1511.1s=2611.3s (43m31.3s), NOT an actual-window guarantee.
+Start well BEFORE01:00notice (~00:00 or earlier); a01:00start misses that gate.
+Raw clone-stage: cachetotal2,000,407,674,880B; reserve96,636,764,160B leaves
+618,974,871,552B (30.9424%) at rehearsal. Cachedev44 and arraydev2322/xfs differ.
+MatchingSHA preceded stage deletion; disposable arraycopy removed, no retainedversion.
+No actual-window backup qualifies from these rehearsal timings or cleanup.
+No disk1(20KBfree). No checkpoint/stale restore. Exact operator invocation,
+Annex D pins the staged source/actual invocation and shared verifier; actual
+checks remain HARD STOP before4. New API/rooted-child method has NO full-size
+rehearsal/performance guarantee; old CLI43m31.3s is context, NOT new-method proof.
+
+Preparationnormalcopy148.4s/45,358,354,432bytes; WAL290,064,512→295,577,072,
+growth5,512,560 at0.1s. SHA70de7ffb3783153681af8162206132539cd9e651baaf3c75b388eaeda26abf64;
+FULLintegrity=ok, exit0,785.19s: verified REHEARSAL seed, NOT actual window HOT.
+Earlier137.6s late-guard copy is NOTfully guarded.
+Historical normalcopy+quick248.31s+SHA198.55s=595.26s was REJECTED as
+a preSTART gate. COLD quick+SHA+FULL happen AFTERstart, before acceptance.
+OWNseed reflink0.003s onbtrfs/dev44; PRODUCTIONsupport/WAL/sameFS not assumed.
+Reflink sharesPHYSICALblocks: migration protection, NOTdisk-failure protection.
+Latest startgate=COLDcopyexit0+size/source/WAL-SHMstate; quick+SHA+FULL AFTERSTART,
+ALL3beforeacceptance; existing1800s bounds remain validation bounds, NOToutage.
+Outage includes actual stopped-copy/recreate+startup; first node transport336.02s
+measured onfullclone, not a guaranteed live duration. 900sforward/600srollback are
+planning caps, not measured maxima. If verification harms heartbeats, stagger after
+reconnect. SSD148s is NOTarray timing. No actual-window backup is claimed.
+
+4 — STOP OLD; COLD COPY EXIT0 +SIZE/STATE GATES START
+Lead rechecks locks/recovery and announced08:00Z window. BEFORE stop, Annex I
+records parity ONLY; parity active/unknown/error NEVER waits or cancels. If mover
+is known running, wait UP TO600s while Home continues serving. Then PROCEED even
+if still running, recording mover_overlap=true; idle proceeds immediately.
+Unknown/error/malformed/timeout/missing/hashbad IO helper also PROCEEDS with a
+sanitized code and unknown overlap=null, never false idle certainty. Failure to
+write the advisory log is bounded stderr/in-memory evidence, NEVER recovery.
+Never disable jobs/schedules. Critical backup/recovery/journal/health gates stay.
+Home DB is on its own NVMe dev44/btrfs; parity is on separate array md18/xfs.
+Rehearsal first start overlapped mover04:32:05Z–04:34:36Z and worked; first
+observed idle04:35:06Z. Cold reflink measured0.0037–0.0039s and first node-shaped
+serving336.02s under load, NOT a maximum/promise. Add UP TO10min pre-stop wait to
+maintenance planning, NOT an outage or announcement change. Live receipt FUTURE.
+Annex I executes ONLY verified804fbeee...81e4a1 bytes, never a missing/hashbad
+script. Its unchanged tri-state JSON remains useful; no positive-quiet gate.
+```sh
+if test "$NEXT" = STOP && bash -eu <<'SH'
+hot_backup verify # actual fresh invocation + matching private receipts + physical retained DB/SHA; Annex D
+if io_advisory; then :; else printf '%s\n' 'IO_ADVISORY error=caller_failed; proceed' >&2 || :; fi
+python3 -I - <<'PY'
+import os,json,pathlib,subprocess
+p=pathlib.Path(os.environ['WS']);old=json.loads((p/'old-runtime.json').read_text())
+def docker(*a): return subprocess.check_output(['docker',*a],text=True,timeout=120)
+v=json.loads(docker('inspect',old['id']))[0]
+assert v['Image']==os.environ['OLD_IMAGE'] and v['State']['Running'] and not v['State']['Paused'] and v['State']['StartedAt']==old['started_at']
+(p/'outage-start').write_text(str(__import__('time').time()))
+docker('update','--restart=no',v['Id']);assert json.loads(docker('inspect',v['Id']))[0]['HostConfig']['RestartPolicy']['Name']=='no'
+docker('stop','--time','90',v['Id']);s=json.loads(docker('inspect',v['Id']))[0]
+assert s['HostConfig']['RestartPolicy']['Name']=='no' and not s['State']['Running'] and not s['State']['Paused'] and not s['State'].get('Restarting')
+(p/'old-stopped').write_text(s['Id'])
+PY
+BACKUP=/mnt/cache/appdata/cpa-home/data/backups/home-cold-ws0054-$(date -u +%Y%m%dT%H%M%SZ).db
+export BACKUP
+test ! -e "$BACKUP"
+python3 -I - <<'PY'
+import os,pathlib,json,subprocess
+p=pathlib.Path(os.environ['WS']);db=pathlib.Path(os.environ['DATA'])
+users=subprocess.run(['fuser',*[str(x) for x in (db,pathlib.Path(str(db)+'-wal'),pathlib.Path(str(db)+'-shm')) if x.exists()]],capture_output=True)
+assert users.returncode==1 and not users.stdout and not users.stderr,'STOP no-writer proof unknown'
+state={s:{'exists':pathlib.Path(str(db)+s).exists(),'bytes':pathlib.Path(str(db)+s).stat().st_size if pathlib.Path(str(db)+s).exists() else 0} for s in ('','-wal','-shm')}
+assert state['-wal']['bytes']==0,'STOP nonempty WAL: main-file reflink is unsafe; use separately reviewed WAL-aware backup route'
+stat=db.stat();state['source_identity']={'device':stat.st_dev,'inode':stat.st_ino,'mtime_ns':stat.st_mtime_ns}
+(p/'cold-source-state.json').write_text(json.dumps(state))
+PY
+# Approved COLD reflink only: never silently fall back to a normal raw copy.
+cp --reflink=always --preserve=mode,timestamps -- "$DATA" "$BACKUP"
+python3 -I - <<'PY'
+import os,pathlib,json
+p=pathlib.Path(os.environ['WS']);db=pathlib.Path(os.environ['DATA']);before=json.loads((p/'cold-source-state.json').read_text())
+after={s:{'exists':pathlib.Path(str(db)+s).exists(),'bytes':pathlib.Path(str(db)+s).stat().st_size if pathlib.Path(str(db)+s).exists() else 0} for s in ('','-wal','-shm')}
+stat=db.stat();after['source_identity']={'device':stat.st_dev,'inode':stat.st_ino,'mtime_ns':stat.st_mtime_ns}
+assert after==before,'STOP stopped source identity/WAL-SHM state changed during copy'
+copy=pathlib.Path(os.environ['BACKUP']).stat()
+assert copy.st_dev==stat.st_dev and copy.st_ino!=stat.st_ino,'STOP reflink must be same filesystem, different inode'
+assert copy.st_size==before['']['bytes']>0,'STOP cold copy/source size mismatch'
+(p/'cold-source-after.json').write_text(json.dumps(after));(p/'cold-backup-path').write_text(os.environ['BACKUP'])
+print('cold_reflink_exit0_distinct_inode_equal_size_source_WAL_SHM_unchanged=PASS')
+PY
+SH
+then NEXT=CAS; else NEXT=RECOVERY; printf '%s\n' 'STOP backup/stop failure: route B if old stopped, otherwise A.'; fi
+```
+Cold quick/SHA/full FAIL/unknown: NO ACCEPTANCE, keep HOT disaster copy; recover current DB,
+never restore a full copy over current grants. Do not prune any backups yet.
+
+5 — OWNED IMAGE-ONLY CAS; RECREATE MAY LEAVE ZERO CONTAINERS
+```sh
+if test "$NEXT" = CAS && bash -eu <<'SH'
+python3 -I - <<'PY'
+import os,pathlib,subprocess,json
+p=pathlib.Path(os.environ['WS']);path=pathlib.Path(os.environ['COMPOSE']);before=(p/'compose.before.yml').read_bytes();after=(p/'compose.candidate.yml').read_bytes()
+v=json.loads(subprocess.check_output(['docker','inspect',(p/'old-stopped').read_text()],text=True))[0]
+assert not v['State']['Running'] and not v['State']['Paused'] and not v['State'].get('Restarting') and v['HostConfig']['RestartPolicy']['Name']=='no'
+assert (p/'cold-backup-path').exists() and path.read_bytes()==before,'STOP foreign Compose drift'
+tmp=path.with_name('.docker-compose.ws0054.next')
+with tmp.open('xb') as out:out.write(after);out.flush();os.fsync(out.fileno())
+tmp.chmod(path.stat().st_mode&0o777);assert path.read_bytes()==before;tmp.replace(path)
+PY
+test "$(docker image inspect "$NEW_TAG" --format '{{.Id}}')" = "$NEW_IMAGE"
+test "$(docker image inspect "$OLD_TAG" --format '{{.Id}}')" = "$OLD_IMAGE"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$WS/candidate-may-have-run"
+docker compose -f "$COMPOSE" -p cpa-home up -d --no-deps --force-recreate --pull never home
+# Candidate has started. Paste Annex C promptly in another Ark shell to observe
+# coordinator v8 catalog within10min; missing6.2 is NONBLOCKING, never rollback.
+# Verification is low-priority and never a pre-start delay. If heartbeat/IO
+# telemetry shows pressure, stagger these three jobs until nodes reconnect;
+# do not waive any of their final PASS gates.
+BACKUP=$(cat "$WS/cold-backup-path")
+(
+  if ionice -c 3 nice -n 19 timeout 1800 sqlite3 -readonly "file:$BACKUP?mode=ro" 'PRAGMA quick_check;' > "$WS/cold-quick.output" && test "$(cat "$WS/cold-quick.output")" = ok; then
+    printf 'PASS\n' > "$WS/cold-quick.status"
+  else printf 'FAIL\n' > "$WS/cold-quick.status"; fi
+) &
+printf '%s\n' "$!" > "$WS/cold-quick.pid"
+(
+  if ionice -c 3 nice -n 19 timeout 1800 sha256sum "$BACKUP" > "$BACKUP.sha256" && ionice -c 3 nice -n 19 timeout 1800 sha256sum -c "$BACKUP.sha256" > "$WS/cold-sha.output"; then
+    printf 'PASS\n' > "$WS/cold-sha.status"
+  else printf 'FAIL\n' > "$WS/cold-sha.status"; fi
+) &
+printf '%s\n' "$!" > "$WS/cold-sha.pid"
+(
+  if ionice -c 3 nice -n 19 timeout 1800 sqlite3 -readonly "file:$BACKUP?mode=ro" 'PRAGMA integrity_check;' > "$WS/cold-full.output" && test "$(cat "$WS/cold-full.output")" = ok; then
+    printf 'PASS\n' > "$WS/cold-full.status"
+  else printf 'FAIL\n' > "$WS/cold-full.status"; fi
+) &
+printf '%s\n' "$!" > "$WS/cold-full.pid"
+SH
+then NEXT=ACCEPT; ACCEPT_TARGET=forward; export ACCEPT_TARGET; else NEXT=RECOVERY; printf '%s\n' 'STOP CAS/recreate failure: route B; never infer candidate did not run.'; fi
+```
+Recheck tag/immutable IDs immediately before recreate; INPUT_SUMS must bind final
+image provenance. A failed recreate is NOT proof no candidate ever executed.
+
+6 — ONE ACCEPTANCE CONTRACT, FORWARD OR OLD-IMAGE RECOVERY
+Set the target explicitly. Forward uses NEW_IMAGE/schema-after-candidate.json/forward
+and READY_SECONDS; all4newindexes and the full exact structure remain mandatory.
+After B use OLD_IMAGE/rollback-schema.json/rollback and ROLLBACK_SECONDS. Annex R
+freezes this observed reference AFTER stopped/no-writer proof and BEFORE journal/start.
+It allows ONLY all exact pinned baseline objects plus0-4exact clean index additions;
+with NOcandidateattempt it must equal exactbefore. Old ready/stable must equal the
+frozen schema bound to OLD_IMAGE/window/current attempt-marker SHA. Wrong/missing
+baseline, unknown/incorrect DDL or changed reference/attempt fails. No migration/restore.
+```sh
+case "$ACCEPT_TARGET" in
+  forward) ACCEPT_IMAGE=$NEW_IMAGE; ACCEPT_SCHEMA_FILE=schema-after-candidate.json; ACCEPT_LABEL=forward; ACCEPT_SECONDS=$READY_SECONDS ;;
+  rollback) ACCEPT_IMAGE=$OLD_IMAGE; ACCEPT_LABEL=rollback; ACCEPT_SECONDS=$ROLLBACK_SECONDS; ACCEPT_SCHEMA_FILE=rollback-schema.json ;;
+  *) NEXT=RECOVERY; printf '%s\n' 'STOP: no accepted forward/rollback target.' ;;
+esac
+export ACCEPT_IMAGE ACCEPT_SCHEMA_FILE ACCEPT_LABEL ACCEPT_SECONDS
+if test "$NEXT" = ACCEPT && bash -eu <<'SH'
+set +x
+set -a; . /mnt/user/appdata/cpa-home/.env; set +a
+export MANAGEMENT_PASSWORD
+export READINESS_DEADLINE=$(($(date +%s)+ACCEPT_SECONDS))
+while :; do
+  REMAINING=$((READINESS_DEADLINE-$(date +%s)))
+  test "$REMAINING" -gt 0 || exit 1
+  if timeout --signal=KILL "$REMAINING" bash -eu -c 'verify_home ready'; then
+    test "$(date +%s)" -lt "$READINESS_DEADLINE" || exit 1
+    break
+  fi
+  test "$(date +%s)" -lt "$READINESS_DEADLINE" || exit 1
+  # Crash loops/paused/foreign image are NOT tolerated until a timeout; inspect and route B.
+  test "$(docker inspect cpa-home --format '{{.RestartCount}} {{.State.Paused}}')" = '0 false' || exit 1
+  sleep 5
+done
+SH
+then NEXT=NATIVE; else NEXT=RECOVERY; printf '%s\n' 'STOP readiness: route B/C; locks remain owned.'; fi
+```
+6a — In the SECOND LOCAL laptop terminal, paste Annex N's exact invocation.
+Use the existing absolute Ark ready-$ACCEPT_LABEL.json path printed by the Ark
+shell, and the same forward/rollback label. No new flags. Own keys stay on-box.
+Leave both ownership shells open. Do NOT rerun ready or overwrite the boundary.
+The helper itself rechecks the same IDs/container/image/node artifact inventory
+and exact usage joins after60s. N1 helperSHAc343b6b7...4d9423f; tests13synthetic
+PASS; earlier N1 review covers prior bytes; new answer-validation review pending. Final ops review/live forward/rollback PENDING.
+
+6b — Back in the ORIGINAL ARK shell, consume the actual result, not a bare ok:
+```sh
+if test "$NEXT" = NATIVE && bash -eu <<'SH'
+set +x
+set -a; . /mnt/user/appdata/cpa-home/.env; set +a
+export MANAGEMENT_PASSWORD
+verify_native
+verify_home stable # separate ALL-account/key/parent-group/config/history/schema/full-panel gate
+if test "$ACCEPT_LABEL" = forward; then
+  END=$(($(date +%s)+1800))
+  while :; do
+    DONE=1
+    for CHECK in quick sha full; do
+      STATUS=$(cat "$WS/cold-$CHECK.status" 2>/dev/null || true)
+      case "$STATUS" in PASS) ;; '') DONE=0 ;; *) exit 1 ;; esac
+    done
+    test "$DONE" = 0 || break
+    test "$(date +%s)" -lt "$END" || exit 1
+    sleep 5
+  done
+else
+  # Failed/partial COLD never counts; keep HOT and prior verified backup.
+  hot_backup verify # SAME actual retained-disaster-copy contract; no cold PASS substitution
+fi
+SH
+then NEXT=RESTORE; else NEXT=RECOVERY; printf '%s\n' 'STOP native/preservation/backup: route B/C; locks remain owned.'; fi
+```
+Request responses/logs save only status, latency and IDs; six-character credential
+label at most, never full email/raw errors/tokens. The actual native interface
+and strict result verifier are in Annex N; final operational review/live output remain
+PENDING on BOTH forward and rollback. No invented X-CPA-VERSION request header.
+All six key scopes are preserved, NOT all six live-probed. READY900s and old
+ROLLBACK600s include readiness retries/fullpanel, but are planning caps, not measured
+end-to-end limits. Native60s and coldquick/SHA/FULL are separate mandatory acceptance;
+1800s verification bounds are NOToutage promises. Coordinator announces total/failure
+budget, potentially25min+stopoverhead. No1.1.10startup measured or imagebuilt.
+
+7 — RECOVERY B: FENCE WRITERS AND START OLD ON CURRENT DB ONLY
+Choose B for stopped-old, backup/CAS failures, zero-container recreate failure or
+any possible candidate execution. If old still running unchanged BEFORE stop, use
+A below instead. Run only under still-owned locks. This block never resumes a
+candidate AFTER the fresh journal check. Unknown writer = stopped escalation.
+Paste **Annex R** from the companion runbook now. It is the exact checked
+block (not an external helper/controller); the NEXT latch is evaluated in this
+held shell. Do not paste the next forward block after a failure.
+AnnexR success sets ACCEPT_TARGET=rollback. Section6 then selects OLD_IMAGE,
+ROLLBACK_SECONDS and the exact frozen observed rollback-schema.json, never a
+NEW_IMAGE/all4 assumption for an interrupted old-image recovery. All panels,
+all21UNDELETEDDBaccounts/6undeletedkeyscopes and ALLhistoricalrows/parents,
+exact awake nodes, native usage and SAME60s required. DBcounts22total/21undeletedauth,
+11/6keys,7/2channelparents,1/0modelparents. /credentials intentionally returns20OAuth
+rows. expected-inventory UUIDs are ONLY21undeleted; stablehash coversALL22authrows
+includingdeleted_at. Never force21REST rows or read rotating grant metadata.
+Cold backup failure: keep failed copy out of verified retention; old acceptance
+uses the already FULL-verified HOT disaster copy, not a nonexistent cold PASS.
+The SAME Annex D hot_backup verify enforces this rollback backup distinction.
+C: do NOT keep retrying old. If journal unknown/nonempty or candidate safety is
+unproven, remain stopped, retain locks, use independent direct recovery and
+escalate. There is NO unattended/new-image recovery command in this draft.
+
+A — POLICY-ONLY ABORT BEFORE STOP (NO OLD START)
+If policy-before.json does not exist, this manual never authorized a policy PUT:
+no restore write; verify original policy/patches=false and leave old serving.
+Otherwise positively check unchanged old before selecting section6/restore:
+```sh
+if test "$NEXT" = RECOVERY && bash -eu <<'SH'
+set +x
+set -a; . /mnt/user/appdata/cpa-home/.env; set +a
+export MANAGEMENT_PASSWORD
+python3 -I - <<'PY'
+import os,json,pathlib,subprocess
+p=pathlib.Path(os.environ['WS']);old=json.loads((p/'old-runtime.json').read_text())
+assert not (p/'outage-start').exists() and not (p/'candidate-may-have-run').exists()
+v=json.loads(subprocess.check_output(['docker','inspect','cpa-home'],text=True))[0]
+assert v['Id']==old['id'] and v['Image']==os.environ['OLD_IMAGE'] and v['State']['StartedAt']==old['started_at']
+assert v['State']['Running'] and not v['State']['Paused'] and not v['State'].get('Restarting') and v['RestartCount']==0
+PY
+test -f "$WS/policy-before.json"
+SH
+then NEXT=RESTORE; ACCEPT_LABEL=abort-old; export ACCEPT_LABEL; else NEXT=RECOVERY; printf '%s\n' 'Abort unverified: retain ownership; inspect actual old/policy state, no fallthrough.'; fi
+```
+This route does not start/recreate anything and does not claim new-image native
+acceptance. Unchanged image/id/start plus no outage/candidate-attempt proves this
+was policy-only. Restore below accepts saved OR paused policy, including when
+pause/baseline failed. Any stopped-old route MUST use B plus full acceptance.
+
+8 — RESTORE POLICY ONLY AFTER VERIFIED ACCEPTANCE/ABORT; THEN RELEASE
+Except unchanged pre-stop abort, the final native helper's real verified result must bind target image/container,
+ready boundary, exact awake IDs, native usage joins and >=60s. Annex S repeats
+Annex N's strict verifier and the separate protected-state/full-panel check.
+No hand-written {ok:true} file can authorize this step.
+Paste **Annex S** from the companion runbook now. It is the exact checked
+block (not an external helper/controller); the NEXT latch is evaluated in this
+held shell. Do not paste the next forward block after a failure.
+After acceptance only: retain TWO newest FULL-integrity+SHA verified DB versions
+TOTAL across canonical/cache data/backups ANDrawdisk18 (do NOTdoublecount
+/useralias), all operation names (expected HOT+COLD if both pass), pluschecksums. A quick-only,
+partial or failed-full copy never counts. Inventory exact timestamps/provenance,
+bytes/checksums and explicit superseded DB/-wal/-shm/log/checksum paths before
+pruning; exact inventory/remove list PENDING operator. Cold full failure retains
+HOT disaster copy and prior verified version; never restore either over live auth.
+Clean only owned rehearsal/partial files after writers exit. Then lead releases
+its four parent holds normally, reads back lock status, sends all-clear. Until
+policy/restoration/cleanup are verified, do not exit either ownership shell.
+
+VERIFIED DATA — LOCAL PACKET INTEGRATION, NOT A NEW EXECUTION
+Branchws-0054-home119-window, tool-only HEADc0e872f; APPLICATIONsource
+7091c86b562063b5c401f63d6d04c8c4f70658a2. Full36packagesexit0; originalfocused143
+TOP-levelPASS+2TOP-level/5nestedPGskips remain onrecord. SeparatePG89/0skips plus
+2journalparentgroups/ALLnestedPASS/0ALLskips cover omitted branches. Nonverbose
+full does NOTprove no skips. RawfocusedSHA bfa4dc2709ceca4d6164c2995ac5ce54ca8ef82ef5b237f0bda95aa387d166ec;
+normalized10a5hash differs by7CRbytes: INPUT_SUMS MUSTuse RAWbytes.
+NestedPGJSON SHA0f8c5679...e8c78ce0c1f5/rawlog3ac28ef1...fe012aa46; fullpins Annex D.
+Sourcearchive ef1cd0019c9bcb256d3abe0cd7ba1f951b530894a694d23c870d97c74a32412d
+independently matches leadgitarchive7091. Whole model4a52db3f...37bd0e9, fullpanel
+00746734...186c7cab/tree5fe4b7d3...75f6b67 are DECLAREDseparate buildinputs.
+Fullclone first management333.87s/node336.02s; warm0.67/2.90; old0.67/0.68 and
+reupgrade0.66/0.67 are management-reopen probes ONLY, not oldnative/RESPacceptance.
+First+second1058HTTPassets/plaintextRESPrefusal/mTLSconfig/subscriptionheartbeatPASS.
+RootRO/64MiBtmp/networknone/bothTMPvarsdata; firstWAL1,256,212,752B/temp
+1,221,992,619B ondata; second86,552B/0. Peaks sampled0.1s, not absolute bounds.
+ConcurrentseedFULL['ok']/exit0/792.66s. Final8tablepreservation includes ALL22/11
+historicalauth/keys and ALLparentrows. Declared CLONEONLYexclusions: next_refresh_after
+column+auth_json.next_refresh_after, config.plugins; fleet disabled/catalogoff,
+syntheticpassword/CA/enrollment/localIP, nooutboundnetwork. Pluginstate was NOTfull-e2e
+tested; LIVEfullconfig remains STRICT, no cloneexclusions permitted there.
+Schema272→276exact:4/4strictcleanhistorical-layoutSQL/xinfo match; after+oldbyteequal.
+Sanitized durable evidence: docs/fleet/ws-0054-rehearsal.json; raw hashes Annex D.
+Operator finalcleanupreceipt SHA9ae905f4...1b590ae confirmed bylead: ownDBs/sidecars/
+configs/keys/containers/processes removed; image/inputs/sanitizedproofs retained.
+This is rehearsal cleanup, NOTfuturewindowretention/lockrelease/allclear.
+Tonight ONLYexact7091image; fleetc2980cf/PR47scheduler/PR44auto979 EXCLUDED.
+Later mergedPRsource is distinct from tonight's tested image. Draft PR48 is open:
+https://github.com/chansearrington/CLIProxyAPIHome/pull/48 . Lead-observed initial
+head3d58ec8578fc389444c44df0fb36e99026c3ab1e checks PASSED06:07:31Z,
+buildrun44469189486. Later docs head needs freshCI. Merge-context newerfleet
+DOES NOT replace exact7091 Ark/image proof.
+Earlier billingblock was historical. HostedURL/final docs integration PENDING.
+
+OPEN DEPLOYMENT GATES: focused HOT integration review and fresh ACTUALbackup
+BEFOREnotice. Frozen D1+IO APPROVED; prior M1/M2 retained. Carry approval only
+with exact protected-source/AST/IO-exclusion checks plus bounded HOT-only delta.
+Required remaining gates:
+INPUT_SUMS+expected/awake/nodephysical inventories creation/validation/staging,
+freshrecovery+locks+announcement; futurecutover/acceptance/retention.
+IO advisory receipt is informational only, never a deployment safety gate.
+Frozen D1+NEW Annex I/caller/IO-only staging narrow review APPROVED; no third
+whole-manual review. Their source bytes/exclusions and prior M1/M2 remain unchanged.
+HOT source d9b4065f and tinyLinux unit APPROVED; prospective shared caller/consumer
+replaces both false placeholders. Focused integration review and ACTUAL HOT remain
+required; no actual backup/performance/deployment approval.
+Native/IO/app7091source approvals retained; no newmanual/controller or deploymentapproval.

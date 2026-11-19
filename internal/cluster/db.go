@@ -156,7 +156,7 @@ func AutoMigrateContext(ctx context.Context, db *gorm.DB) error {
 	}
 	ctx = contextOrBackground(ctx)
 	if db.Dialector.Name() == "postgres" {
-		return autoMigratePostgresContext(ctx, db, false, nil)
+		return autoMigratePostgresContext(ctx, db, true, nil)
 	}
 
 	startedAt := time.Now()
@@ -184,11 +184,18 @@ func autoMigratePostgresContext(ctx context.Context, db *gorm.DB, runWhenCurrent
 		schemaMigrationPollInterval,
 		schemaMigrationWaitTimeout,
 		runWhenCurrent,
-		postgresSchemaMigrationOperations(db, startedAt, ctx, func(lockedCtx context.Context, tx *gorm.DB, _ int64, requiredVersion int64) error {
+		postgresSchemaMigrationOperations(db, startedAt, ctx, func(lockedCtx context.Context, tx *gorm.DB, currentVersion int64, requiredVersion int64) error {
 			lockedDB := tx.WithContext(lockedCtx)
 			// Acquire the binding lock before schema/row locks to match live API key writes.
 			if errLock := lockAPIKeyMutationTransaction(lockedDB); errLock != nil {
 				return errLock
+			}
+			// Additive fleet indexes and late legacy writes need the lock, not full schema DDL.
+			if currentVersion == requiredVersion && afterSchema == nil {
+				if errBaseAmounts := migrateBillingBaseAmounts(lockedDB); errBaseAmounts != nil {
+					return errBaseAmounts
+				}
+				return migrateUsageServiceTiers(lockedDB)
 			}
 			if errSchema := autoMigrateSchema(lockedDB); errSchema != nil {
 				return errSchema
@@ -479,6 +486,19 @@ func migrateUsageObservabilityIndexes(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_usage_home_port_time ON "usage" ("home_ip", "home_port", "timestamp" DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_quota_activity ON "usage" ("quota_credential_id", "quota_identity_version", "quota_identity_key", "created_at" DESC) WHERE "quota_credential_id" <> '' AND "quota_identity_version" > 0 AND "quota_identity_key" <> ''`,
 	}
+	if db.Dialector.Name() == "sqlite" {
+		// Cover dashboard scans without reading payload-heavy usage rows; retain time/id order for floating-point sums.
+		const dashboardColumns = `"provider", "model", "auth_index", "auth_type", "home_ip", "endpoint", "executor_type",
+			"failed", "fail_status_code", "upstream_status_code", "latency_ms", "ttft_ms", "api_key",
+			"input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "cache_read_tokens", "cache_read_tokens_present",
+			"cache_creation_tokens", "total_tokens", "token_accounting_version", "token_accounting_quality",
+			"accounting_total_tokens", "accounting_input_tokens", "uncached_input_tokens", "accounting_cache_read_tokens",
+			"accounting_cache_write_tokens", "accounting_output_tokens", "non_reasoning_output_tokens", "accounting_reasoning_tokens", "unclassified_tokens"`
+		statements = append(statements,
+			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_time_v1 ON "usage" ("timestamp" DESC, "id", `+dashboardColumns+`)`,
+			`CREATE INDEX IF NOT EXISTS idx_usage_dashboard_provider_time_v1 ON "usage" (LOWER("provider"), "timestamp" DESC, "id", `+dashboardColumns+`)`,
+		)
+	}
 	for index, statement := range statements {
 		// Retain the verified equivalent fleet index without a redundant full-table build.
 		if index == 0 && legacyPendingIndex {
@@ -738,16 +758,28 @@ func migrateUsageServiceTiers(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("database connection is nil")
 	}
+	const predicate = "service_tier IS NULL OR TRIM(service_tier) = ''"
+	// A sparse index also catches legacy rows inserted or changed after the first repair.
+	if errIndex := db.Exec(`CREATE INDEX IF NOT EXISTS idx_usage_service_tier_pending_v1 ON "usage" (id) WHERE ` + predicate).Error; errIndex != nil {
+		return errIndex
+	}
+	var pending bool
+	if errPending := db.Raw(`SELECT EXISTS (SELECT 1 FROM "usage" WHERE ` + predicate + ` LIMIT 1)`).Scan(&pending).Error; errPending != nil {
+		return errPending
+	}
+	if !pending {
+		return nil
+	}
 	if db.Migrator().HasColumn(&UsageRecord{}, "request_service_tier") {
 		return db.Exec(`UPDATE "usage"
 			SET "service_tier" = CASE
 				WHEN TRIM(COALESCE("request_service_tier", '')) <> '' THEN "request_service_tier"
 				ELSE ?
 			END
-			WHERE "service_tier" IS NULL OR TRIM("service_tier") = ''`, defaultUsageServiceTier).Error
+			WHERE `+predicate, defaultUsageServiceTier).Error
 	}
 	return db.Model(&UsageRecord{}).
-		Where("service_tier IS NULL OR TRIM(service_tier) = ''").
+		Where(predicate).
 		Update("service_tier", defaultUsageServiceTier).Error
 }
 

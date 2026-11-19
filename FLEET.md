@@ -55,8 +55,8 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- Nodes run CPA **8.0.64** on all five machines (verified native requests, running-process
-  banners and artifact hashes on 2026-11-10; ws-0047). On CPA ≤ 8.0.4, adding a new
+- Nodes run CPA **8.0.69** on all five machines (running binary SHA-256 `e2d9d0cc…69967138` read on each
+  machine and native Claude/GPT 6.2 requests through every node on 2026-11-19; ws-0054). On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
@@ -88,6 +88,56 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   `/mnt/user/appdata/cpa-home/data/backups/home-pre-pending-token-index-20261007T021207Z.db`,
   3,461,537,792 bytes, full integrity check `ok`, SHA-256
   `595c33ef8bb1baec302286c5719d035120f2a7d3da5a48e9cff4572c4987fc97`.
+
+## Whole-day usage reporting indexes (ws-0051, deployed 2026-11-19 in ws-0054)
+
+- The SQLite-only migration adds `idx_usage_dashboard_time_v1` and
+  `idx_usage_dashboard_provider_time_v1`, covering aggregate fields in timestamp-descending,
+  ID-ascending order. On the verified November 10 backup (3,050,397 usage rows), a whole
+  November 8 day took **1.36–4.81 s** across all nine groupings and no/Codex/Claude provider
+  filters, versus **3.34–15.21 s** before. Complete response fingerprints matched in all
+  27 cases; all 34 non-null amounts in model/provider/credential groups also matched bit-for-bit.
+- Identical column/order definitions took **175–240 s** to build in two runs, with approximately
+  **889 MiB** peak sort temporary space and **1.74 GiB** permanent index space. The review
+  added `_v1` to the names only; it did not change the measured column/order definitions.
+  Every inserted or updated usage row now also maintains two wide indexes: extra disk space
+  and write work are deliberate costs, not free acceleration. Current production is larger
+  than this backup; these timings and space figures are not upper bounds.
+- For ws-0054, build missing indexes only during stopped-Home startup inside the approved,
+  announced outage, under all four fleet locks with fleet policy paused and independent direct
+  recovery available. Never pre-build them on the running production writer during preparation.
+  `CREATE INDEX` blocks SQLite writes, including ingestion and liveness; include the measured
+  current-copy first-build time in the announced outage budget. Set both `SQLITE_TMPDIR` and
+  `TMPDIR` to the data volume, never the production container's small `/tmp`, and reserve
+  substantially more than the measured sort peak plus permanent growth. Compare complete
+  `sqlite_master` definitions and `PRAGMA index_xinfo` against a freshly migrated isolated
+  database. Names alone are not a definition check. With both definitions already present,
+  the earlier measured migration was a **1.9 ms** no-op; that is not a first-build estimate.
+- Rollback, only as an approved maintenance action, is
+  `DROP INDEX IF EXISTS idx_usage_dashboard_time_v1;` and
+  `DROP INDEX IF EXISTS idx_usage_dashboard_provider_time_v1;`. This restores the old query
+  plans, not a fast whole-day query. A binary containing this migration recreates missing
+  indexes at its next startup; coordinate any drop with the intended image/startup plan.
+- This change does **not** claim to fix the 24-hour overview, health last-error lookups or the
+  usage-record list. The all-provider overview improved from 42.40 s to 17.50 s but remains
+  above the unchanged 10 s request budget. No production change occurred in ws-0051.
+  See the [private evidence and maintenance review page](https://agents.thebearingtons.com/inbox/a/Eb56Hfumrq)
+  (source: `docs/fleet/ws-0051-usage-aggregate-day.html`).
+
+## Home 1.1.9 fallback source (ws-0054, deployed 2026-11-19 as `7091c86`)
+
+The fallback retains the approved fleet baseline `945907b` (including PR #43's locked
+status-toggle save and PR #45's model-alert scripts) plus PR #36 covering indexes and
+PR #38 sparse legacy-row guards on the deployed 1.1.9 engine. A concurrent credential deletion
+during a status toggle now reports an error instead of a silent success. Source and portable
+snapshots remain **version 17**;
+version 18 belongs to upstream's later dedupe schema and must not label this fallback.
+The existing version-16/17 snapshot mappings and fenced Codex refresh runtime are unchanged.
+SQLite installs the additive indexes idempotently at startup. Already-current PostgreSQL
+17 installs the sparse indexes and repairs late legacy writes under the existing migration
+and API-binding locks, without running full schema DDL. No Home 1.1.10, dedupe, Guardian
+or refresh-engine integration is included. Deployed and accepted on 2026-11-19; see the November 19 section below.
+The pre-existing deployed runtime's credential-reload fencing gap is not fixed by these indexes.
 
 ## Account additions
 
@@ -341,8 +391,8 @@ Nov 13 empty-503 bursts). Accepted 2026-11-13 19:47 CT with no rollback. Image-o
 - **Node auto-patch updates are OFF** (`patch_updates=false`, Chanse 2026-11-13). Upgrades must be
   scheduled and announced in advance, not silent. Catalog sync stays on hourly. Do not turn patch
   updates back on until the scheduled-upgrade work (ws-0050) ships.
-- **A Home restart takes about 5.5 minutes**, because two startup backfills scan whole tables even when
-  they have nothing to change. Plan any restart's announced outage around that until it is fixed.
+- ~~A Home restart takes about 5.5 minutes~~ Fixed by ws-0054 (2026-11-19): a restart now reaches
+  "schema migration completed" in about 1 s. Only the first start of a new index build is slow.
 - **Independent recovery route:** `~/.cpa-recovery/claude-direct` on the MacBook starts Claude Code
   straight to Anthropic, using a healthy Home account's current access token read over SSH. It works
   with Home down and never reads a refresh token.
@@ -372,3 +422,30 @@ same day: Home lists both, and all five nodes list them and returned 200 for one
 **Reverted the same day (16:36 CT):** upstream added both models, so the override was removed with
 `DELETE /v8/management/config/models`. Home again follows the official list; Home and all four minis still list
 both models and served `gpt-6.2-sol`. The fork `chansearrington/models` is no longer referenced by Home.
+
+## November 19 Home upgrade (ws-0054)
+
+Home is **`cpa-home:1.1.9-claude-fleet-7091c86`** (immutable image `43bac183…cf35bf8`): the ws-0048 line
+plus PR #36 (whole-day usage indexes), corrected PR #38 (sparse indexes; the two startup backfills no longer
+rescan whole tables) and PR #43 (status toggle can no longer silently drop a disable). Schema stays 17.
+Nodes stay on CPA 8.0.69. Image-only rollback target: `cpa-home:1.1.9-claude-fleet-13860b9` (`0a4c3a7c…`).
+
+- **First start builds four indexes** on the 46 GB database: 8.5 min (10:48–10:56 CT). Later restarts take
+  about 1 s to finish migrations.
+- **Outage was 10:48–10:56 CT as planned, then 11:03–11:45 CT by mistake.** The readiness check compared the
+  new container with the deleted old one and failed a healthy Home; the automatic rollback stopped it and then
+  refused to start the old image because `binhex-krusader` (`/mnt`) and `claude-code` (`/`) have broad writable
+  host mounts. Chanse started the container by hand at 11:45. Both checks are fixed in the manual (PR #48).
+- **Accepted after recovery:** exact reviewed schema with all four indexes; every account, key, setting and
+  history row matched the pre-upgrade snapshot; all 1,058 panel files byte-identical; all five nodes healthy
+  with Copilot loaded; native Claude Haiku and GPT 6.2 Sol requests through all five nodes joined to usage,
+  60 s stable. Fleet policy restored exactly; `patch_updates` stays false; restart policy `unless-stopped`.
+- **Backups (two newest verified):** HOT `/mnt/disk18/cpa-home-disaster-backups/ws0054-hot-20261119T154551Z/`
+  (46,233,739,264 B, FULL integrity ok, SHA matched on both devices) and COLD
+  `data/backups/home-cold-ws0054-20261119T164721Z.db` (quick, SHA and FULL integrity PASS). The Nov 6 and
+  Nov 10 snapshots were removed under the two-version rule.
+- The Claude Code model menu on all five machines now lists only 1M-context options and adds GPT 6.2 Sol
+  (Medium/High) and GPT 6.2 Astra High at `[1m]` (Chanse). Home's listed context sizes (272K/500K) are
+  catalog labels, not limits; `[1m]` in the session model sets the window.
+
+Record: [ws-0054 deploy record](docs/fleet/ws-0054-home-7091c86-deploy.md).
