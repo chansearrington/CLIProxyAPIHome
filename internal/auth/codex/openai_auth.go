@@ -97,7 +97,16 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 		key = fmt.Sprintf("%p:%s", journal, key)
 	}
 	var ownsRefresh atomic.Bool
-	resultCh := codexRefreshGroup.DoChan(key, func() (any, error) {
+	resultCh := codexRefreshGroup.DoChan(key, func() (value any, errRefresh error) {
+		defer func() {
+			if recover() != nil {
+				value, errRefresh = nil, NewRefreshOutcomeUnknownError(ClientID, refreshToken, "transport", nil)
+				if journal == nil {
+					rememberRefreshOutcome(errRefresh)
+				}
+				log.WithField("grant_sha256_prefix", refreshGrantFingerprint(ClientID, refreshToken)[:6]).Error("codex refresh panic recovered; grant remains fenced")
+			}
+		}()
 		ownsRefresh.Store(true)
 		if journal != nil {
 			return journalRefresh(ctx, journal, refreshToken, func() (*CodexTokenData, error) {
