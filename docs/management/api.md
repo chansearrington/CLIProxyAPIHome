@@ -4961,7 +4961,13 @@ release never changes an announced artifact; it needs its own scheduled notice/w
 the current required rollout completes. Pending older optional windows may be superseded
 with a `postponed` notice when a newer required target is scheduled.
 
-Home POSTs this plain JSON object to `announcement_url` (no Management key is sent):
+Home POSTs this plain JSON object to `announcement_url` (no Management key is sent).
+When Home's `FLEET_ANNOUNCE_TOKEN` environment variable is configured, it adds
+`Authorization: Bearer <token>` to this request only. Supply a separate high-entropy secret
+privately to Home and the receiver; never embed it in the URL, policy or payload. When unset,
+no Authorization header is sent, preserving existing hook compatibility. Redirects are never
+followed, including for authenticated requests:
+
 
 ```json
 {
@@ -4990,17 +4996,24 @@ the JSON body). Payloads contain the four base fields above plus optional `reaso
 `failed_nodes`, never credentials or provider response text. Delivery failures log only phase
 and HTTP status, not endpoint paths, queries or error bodies. Ordinary notices are capped at
 20 and expire after 24 hours; history records expiry/capping. `done`, `rollback`, `rolled_back`
-and `rollback_failed` are never dropped on 4xx, expiry or capping: they retry indefinitely with
-backoff capped at one hour, outside the ordinary-notice limit. Unacknowledged gating notices
-regenerate safely. A permanently rejected 4xx notice fails that window and triggers
-re-announcement instead of leaving an obsolete receipt at the head of the queue forever.
+and `rollback_failed` are not dropped on expiry or capping: temporary failures retry indefinitely
+with backoff capped at one hour, outside the ordinary-notice limit. HTTP 408 and 429 remain
+temporary. Every other 4xx permanently discards only the rejected notice and records an
+`announcement` history event with status `rejected_<phase>`; delivery rejection never changes
+a rollback outcome to `rollback_failed`. Unacknowledged gating notices regenerate safely:
+a rejected scheduled/reminder/started notice postpones only its own window and triggers
+re-announcement. Rejection of an old ordinary receipt never reschedules other windows.
+A permanently rejected rollback announcement sets the persisted rollout field
+`rollback_notice_rejected`, not `rollback_announced`; neither maintenance nor worker planning
+regenerates it. Each new rollback resets this rejection marker.
 
 New dispatch requires successful `scheduled` delivery at least one hour before the window,
 plus successful `reminder` and `started` delivery. Missing or failed delivery blocks upgrades;
 a failed gating notice postpones to a newly announced next-night window. Delayed delivery
 that leaves less than one hour also reschedules. Completion notices remain queued until
-accepted; no following upgrade dispatches while a notice remains queued. Reverse rollback
-waits up to 15 minutes for its announcement, then proceeds for safety while continuing retries.
+accepted or permanently rejected and audited; no following upgrade dispatches while a notice remains queued. Reverse rollback
+waits up to 15 minutes for its announcement, then proceeds for safety while continuing retries
+for temporary failures only; permanent rejection does not shorten that wait.
 Reconciliation of already running work remains available. Catalog reconciliation continues normally while
 waiting for a patch window; one window may bundle the pinned CPA patch with existing catalog
 work. Home image upgrades remain manual, outside this API.

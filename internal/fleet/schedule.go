@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"slices"
 	"time"
 	_ "time/tzdata"
 
@@ -206,6 +208,9 @@ func pruneNotices(st *State, now time.Time) {
 
 func queueRollback(st *State, now time.Time) {
 	run := st.Rollout
+	if run.RollbackNoticeRejected {
+		return
+	}
 	if run.RollbackStartedAt.IsZero() {
 		run.RollbackStartedAt = now
 	}
@@ -401,6 +406,9 @@ func postAnnouncement(ctx context.Context, endpoint string, notice Notice) error
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", notice.ID)
+	if token := os.Getenv("FLEET_ANNOUNCE_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, errResponse := client.Do(req)
 	if errResponse != nil {
@@ -469,6 +477,14 @@ func (s *Service) deliverNotice(ctx context.Context) error {
 			}
 			st.NoticeRetryAt = now.Add(delay)
 			permanent := status >= 400 && status < 500 && status != 408 && status != 429
+			if permanent {
+				st.Notices = st.Notices[1:]
+				st.NoticeRetryAt = time.Time{}
+				if notice.Phase == "rollback" && st.Rollout != nil && st.Rollout.Phase == "rollback" && st.Rollout.Release.Version == notice.TargetVersion && slices.Equal(st.Rollout.RollbackNodes, notice.Nodes) {
+					st.Rollout.RollbackNoticeRejected = true
+				}
+				addEvent(st, now, "", "announcement", "rejected_"+notice.Phase, notice.TargetVersion)
+			}
 			if w != nil && !w.Closed && (notice.Phase == "scheduled" || notice.Phase == "reminder" || notice.Phase == "started") {
 				if !w.DeliveryFailed {
 					start := windowTime(st, w, now.Add(noticeLead))
@@ -477,20 +493,6 @@ func (s *Service) deliverNotice(ctx context.Context) error {
 					}
 					reschedule(st, w, notice.TargetVersion, now, start)
 					w.DeliveryFailed = true
-				}
-			} else if permanent && !importantNotice(notice.Phase) {
-				// An obsolete/rejected receipt must not block the current window forever.
-				st.Notices = st.Notices[1:]
-				if st.Rollout != nil {
-					for _, pending := range windows(st.Rollout) {
-						if !pending.Closed && !pending.AnnouncedAt.IsZero() {
-							start := windowTime(st, pending, now.Add(noticeLead))
-							if !start.After(pending.WindowStart) {
-								start = windowTime(st, pending, pending.WindowStart.Add(time.Second))
-							}
-							reschedule(st, pending, st.Rollout.Release.Version, now, start)
-						}
-					}
 				}
 			}
 			return nil

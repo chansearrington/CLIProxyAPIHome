@@ -141,7 +141,7 @@ func TestHookChangesAndMaskedRoundTripPreservePostponement(t *testing.T) {
 	}
 }
 
-func TestImportantNoticesSurvive4xxExpiryAndQueueCap(t *testing.T) {
+func TestImportantNoticesSurviveTransientFailureExpiryAndQueueCap(t *testing.T) {
 	s, store := fixture(t)
 	phases := []string{"done", "rolled_back", "rollback", "rollback_failed"}
 	if errChange := s.change(context.Background(), func(st *State, now time.Time) error {
@@ -159,14 +159,14 @@ func TestImportantNoticesSurvive4xxExpiryAndQueueCap(t *testing.T) {
 	if len(st.Notices) != maxNotices+len(phases) {
 		t.Fatal("queue cap discarded important notice")
 	}
-	s.Announce = func(context.Context, string, Notice) error { return &announcementError{Status: 400} }
+	s.Announce = func(context.Context, string, Notice) error { return &announcementError{Status: 503} }
 	for i := 0; i < 8; i++ {
 		if errDeliver := s.deliverNotice(context.Background()); errDeliver != nil {
 			t.Fatal(errDeliver)
 		}
 		st, _ = s.Status(context.Background())
 		if st.Notices[0].Phase != "done" || st.NoticeRetryAt.Sub(store.now) > time.Hour {
-			t.Fatal("important 4xx notice dropped or backoff unbounded")
+			t.Fatal("important transiently failed notice dropped or backoff unbounded")
 		}
 		store.now = st.NoticeRetryAt
 	}
@@ -184,7 +184,7 @@ func TestRollbackProceedsAfterFifteenMinuteNoticeOutageAndKeepsNotice(t *testing
 	ready(t, s, "8.0.29")
 	setRelease(t, s, "8.0.30")
 	a, _ := s.Plan(context.Background(), testIDs[0], inv("8.0.29"))
-	s.Announce = func(context.Context, string, Notice) error { return &announcementError{Status: 400} }
+	s.Announce = func(context.Context, string, Notice) error { return &announcementError{Status: 503} }
 	if errReport := s.Report(context.Background(), testIDs[0], Result{ID: a.Job.ID, Token: a.Job.Token, Status: "failed", Error: "fake_failure"}); errReport != nil {
 		t.Fatal(errReport)
 	}
