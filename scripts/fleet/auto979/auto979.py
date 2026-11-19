@@ -355,12 +355,15 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
         require(len(exclusions) <= 2, "too_many_accounts_without_weekly_reset")
         wanted = compute(rows, quotas, cfg, now)
         current = state_of(rows, quotas, previous)
+        rebaseline = False
         if baseline:
             age = (now - timestamp(baseline["observed_at"])).total_seconds()
             require(age >= -120, "baseline_timestamp_future")
             require(set(previous) == set(current), "state_inventory_changed")
             if age > 7200:
+                # No trustworthy comparison after a gap: observe only; the next run applies under the guard.
                 event["baseline_reason"] = "rebaseline_after_gap"
+                rebaseline = True
             else:
                 state_guard(previous, current, cfg, now)
         else:
@@ -373,7 +376,7 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
         event["weekly"] = public["weekly"]
         event["notices"] = sorted({notice for q in quotas.values() for notice in q["assumptions"]})
         event["reason"] = "order_unchanged" if wanted == live else "weekly_renewal_order_differs"
-        if mode == "apply" and wanted != live:
+        if mode == "apply" and wanted != live and not rebaseline:
             require(credentials(home, cfg) == rows, "credentials_changed_during_plan")
             wall = clock()
             require(0 <= (wall - now).total_seconds() <= 120, "plan_expired")

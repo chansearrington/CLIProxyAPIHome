@@ -44,7 +44,12 @@ def migrate(source, job=a.JOB):
              '    _979_sys.exit("ABORT: auto979 lock unavailable")\n'
              'if _979_pathlib.Path(' + repr(str(job / "979-STOP.json")) + ').exists():\n'
              '    _979_sys.exit("ABORT: auto979 STOP requires operator reconciliation")\n\n')
+    # Keep a shebang/encoding header first so the migrated script still runs directly.
     offset = 0
+    for header in migrated.splitlines()[:2]:
+        if not header.startswith("#"):
+            break
+        offset += 1
     for item in tree.body:
         if ((isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str))
                 or (isinstance(item, ast.ImportFrom) and item.module == "__future__")):

@@ -308,6 +308,18 @@ def review_cases():
         assert run(home, folder=gapjob, now=gap) == 0
         event = json.loads((gapjob / "979-apply.jsonl").read_text().splitlines()[-1])
         assert event["baseline_reason"] == "rebaseline_after_gap"
+        # In apply mode a gap only re-baselines; writes wait for the next guarded run.
+        applyjob = root / "gap-apply"
+        a.private_dir(applyjob)
+        home = FakeHome(rows, details)
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert a.execute(home, cfg, "shadow", applyjob, backups, clock=lambda: NOW) == 0
+            for detail in home.details.values():
+                detail["generated_at"] = a.iso(gap)
+            assert a.execute(home, cfg, "apply", applyjob, backups, clock=lambda: gap) == 0
+        assert not home.writes and not (applyjob / "979-STOP.json").exists()
+        last = json.loads((applyjob / "979-apply.jsonl").read_text().splitlines()[-1])
+        assert last["baseline_reason"] == "rebaseline_after_gap" and last["readback_ok"] is None
         for path in root.rglob("*.json*"):
             assert "@" not in path.read_text(), path.name
     print("PASS reset tolerance, historical reset, two unknown slots, held/reserve without quota, outage rebaseline, no email files")
@@ -411,6 +423,8 @@ def preparation():
         a.write_json(config, small_cfg)
         assert len(a.load_config(config)["shared_ids"]) == 3
         assert a.credentials(FakeHome(small, details), small_cfg)[-1]["priority"] == 1
+    shebang, _ = prep.migrate("#!/usr/bin/env python3\n" + source)
+    assert shebang.startswith("#!/usr/bin/env python3\n") and "_979_fcntl" in shebang
     print("PASS manual v8 migration/lock/STOP, unchanged TARGET/PATCH, dynamic inventory and enabled fallback")
 
 
