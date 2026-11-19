@@ -31,14 +31,15 @@ def require(ok, reason):
 
 def timestamp(value):
     require(isinstance(value, str), "missing_timestamp")
-    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})", value)
+    match = re.fullmatch(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})", value)
     require(match is not None, "invalid_timestamp")
     date, fraction, zone = match.groups()
+    require(zone == "Z" or (int(zone[1:3]) <= 23 and int(zone[4:6]) <= 59), "invalid_timestamp")
     # Python 3.9 cannot parse Home's RFC3339Nano fractions directly.
     normalized = date + ("." + fraction[:6].ljust(6, "0") if fraction else "") + ("+00:00" if zone == "Z" else zone)
     try:
         return dt.datetime.fromisoformat(normalized).astimezone(UTC)
-    except ValueError:
+    except (ValueError, OverflowError):
         raise Unsafe("invalid_timestamp") from None
 
 
@@ -50,10 +51,10 @@ def load_config(path):
     cfg = json.loads(Path(path).read_text())
     require(set(cfg) == {"shared_ids", "reserve_id", "fallback_id", "max_state_changes", "holdouts"}, "config_keys")
     ids = cfg["shared_ids"]
-    require(isinstance(ids, list) and len(ids) == 12 and all(isinstance(i, str) and i for i in ids), "shared_ids")
-    require(len(set(ids)) == 12 and cfg["reserve_id"] in ids and isinstance(cfg["fallback_id"], str)
+    require(isinstance(ids, list) and ids and all(isinstance(i, str) and i for i in ids), "shared_ids")
+    require(len(set(ids)) == len(ids) and cfg["reserve_id"] in ids and isinstance(cfg["fallback_id"], str)
             and cfg["fallback_id"] and cfg["fallback_id"] not in ids, "config_identity")
-    require(type(cfg["max_state_changes"]) is int and 0 <= cfg["max_state_changes"] <= 12, "state_limit")
+    require(type(cfg["max_state_changes"]) is int and 0 <= cfg["max_state_changes"] <= len(ids), "state_limit")
     require(isinstance(cfg["holdouts"], list), "holdouts_type")
     seen = set()
     for hold in cfg["holdouts"]:
@@ -69,10 +70,23 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def management_password(path=Path("/mnt/user/appdata/cpa-home/.env")):
+    # Parse one setting, never execute shell expansions or retain other values.
+    with path.open() as source:
+        for line in source:
+            key, separator, value = line.strip().removeprefix("export ").partition("=")
+            if separator and key.strip() == "MANAGEMENT_PASSWORD":
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                require(bool(value), "management_password_empty")
+                return value
+    raise Unsafe("management_password_missing")
+
+
 class Home:
     def __init__(self):
-        self.secret = os.environ.get("MANAGEMENT_PASSWORD")
-        require(bool(self.secret), "management_password_not_in_environment")
+        self.secret = management_password()
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def call(self, path, body=None):
@@ -106,8 +120,8 @@ def credentials(home, cfg):
         require(isinstance(f.get("email"), str) and "@" in f["email"], "credential_identity_missing")
     require(len({f["email"].lower() for f in rows}) == len(rows), "duplicate_identity")
     fallback = next(f for f in rows if f["id"] == cfg["fallback_id"])
-    require(fallback["priority"] == 1 and fallback["disabled"], "fallback_changed")
-    require({f["priority"] for f in rows if f is not fallback} == set(range(2, 14)), "priority_slots_changed")
+    require(fallback["priority"] == 1, "fallback_changed")
+    require({f["priority"] for f in rows if f is not fallback} == set(range(2, len(expected) + 1)), "priority_slots_changed")
     # Only these fields are retained; never copy credential or configuration payloads.
     return sorted(({k: f[k] for k in ("id", "email", "priority", "disabled", "reauth_required")}
                    for f in rows), key=lambda f: -f["priority"])
@@ -117,31 +131,38 @@ def eligible(row):
     return not row["disabled"] and not row["reauth_required"]
 
 
-def weekly(home, row, now):
+def weekly(home, row, now, previous=None):
+    previous = previous or {}
     detail = home.call("/quota/credentials/" + urllib.parse.quote(row["id"], safe=""))
     require(abs((now - timestamp(detail.get("generated_at"))).total_seconds()) <= 120, "quota_response_old_or_future")
     credential = detail.get("credential", {})
     require(credential.get("credential_id") == row["id"] and credential.get("provider") == "claude", "quota_identity")
-    collection = detail.get("collection", {})
-    require(collection.get("freshness") in ("fresh", "stale"), "quota_never_observed")
-    require((now - timestamp(collection.get("observed_at"))).total_seconds() >= -120, "quota_observation_future")
     windows = detail.get("windows")
     require(isinstance(windows, list), "quota_windows_missing")
     candidates = [w for w in windows if w.get("id") == "claude-seven-day"
                   or (w.get("scope") == "account" and w.get("period_unit") == "week" and not w.get("label"))]
-    require(len(candidates) == 1, "weekly_window_ambiguous_or_missing")
-    w = candidates[0]
-    require(w.get("id") == "claude-seven-day" and w.get("scope") == "account" and not w.get("label")
-            and w.get("period_unit") == "week" and w.get("period_value") == 1
-            and w.get("unit") == "percentage" and w.get("limit") == 100, "weekly_window_shape")
-    used = w.get("used")
+    require(len(candidates) <= 1, "weekly_window_ambiguous")
+    w = candidates[0] if candidates else {}
+    raw_reset = w.get("reset_at") or previous.get("reset")
+    if not raw_reset:
+        return None  # No reset has ever been seen: caller freezes this priority slot.
+    assumptions = []
+    if not w.get("reset_at"):
+        assumptions.append("last_known_reset_from_saved_state")
+    if w:
+        require(w.get("id") == "claude-seven-day" and w.get("scope") == "account" and not w.get("label")
+                and w.get("period_unit") == "week" and w.get("period_value") == 1
+                and w.get("unit") == "percentage" and w.get("limit") == 100, "weekly_window_shape")
+    else:
+        assumptions.append("weekly_window_missing_using_saved_percentage")
+    used = w.get("used") if w else previous.get("used")
     require(type(used) in (int, float) and math.isfinite(used) and 0 <= used <= 100, "weekly_used_invalid")
-    observed = timestamp(w.get("observed_at"))
-    reset = timestamp(w.get("reset_at"))
+    observed = timestamp(w.get("observed_at") if w else previous.get("observed"))
+    reset = timestamp(raw_reset)
     require((now - observed).total_seconds() >= -120, "weekly_observation_future")
     require(reset <= observed + dt.timedelta(days=7, minutes=2), "weekly_reset_invalid")
-    assumptions = []
-    if collection["freshness"] == "stale" or (now - observed).total_seconds() > 1800:
+    collection = detail.get("collection", {})
+    if collection.get("freshness") != "fresh" or (now - observed).total_seconds() > 1800:
         assumptions.append("stale_saved_percentage_used_for_grouping")
     if reset <= now:
         assumptions.append("passed_reset_assume_room_next_reset_unknown")
@@ -151,28 +172,43 @@ def weekly(home, row, now):
 
 
 def renewal_order(rows, quotas):
-    # Pairwise 2-minute ties are not transitive. Contradictory chains fail closed.
     before = {r["id"]: set() for r in rows}
     for i, a in enumerate(rows):
         for b in rows[i + 1:]:
             delta = (timestamp(quotas[a["id"]]["reset"]) - timestamp(quotas[b["id"]]["reset"])).total_seconds()
             first, second = (a, b) if delta <= 120 else (b, a)
             before[second["id"]].add(first["id"])
+    # Collapse only actual cycles; their members retain live order, other groups sort normally.
+    reach = {key: {other for other in before if key in before[other]} for key in before}
+    for pivot in before:
+        for key in before:
+            if pivot in reach[key]:
+                reach[key] |= reach[pivot]
+    groups, seen = [], set()
+    for row in rows:
+        key = row["id"]
+        if key not in seen:
+            members = [r for r in rows if r["id"] == key or (r["id"] in reach[key] and key in reach[r["id"]])]
+            groups.append(members)
+            seen.update(r["id"] for r in members)
+            if len(members) > 1:
+                for member in members:
+                    notices = quotas[member["id"]]["assumptions"]
+                    if "tie_cycle_kept_live_order" not in notices:
+                        notices.append("tie_cycle_kept_live_order")
     result = []
-    while before:
-        choices = [r for r in rows if r["id"] in before and not before[r["id"]]]
-        require(bool(choices), "ambiguous_two_minute_tie_chain")
-        row = choices[0]
-        result.append(row)
-        del before[row["id"]]
-        for predecessors in before.values():
-            predecessors.discard(row["id"])
+    while groups:
+        remaining = {r["id"] for group in groups for r in group}
+        group = next(g for g in groups if all(not (before[r["id"]] & (remaining - {m["id"] for m in g})) for r in g))
+        result += group
+        groups.remove(group)
     return result
 
 
 def compute(rows, quotas, cfg, now):
-    active = [r for r in rows if r["id"] != cfg["fallback_id"] and eligible(r)]
     held = {h["id"] for h in cfg["holdouts"] if timestamp(h["until"]) > now}
+    active = [r for r in rows if r["id"] != cfg["fallback_id"] and eligible(r)
+              and (r["id"] in quotas or r["id"] in held or r["id"] == cfg["reserve_id"])]
     normal = [r for r in active if r["id"] not in held and r["id"] != cfg["reserve_id"]]
     ordered = []
     for exhausted in (False, True):
@@ -187,10 +223,17 @@ def compute(rows, quotas, cfg, now):
     return wanted
 
 
-def state_of(rows, quotas):
-    return {r["id"]: {"eligible": eligible(r), "disabled": r["disabled"], "reauth_required": r["reauth_required"],
-                      "exhausted": quotas[r["id"]]["used"] == 100 if r["id"] in quotas else None,
-                      "reset": quotas[r["id"]]["last_reset"] if r["id"] in quotas else None} for r in rows}
+def state_of(rows, quotas, previous=None):
+    previous = previous or {}
+    result = {}
+    for row in rows:
+        key, q, old = row["id"], quotas.get(row["id"]), previous.get(row["id"], {})
+        result[key] = {"eligible": eligible(row), "disabled": row["disabled"], "reauth_required": row["reauth_required"],
+                       "exhausted": q["used"] == 100 if q else old.get("exhausted"),
+                       "reset": q["last_reset"] if q else old.get("reset"),
+                       "used": q["saved_used"] if q else old.get("used"),
+                       "observed": q["observed"] if q else old.get("observed")}
+    return result
 
 
 def state_guard(previous, current, cfg, now):
@@ -200,14 +243,21 @@ def state_guard(previous, current, cfg, now):
         old = previous[key]
         rollover = (old["reset"] is not None and new["reset"] is not None
                     and timestamp(old["reset"]) <= now and timestamp(new["reset"]) >= timestamp(old["reset"]))
-        if any(old[k] != new[k] for k in ("eligible", "disabled", "reauth_required")) or (not rollover and old != new):
+        reset_changed = ((old["reset"] is None) != (new["reset"] is None)
+                         or (old["reset"] is not None and new["reset"] is not None
+                             and abs((timestamp(old["reset"]) - timestamp(new["reset"])).total_seconds()) > 120))
+        if (any(old[k] != new[k] for k in ("eligible", "disabled", "reauth_required"))
+                or (not rollover and (old["exhausted"] != new["exhausted"] or reset_changed))):
             changed += 1
     require(changed <= cfg["max_state_changes"], "too_many_unexpected_state_changes")
 
 
-def order_view(rows, priorities, emails=False):
-    return [{**{"label": r["email"].split("@")[0][:6], "id6": r["id"][:6], "priority": priorities[r["id"]]},
-             **({"email": r["email"]} if emails else {})}
+def label(row):
+    return {"label": row["email"].split("@")[0][:6], "id6": row["id"][:6]}
+
+
+def order_view(rows, priorities):
+    return [{**label(r), "priority": priorities[r["id"]]}
             for r in sorted(rows, key=lambda r: -priorities[r["id"]])]
 
 
@@ -247,17 +297,34 @@ def append_log(path, event):
         os.fsync(output.fileno())
 
 
+def log_event(job, event, error=False):
+    path = job / "979-log-state.json"
+    previous = json.loads(path.read_text()) if path.exists() else None
+    now = timestamp(event["time_utc"])
+    hourly = previous is None or (now - timestamp(previous["logged_at"])).total_seconds() >= 3600
+    stopped = (job / "979-STOP.json").exists()
+    signature = {k: event.get(k) for k in ("order", "exclusions", "notices")}
+    changed = previous is None or previous["signature"] != signature or previous["stopped"] != stopped
+    latched = event["reason"] == "STOP_operator_reconciliation_required"
+    needed = (hourly or previous is None or not previous["stopped"]) if latched else (
+        error or changed or hourly or event.get("readback_ok") is True
+        or event.get("baseline_reason") == "rebaseline_after_gap")
+    if needed:
+        append_log(job / "979-apply.jsonl", {**event, "heartbeat": hourly and not error and not changed})
+        write_json(path, {"logged_at": iso(now), "signature": signature, "stopped": stopped})
+
+
 def backup(rows, directory, now):
     require(directory.is_dir() and not directory.is_symlink(), "backup_directory_missing")
-    path = directory / ("home-config-" + now.strftime("%Y%m%dT%H%M%S%fZ") + ".json")
+    path = directory / ("auto979-config-" + now.strftime("%Y%m%dT%H%M%S%fZ") + ".json")
     # Same accounts/attributes format as targeted-backup-979; priority-only rollback.
     value = {"taken_utc": iso(now), "purpose": "decision 979 Claude priority reorder (pre-change)",
              "scope": "priorities-only", "accounts": [
-                 {"id": r["id"], "provider": "claude", "label": r["email"], "disabled": r["disabled"],
+                 {"id": r["id"], "provider": "claude", **label(r), "disabled": r["disabled"],
                   "attributes": {"priority": str(r["priority"])}} for r in rows]}
     write_json(path, value)
     require(json.loads(path.read_text()) == value and stat.S_IMODE(path.stat().st_mode) == 0o600, "backup_verification_failed")
-    older = sorted((p for p in directory.glob("home-config-*.json") if p != path),
+    older = sorted((p for p in directory.glob("auto979-config-*.json") if p != path),
                    key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
     for obsolete in older[1:]:
         obsolete.unlink()
@@ -268,26 +335,43 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
     now = clock()
     event = {"time_utc": iso(now), "mode": mode, "reason": "", "backup": None, "readback_ok": None}
     pending = job / "979-STOP.json"
-    log = job / "979-apply.jsonl"
     state_path = job / "979-state.json"
     try:
         require(not pending.exists(), "STOP_operator_reconciliation_required")
+        baseline = json.loads(state_path.read_text()) if state_path.exists() else None
+        previous = baseline["accounts"] if baseline else {}
         rows = credentials(home, cfg)
-        quotas = {r["id"]: weekly(home, r, now) for r in rows
-                  if r["id"] != cfg["fallback_id"] and eligible(r)}
+        held = {h["id"] for h in cfg["holdouts"] if timestamp(h["until"]) > now}
+        quotas, exclusions = {}, []
+        for row in rows:
+            if not eligible(row) or row["id"] in held | {cfg["reserve_id"], cfg["fallback_id"]}:
+                continue
+            quota = weekly(home, row, now, previous.get(row["id"]))
+            if quota is None:
+                exclusions.append({**label(row), "reason": "weekly_reset_never_known_keep_priority"})
+            else:
+                quotas[row["id"]] = quota
+        event["exclusions"] = exclusions
+        require(len(exclusions) <= 2, "too_many_accounts_without_weekly_reset")
         wanted = compute(rows, quotas, cfg, now)
-        current = state_of(rows, quotas)
-        previous = json.loads(state_path.read_text()) if state_path.exists() else None
-        if previous is not None:
-            state_guard(previous, current, cfg, now)
+        current = state_of(rows, quotas, previous)
+        if baseline:
+            age = (now - timestamp(baseline["observed_at"])).total_seconds()
+            require(age >= -120, "baseline_timestamp_future")
+            require(set(previous) == set(current), "state_inventory_changed")
+            if age > 7200:
+                event["baseline_reason"] = "rebaseline_after_gap"
+            else:
+                state_guard(previous, current, cfg, now)
         else:
             require(mode != "apply", "shadow_baseline_required")
         live = {r["id"]: r["priority"] for r in rows}
         public = {"live": order_view(rows, live), "computed": order_view(rows, wanted),
-                  "weekly": [{"id6": key[:6], **q} for key, q in quotas.items()]}
+                  "weekly": [{"id6": key[:6], **q} for key, q in quotas.items()], "exclusions": exclusions}
         print(json.dumps(public, sort_keys=True))
-        event["order"] = order_view(rows, wanted, emails=True)
+        event["order"] = order_view(rows, wanted)
         event["weekly"] = public["weekly"]
+        event["notices"] = sorted({notice for q in quotas.values() for notice in q["assumptions"]})
         event["reason"] = "order_unchanged" if wanted == live else "weekly_renewal_order_differs"
         if mode == "apply" and wanted != live:
             require(credentials(home, cfg) == rows, "credentials_changed_during_plan")
@@ -308,10 +392,11 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
             event["readback_ok"] = True
             event["reason"] = "applied_weekly_renewal_order"
         if mode != "dry-run":
-            write_json(state_path, current)
-            append_log(log, event)
+            write_json(state_path, {"observed_at": iso(now), "accounts": current})
+            log_event(job, event)
             if event["readback_ok"]:
                 pending.unlink()
+                log_event(job, {**event, "reason": "STOP_cleared_after_verified_apply"})
         return 0
     except Exception as error:
         # Never include API bodies, exception text, or unknown fields in logs/stdout.
@@ -321,7 +406,7 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
             event["reason"] = "CRITICAL_PARTIAL_OR_UNCERTAIN_APPLY_STOP_" + event["reason"]
         print(json.dumps({k: event[k] for k in ("time_utc", "mode", "reason", "readback_ok")}))
         if mode != "dry-run":
-            append_log(log, event)
+            log_event(job, event, error=True)
         return 2
 
 
@@ -336,17 +421,20 @@ def main():
     mode = "apply" if args.apply else "shadow" if args.shadow else "dry-run"
     os.umask(0o077)
     try:
+        if mode != "dry-run":
+            require(os.geteuid() == 0, "root_required")
+            private_dir(JOB)
+            if (JOB / "979-STOP.json").exists():
+                return execute(None, None, mode, job=JOB)
         cfg = load_config(args.config)
         home = Home()
         if mode == "dry-run":
             return execute(home, cfg, mode)
-        require(os.geteuid() == 0, "root_required")
-        private_dir(JOB)
         with (JOB / "979.lock").open("a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                append_log(JOB / "979-apply.jsonl", {"time_utc": iso(dt.datetime.now(UTC)), "reason": "another_run_active", "mode": mode})
+                log_event(JOB, {"time_utc": iso(dt.datetime.now(UTC)), "reason": "another_run_active", "mode": mode}, error=True)
                 return 2
             return execute(home, cfg, mode)
     except Exception as error:
@@ -354,7 +442,7 @@ def main():
         event = {"time_utc": iso(dt.datetime.now(UTC)), "mode": mode, "reason": reason}
         print(json.dumps(event))
         if mode != "dry-run" and JOB.is_dir():
-            append_log(JOB / "979-apply.jsonl", event)
+            log_event(JOB, event, error=True)
         return 2
 
 

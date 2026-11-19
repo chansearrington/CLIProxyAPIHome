@@ -16,14 +16,14 @@ if a is None:
     spec.loader.exec_module(a)
 
 
-def migrate(source):
+def migrate(source, job=a.JOB):
     tree = ast.parse(source)
     targets = [node.value for node in tree.body if isinstance(node, ast.Assign)
                and any(isinstance(t, ast.Name) and t.id == "TARGET" for t in node.targets)]
     a.require(len(targets) == 1, "legacy_target_assignment_missing")
     target = ast.literal_eval(targets[0])
-    a.require(isinstance(target, list) and len(target) == 12 and len(set(target)) == 12
-              and all(isinstance(t, str) and "@" in t for t in target), "legacy_target_list_invalid")
+    a.require(isinstance(target, list) and target and all(isinstance(t, str) and "@" in t for t in target)
+              and len(set(target)) == len(target), "legacy_target_list_invalid")
     # Only replace the list-route literal; TARGET and backup/PATCH behavior stay intact.
     edits = [node for node in ast.walk(tree) if isinstance(node, ast.Constant)
              and node.value == "/v0/management/auth-files"]
@@ -36,6 +36,23 @@ def migrate(source):
                               + line[node.end_col_offset:]).decode("utf-8")
     migrated = "".join(lines)
     a.require("/v0/management/" not in migrated, "other_legacy_routes_remain")
+    guard = ('\nimport fcntl as _979_fcntl, pathlib as _979_pathlib, sys as _979_sys\n'
+             'try:\n'
+             '    _979_lock = open(' + repr(str(job / "979.lock")) + ', "a")\n'
+             '    _979_fcntl.flock(_979_lock, _979_fcntl.LOCK_EX | _979_fcntl.LOCK_NB)\n'
+             'except OSError:\n'
+             '    _979_sys.exit("ABORT: auto979 lock unavailable")\n'
+             'if _979_pathlib.Path(' + repr(str(job / "979-STOP.json")) + ').exists():\n'
+             '    _979_sys.exit("ABORT: auto979 STOP requires operator reconciliation")\n\n')
+    offset = 0
+    for item in tree.body:
+        if ((isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str))
+                or (isinstance(item, ast.ImportFrom) and item.module == "__future__")):
+            offset = item.end_lineno
+        else:
+            break
+    lines = migrated.splitlines(keepends=True)
+    migrated = "".join(lines[:offset]) + guard + "".join(lines[offset:])
     compile(migrated, "apply979-v8.py", "exec")
     return migrated, target
 
@@ -45,11 +62,11 @@ def make_config(home, target):
     a.require(isinstance(files, list), "credential_list_missing")
     rows = [r for r in files if r.get("provider") == "claude"]
     by_email = {r.get("email"): r for r in rows}
-    a.require(len(rows) == 13 and len(by_email) == 13 and all(t in by_email for t in target), "legacy_account_set_changed")
+    a.require(len(rows) == len(target) + 1 and len(by_email) == len(rows) and all(t in by_email for t in target), "legacy_account_set_changed")
     other = [r for r in rows if r.get("email") not in target]
-    a.require(len(other) == 1 and other[0].get("priority") == 1 and other[0].get("disabled") is True, "fallback_changed")
+    a.require(len(other) == 1 and other[0].get("priority") == 1, "fallback_changed")
     cfg = {"shared_ids": [by_email[t]["id"] for t in target], "reserve_id": by_email[target[-1]]["id"],
-           "fallback_id": other[0]["id"], "max_state_changes": 3, "holdouts": []}
+           "fallback_id": other[0]["id"], "max_state_changes": min(3, len(target)), "holdouts": []}
     a.credentials(home, cfg)
     return cfg
 
@@ -71,7 +88,7 @@ def main():
             saved.write(migrated)
         a.write_json(config, cfg)
         a.load_config(config)
-        print(json.dumps({"migrated": str(output), "config": str(config), "shared_accounts": 12,
+        print(json.dumps({"migrated": str(output), "config": str(config), "shared_accounts": len(target),
                           "reserve": "last_TARGET_entry", "writes_to_home": 0}))
         return 0
     except Exception as error:
