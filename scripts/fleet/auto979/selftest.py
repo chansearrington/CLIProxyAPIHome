@@ -77,10 +77,12 @@ class FakeHome:
 
 
 def before_renewal(job, rows):
-    """Make the saved computed order the pre-renewal (live) one, as after a weekly renewal."""
+    """Make the saved evidence pre-renewal: one account's last reset was a week earlier."""
     path = job / "979-state.json"
     state = json.loads(path.read_text())
-    state["computed"] = {r["id"]: r["priority"] for r in rows}
+    key = sorted(state["evidence"])[0]
+    reset = state["evidence"][key][4]
+    state["evidence"][key][4] = a.iso(a.timestamp(reset) - dt.timedelta(days=7)) if reset else a.iso(NOW)
     a.write_json(path, state)
 
 
@@ -244,6 +246,15 @@ def execution():
         assert run("apply") == 0 and len(home.writes) == before
         assert json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"] == "live_differs_no_new_renewal_kept"
         x["priority"], y["priority"] = y["priority"], x["priority"]
+        # Review case: swapping a disabled account's number with an active one must not trigger writes either.
+        z = home.rows[2]
+        x["disabled"] = True
+        assert run("shadow") == 0  # the disable is real new evidence; shadow consumes it
+        x["priority"], z["priority"] = z["priority"], x["priority"]
+        assert run("apply") == 0 and len(home.writes) == before
+        x["priority"], z["priority"] = z["priority"], x["priority"]
+        x["disabled"] = False
+        assert run("shadow") == 0
         # An operator hold (taken under 979.lock) blocks apply before any GET or write.
         (job / "979-HOLD").write_text("")
         held_home = FakeHome(rows, details)
