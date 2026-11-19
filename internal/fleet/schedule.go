@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"time"
 	_ "time/tzdata"
 
@@ -207,6 +208,9 @@ func pruneNotices(st *State, now time.Time) {
 
 func queueRollback(st *State, now time.Time) {
 	run := st.Rollout
+	if run.RollbackNoticeRejected {
+		return
+	}
 	if run.RollbackStartedAt.IsZero() {
 		run.RollbackStartedAt = now
 	}
@@ -476,6 +480,9 @@ func (s *Service) deliverNotice(ctx context.Context) error {
 			if permanent {
 				st.Notices = st.Notices[1:]
 				st.NoticeRetryAt = time.Time{}
+				if notice.Phase == "rollback" && st.Rollout != nil && st.Rollout.Phase == "rollback" && st.Rollout.Release.Version == notice.TargetVersion && slices.Equal(st.Rollout.RollbackNodes, notice.Nodes) {
+					st.Rollout.RollbackNoticeRejected = true
+				}
 				addEvent(st, now, "", "announcement", "rejected_"+notice.Phase, notice.TargetVersion)
 			}
 			if w != nil && !w.Closed && (notice.Phase == "scheduled" || notice.Phase == "reminder" || notice.Phase == "started") {

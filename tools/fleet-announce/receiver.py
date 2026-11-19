@@ -34,7 +34,11 @@ def validate(key, notice):
     if not isinstance(notice['target_version'], str) or not re.fullmatch(r'v?\d{1,6}\.\d{1,6}\.\d{1,6}', notice['target_version']):
         raise ValueError('invalid_version')
     stamp = notice['window_start']
-    if not isinstance(stamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})', stamp) or datetime.fromisoformat(stamp.replace('Z', '+00:00')).tzinfo is None:
+    if not isinstance(stamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})', stamp):
+        raise ValueError('invalid_time')
+    # Python 3.9 accepts only 3 or 6 fractional digits; Go emits up to 9.
+    parsed_stamp = re.sub(r'\.(\d+)', lambda m: '.' + m[1][:6].ljust(6, '0'), stamp)
+    if datetime.fromisoformat(parsed_stamp.replace('Z', '+00:00')).tzinfo is None:
         raise ValueError('invalid_time')
     for field in ('nodes', 'failed_nodes'):
         nodes = notice.get(field, [])

@@ -62,6 +62,20 @@ class ReceiverTest(unittest.TestCase):
         self.assertEqual(self.post(raw='x' * (receiver.LIMIT + 1)), 413)
         self.assertEqual(self.outbox.transaction(), [])
 
+    def test_go_fractional_timestamps_on_supported_python(self):
+        for fraction in ('1', '123', '123456', '123456789'):
+            for zone in ('Z', '-06:00'):
+                with self.subTest(fraction=fraction, zone=zone):
+                    stamp = '2026-11-20T02:00:00.' + fraction + zone
+                    notice = {**NOTICE, 'phase': 'rollback_failed', 'window_start': stamp}
+                    key = '00000000-0000-4000-8000-' + str(len(fraction) * 10 + (zone == 'Z')).zfill(12)
+                    self.assertEqual(self.post(notice, key=key), 202)
+                    self.assertEqual(receiver.validate(key, notice)['window_start'], stamp)
+        self.assertEqual(len(receiver.Outbox(self.tmp.name).transaction()), 8)
+        for stamp in ('2026-02-30T02:00:00.1Z', '2026-11-20T25:00:00.1Z',
+                      '2026-11-20T02:00:00.Z', '2026-11-20T02:00:00.1234567890Z'):
+            self.assertEqual(self.post({**NOTICE, 'window_start': stamp}), 400)
+
     def test_durable_dedup_restart_conflict_and_ack(self):
         with patch.object(receiver.os, 'fsync', wraps=os.fsync) as sync:
             self.assertEqual(self.post(), 202)

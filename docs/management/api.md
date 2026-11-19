@@ -5003,13 +5003,17 @@ temporary. Every other 4xx permanently discards only the rejected notice and rec
 a rollback outcome to `rollback_failed`. Unacknowledged gating notices regenerate safely:
 a rejected scheduled/reminder/started notice postpones only its own window and triggers
 re-announcement. Rejection of an old ordinary receipt never reschedules other windows.
+A permanently rejected rollback announcement sets the persisted rollout field
+`rollback_notice_rejected`, not `rollback_announced`; neither maintenance nor worker planning
+regenerates it. Each new rollback resets this rejection marker.
 
 New dispatch requires successful `scheduled` delivery at least one hour before the window,
 plus successful `reminder` and `started` delivery. Missing or failed delivery blocks upgrades;
 a failed gating notice postpones to a newly announced next-night window. Delayed delivery
 that leaves less than one hour also reschedules. Completion notices remain queued until
 accepted or permanently rejected and audited; no following upgrade dispatches while a notice remains queued. Reverse rollback
-waits up to 15 minutes for its announcement, then proceeds for safety while continuing retries.
+waits up to 15 minutes for its announcement, then proceeds for safety while continuing retries
+for temporary failures only; permanent rejection does not shorten that wait.
 Reconciliation of already running work remains available. Catalog reconciliation continues normally while
 waiting for a patch window; one window may bundle the pinned CPA patch with existing catalog
 work. Home image upgrades remain manual, outside this API.

@@ -76,6 +76,76 @@ func TestPermanentCriticalRejectionIsDiscardedAndAudited(t *testing.T) {
 	}
 }
 
+func TestRejectedRollbackDoesNotRegenerateAndKeepsEmergencyGate(t *testing.T) {
+	s, store := fixture(t)
+	ctx := context.Background()
+	if errChange := s.change(ctx, func(st *State, now time.Time) error {
+		st.Rollout = &Rollout{Release: candidate("8.0.30"), Phase: "rollback", Rollback: testIDs[:1], RollbackNodes: testIDs[:1], Completed: map[string]Inventory{testIDs[0]: inv("8.0.29")}}
+		queueRollback(st, now)
+		return nil
+	}); errChange != nil {
+		t.Fatal(errChange)
+	}
+	calls := 0
+	s.Announce = func(context.Context, string, Notice) error {
+		calls++
+		return &announcementError{Status: 400}
+	}
+	for cycle := 0; cycle < 2; cycle++ {
+		if errDeliver := s.deliverNotice(ctx); errDeliver != nil {
+			t.Fatal(errDeliver)
+		}
+		plan, errPlan := s.Plan(ctx, testIDs[0], inv("8.0.30"))
+		if errPlan != nil || plan.Job != nil || plan.Status != "rollback_announcement" {
+			t.Fatalf("15-minute gate bypassed: %+v, %v", plan, errPlan)
+		}
+		st, errStatus := s.Status(ctx)
+		if errStatus != nil {
+			t.Fatal(errStatus)
+		}
+		if len(st.Notices) != 0 || !st.Rollout.RollbackNoticeRejected || st.Rollout.RollbackAnnounced || st.Rollout.RollbackFailed {
+			t.Fatal("rejected rollback notice regenerated or outcome changed")
+		}
+		rejected := 0
+		for _, event := range st.History {
+			if event.Operation == "announcement" && event.Status == "rejected_rollback" {
+				rejected++
+			}
+		}
+		if rejected != 1 || calls != 1 {
+			t.Fatalf("rejection repeated: %d audits, %d sends", rejected, calls)
+		}
+	}
+	store.now = store.now.Add(15 * time.Minute)
+	plan, errPlan := s.Plan(ctx, testIDs[0], inv("8.0.30"))
+	if errPlan != nil || plan.Job == nil || plan.Job.Operation != "rollback" {
+		t.Fatalf("emergency rollback missing: %+v, %v", plan, errPlan)
+	}
+	st, _ := s.Status(ctx)
+	if !st.Rollout.RollbackUnannounced || st.Rollout.RollbackAnnounced || len(st.Notices) != 0 {
+		t.Fatal("emergency rollback misreported or rejected notice regenerated")
+	}
+
+	// Another failed upgrade on the same rollout must not inherit the rejection.
+	var job *Job
+	if errChange := s.change(ctx, func(st *State, now time.Time) error {
+		st.Rollout.Phase = "upgrade"
+		job = newJob(testIDs[1], "upgrade", now, inv("8.0.29"))
+		job.Release = &st.Rollout.Release
+		st.Active = job
+		return nil
+	}); errChange != nil {
+		t.Fatal(errChange)
+	}
+	if errReport := s.Report(ctx, testIDs[1], Result{ID: job.ID, Token: job.Token, Status: "failed", Inventory: inv("8.0.29")}); errReport != nil {
+		t.Fatal(errReport)
+	}
+	st, _ = s.Status(ctx)
+	if st.Rollout.RollbackNoticeRejected || len(st.Notices) != 1 || st.Notices[0].Phase != "rollback" || len(st.Notices[0].Nodes) != 2 {
+		t.Fatal("new rollback inherited old rejection")
+	}
+}
+
 func TestPermanentOrdinaryRejectionLeavesOtherWindowsUnchanged(t *testing.T) {
 	for _, phase := range []string{"scheduled", "reminder", "started", "postponed"} {
 		t.Run(phase, func(t *testing.T) {

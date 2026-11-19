@@ -4902,6 +4902,8 @@ phase 包括 `scheduled`、`reminder`、`started`、`done`、`rollback`、`rolle
 持续退避重试，间隔最多一小时。408、429 仍为临时失败；其余 4xx 永久丢弃被拒绝的单条公告，
 历史写入 operation=announcement、status=rejected_<phase>，不把投递拒绝误记为 rollback_failed。
 scheduled/reminder/started 被拒绝只延期其自身窗口并重新公告；普通旧回执被拒绝不重排其他窗口。
+回滚公告永久被拒绝时持久化设置 rollout.rollback_notice_rejected，而不是 rollback_announced；
+维护检查和工作节点规划都不会重建该公告。每次新回滚会重置此标记。永久拒绝不缩短 15 分钟安全等待；只有临时失败继续重试。
 只有 scheduled（至少提前一小时）、reminder 和 started 都成功后才能派发升级；投递太晚或失败则安排下一晚。
 完成消息一直留队直到被接受或永久拒绝并记录，队列非空时不派发后续升级；回滚有上述 15 分钟安全例外。已运行任务始终可对账。等待补丁窗口期间目录同步照常，
 同一公告窗口可包含固定 CPA 补丁及现有目录协调；Home 镜像升级仍是人工操作。
