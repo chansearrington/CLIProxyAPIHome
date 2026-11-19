@@ -73,7 +73,8 @@ class ReceiverTest(unittest.TestCase):
                     self.assertEqual(receiver.validate(key, notice)['window_start'], stamp)
         self.assertEqual(len(receiver.Outbox(self.tmp.name).transaction()), 8)
         for stamp in ('2026-02-30T02:00:00.1Z', '2026-11-20T25:00:00.1Z',
-                      '2026-11-20T02:00:00.Z', '2026-11-20T02:00:00.1234567890Z'):
+                      '2026-11-20T02:00:00.Z', '2026-11-20T02:00:00.1234567890Z',
+                      '2026-11-20T02:00:00.1+05:60', '2026-11-20T02:00:00.123456\u0661Z'):
             self.assertEqual(self.post({**NOTICE, 'window_start': stamp}), 400)
 
     def test_durable_dedup_restart_conflict_and_ack(self):

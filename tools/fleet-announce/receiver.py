@@ -34,10 +34,11 @@ def validate(key, notice):
     if not isinstance(notice['target_version'], str) or not re.fullmatch(r'v?\d{1,6}\.\d{1,6}\.\d{1,6}', notice['target_version']):
         raise ValueError('invalid_version')
     stamp = notice['window_start']
-    if not isinstance(stamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})', stamp):
+    # ASCII digits only and offset minutes 00-59 (strict RFC3339; datetime would normalize +05:60).
+    if not isinstance(stamp, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-5][0-9])', stamp):
         raise ValueError('invalid_time')
     # Python 3.9 accepts only 3 or 6 fractional digits; Go emits up to 9.
-    parsed_stamp = re.sub(r'\.(\d+)', lambda m: '.' + m[1][:6].ljust(6, '0'), stamp)
+    parsed_stamp = re.sub(r'\.([0-9]+)', lambda m: '.' + m[1][:6].ljust(6, '0'), stamp)
     if datetime.fromisoformat(parsed_stamp.replace('Z', '+00:00')).tzinfo is None:
         raise ValueError('invalid_time')
     for field in ('nodes', 'failed_nodes'):
