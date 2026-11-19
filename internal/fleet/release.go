@@ -9,20 +9,58 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const releaseAPI = "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest"
 const releasePrefix = "https://github.com/router-for-me/CLIProxyAPI/releases/download/"
 
+type ReleaseCheckError struct {
+	Code       string
+	RetryAt    time.Time
+	ResetAt    time.Time
+	RetryAfter time.Duration
+}
+
+func (e *ReleaseCheckError) Error() string { return e.Code }
+
+func releaseHTTPError(response *http.Response) *ReleaseCheckError {
+	failure := &ReleaseCheckError{Code: fmt.Sprintf("release_http_%d", response.StatusCode)}
+	if response.StatusCode == http.StatusTooManyRequests || (response.StatusCode == http.StatusForbidden && (response.Header.Get("X-RateLimit-Remaining") == "0" || response.Header.Get("Retry-After") != "")) {
+		failure.Code = "rate_limited"
+		failure.RetryAfter = time.Hour
+	}
+	if reset, errReset := strconv.ParseInt(response.Header.Get("X-RateLimit-Reset"), 10, 64); errReset == nil && failure.Code == "rate_limited" {
+		failure.ResetAt = time.Unix(reset, 0).UTC()
+		failure.RetryAt = failure.ResetAt.Add(time.Minute)
+		failure.RetryAfter = 0
+	}
+	if retry, errRetry := strconv.Atoi(response.Header.Get("Retry-After")); errRetry == nil && retry > 0 {
+		if retry > 6*60*60 {
+			retry = 6 * 60 * 60
+		}
+		failure.RetryAfter = time.Duration(retry) * time.Second
+	} else if deadline, errDeadline := http.ParseTime(response.Header.Get("Retry-After")); errDeadline == nil && deadline.After(failure.RetryAt) {
+		failure.RetryAt = deadline
+	}
+	return failure
+}
+
 // FetchStableRelease verifies the official archive and derives its binary hash without executing it.
 func FetchStableRelease(ctx context.Context) (Release, error) {
-	client := &http.Client{Timeout: 2 * time.Minute}
+	return fetchStableRelease(ctx, &http.Client{Timeout: 2 * time.Minute}, nil)
+}
+
+func fetchStableRelease(ctx context.Context, client *http.Client, previous *Release) (Release, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel() // Keep the whole fetch inside the shared three-minute lease.
 	read := func(url string, limit int64) ([]byte, error) {
 		request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if errRequest != nil {
@@ -31,7 +69,7 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 		request.Header.Set("Accept", "application/vnd.github+json")
 		response, errResponse := client.Do(request)
 		if errResponse != nil {
-			return nil, errResponse
+			return nil, &ReleaseCheckError{Code: "release_network_error"}
 		}
 		defer func() {
 			if errClose := response.Body.Close(); errClose != nil {
@@ -39,14 +77,14 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 			}
 		}()
 		if response.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("release HTTP %d", response.StatusCode)
+			return nil, releaseHTTPError(response)
 		}
 		data, errRead := io.ReadAll(io.LimitReader(response.Body, limit+1))
 		if errRead != nil {
-			return nil, errRead
+			return nil, &ReleaseCheckError{Code: "release_response_read_failed"}
 		}
 		if int64(len(data)) > limit {
-			return nil, fmt.Errorf("release response too large")
+			return nil, &ReleaseCheckError{Code: "release_response_too_large"}
 		}
 		return data, nil
 	}
@@ -59,24 +97,30 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 		Prerelease bool   `json:"prerelease"`
 		Draft      bool   `json:"draft"`
 		Assets     []struct {
-			Name   string `json:"name"`
-			URL    string `json:"browser_download_url"`
-			Digest string `json:"digest"`
+			Name      string    `json:"name"`
+			URL       string    `json:"browser_download_url"`
+			Digest    string    `json:"digest"`
+			Size      int64     `json:"size"`
+			UpdatedAt time.Time `json:"updated_at"`
 		} `json:"assets"`
 	}
 	if errDecode := json.Unmarshal(raw, &release); errDecode != nil {
-		return Release{}, errDecode
+		return Release{}, &ReleaseCheckError{Code: "invalid_release_json"}
 	}
 	version := strings.TrimPrefix(release.Tag, "v")
 	if release.Draft || release.Prerelease || !versionPattern.MatchString(version) {
-		return Release{}, fmt.Errorf("release is not stable")
+		return Release{}, &ReleaseCheckError{Code: "release_is_not_stable"}
 	}
 	name := "CLIProxyAPI_" + version + "_darwin_aarch64.tar.gz"
 	archiveURL, checksURL, assetDigest := "", "", ""
+	var assetSize int64
+	var assetUpdatedAt time.Time
 	for _, asset := range release.Assets {
 		if asset.Name == name {
 			archiveURL = asset.URL
 			assetDigest = asset.Digest
+			assetSize = asset.Size
+			assetUpdatedAt = asset.UpdatedAt
 		}
 		if asset.Name == "checksums.txt" {
 			checksURL = asset.URL
@@ -84,7 +128,14 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 	}
 	expectedPrefix := releasePrefix + release.Tag + "/"
 	if !strings.HasPrefix(archiveURL, expectedPrefix) || !strings.HasPrefix(checksURL, expectedPrefix) {
-		return Release{}, fmt.Errorf("unexpected release asset origin")
+		return Release{}, &ReleaseCheckError{Code: "unexpected_release_asset_origin"}
+	}
+	if previous != nil && previous.Version == version && previous.URL == archiveURL && hashPattern.MatchString(previous.ArchiveSHA256) {
+		sameDigest := assetDigest == "sha256:"+previous.ArchiveSHA256
+		sameMetadata := assetDigest == "" && assetSize > 0 && assetSize == previous.ArchiveSize && !assetUpdatedAt.IsZero() && assetUpdatedAt.Equal(previous.AssetUpdatedAt)
+		if sameDigest || sameMetadata {
+			return *previous, nil
+		}
 	}
 	checks, errChecks := read(checksURL, 1<<20)
 	if errChecks != nil {
@@ -98,7 +149,7 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 		}
 	}
 	if !hashPattern.MatchString(expected) {
-		return Release{}, fmt.Errorf("archive checksum missing")
+		return Release{}, &ReleaseCheckError{Code: "archive_checksum_missing"}
 	}
 	archive, errArchive := read(archiveURL, 256<<20)
 	if errArchive != nil {
@@ -107,11 +158,11 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 	sum := sha256.Sum256(archive)
 	actual := hex.EncodeToString(sum[:])
 	if actual != expected || (assetDigest != "" && assetDigest != "sha256:"+actual) {
-		return Release{}, fmt.Errorf("archive checksum mismatch")
+		return Release{}, &ReleaseCheckError{Code: "archive_checksum_mismatch"}
 	}
 	zipped, errZip := gzip.NewReader(bytes.NewReader(archive))
 	if errZip != nil {
-		return Release{}, errZip
+		return Release{}, &ReleaseCheckError{Code: "invalid_release_archive"}
 	}
 	defer func() {
 		if errClose := zipped.Close(); errClose != nil {
@@ -125,23 +176,23 @@ func FetchStableRelease(ctx context.Context) (Release, error) {
 			break
 		}
 		if errNext != nil {
-			return Release{}, errNext
+			return Release{}, &ReleaseCheckError{Code: "invalid_release_archive"}
 		}
 		if header.Typeflag != tar.TypeReg || path.Base(header.Name) != "cli-proxy-api" {
 			continue
 		}
 		if header.Size <= 0 || header.Size > 256<<20 {
-			return Release{}, fmt.Errorf("invalid binary size")
+			return Release{}, &ReleaseCheckError{Code: "invalid_binary_size"}
 		}
 		hash := sha256.New()
 		size, errCopy := io.Copy(hash, io.LimitReader(reader, header.Size+1))
 		if errCopy != nil {
-			return Release{}, errCopy
+			return Release{}, &ReleaseCheckError{Code: "release_binary_read_failed"}
 		}
 		if size != header.Size {
-			return Release{}, fmt.Errorf("binary size mismatch")
+			return Release{}, &ReleaseCheckError{Code: "binary_size_mismatch"}
 		}
-		return Release{Version: version, URL: archiveURL, ArchiveSHA256: actual, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size}, nil
+		return Release{Version: version, URL: archiveURL, ArchiveSHA256: actual, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, ArchiveSize: assetSize, AssetUpdatedAt: assetUpdatedAt}, nil
 	}
-	return Release{}, fmt.Errorf("binary missing from release archive")
+	return Release{}, &ReleaseCheckError{Code: "binary_missing_from_release_archive"}
 }
