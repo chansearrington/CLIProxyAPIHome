@@ -1,4 +1,7 @@
 #!/bin/bash
+# ARCHIVE of the 2026-11-19 window run. driver.sh still holds the two defective checks fixed in b5fe18d
+# (footprint digest; broad-mount writer refusal). Regenerate from the current manual; never run this copy.
+echo 'ARCHIVE: regenerate from the current ws-0054 manual; do not run' >&2; exit 1
 # Build INPUT_SUMS from actual staged files (explicit absolute paths), then check it.
 set -eu; umask 077
 B=/mnt/cache/appdata/cpa-home-build/ws0054-20261118T2055Z; W=/mnt/cache/appdata/cpa-home-build/ws0054-window-today

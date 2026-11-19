@@ -1,4 +1,7 @@
 #!/bin/bash
+# ARCHIVE of the 2026-11-19 window run. driver.sh still holds the two defective checks fixed in b5fe18d
+# (footprint digest; broad-mount writer refusal). Regenerate from the current manual; never run this copy.
+echo 'ARCHIVE: regenerate from the current ws-0054 manual; do not run' >&2; exit 1
 # WS-0054 laptop side: runs under the four fleet-lock holds. Ark phases run detached (nohup) so an SSH drop cannot kill them.
 set +e
 W=/mnt/cache/appdata/cpa-home-build/ws0054-window-today

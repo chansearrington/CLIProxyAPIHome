@@ -1,4 +1,7 @@
 #!/bin/bash
+# ARCHIVE of the 2026-11-19 window run. driver.sh still holds the two defective checks fixed in b5fe18d
+# (footprint digest; broad-mount writer refusal). Regenerate from the current manual; never run this copy.
+echo 'ARCHIVE: regenerate from the current ws-0054 manual; do not run' >&2; exit 1
 # WS-0054 window driver: verbatim reviewed blocks from the manual (commit-pinned), chained by the manual's own NEXT latch.
 PHASE="$1"; STATE=/mnt/cache/appdata/cpa-home-build/ws0054-window-today/state.env
 # ---- core section 1 (verbatim)
