@@ -76,16 +76,6 @@ class FakeHome:
         return copy.deepcopy(self.details[path.rsplit("/", 1)[-1]])
 
 
-def before_renewal(job, rows):
-    """Make the saved evidence pre-renewal: one account's last reset was a week earlier."""
-    path = job / "979-state.json"
-    state = json.loads(path.read_text())
-    key = sorted(state["evidence"])[0]
-    reset = state["evidence"][key][4]
-    state["evidence"][key][4] = a.iso(a.timestamp(reset) - dt.timedelta(days=7)) if reset else a.iso(NOW)
-    a.write_json(path, state)
-
-
 def read_quotas(home, rows):
     return {r["id"]: a.weekly(home, r, NOW) for r in rows if a.eligible(r)}
 
@@ -226,9 +216,7 @@ def execution():
         assert run("dry-run") == 0 and not home.writes and not list(job.iterdir()) and not list(backups.iterdir())
         assert run("apply") == 2 and not home.writes  # baseline absent
         assert run("shadow") == 0 and not home.writes and not list(backups.iterdir())
-        assert run("apply") == 0 and not home.writes  # no renewal since the shadow run: nothing to apply
-        before_renewal(job, rows)
-        assert run("apply") == 0 and len(home.writes) == 11
+        assert run("apply") == 0 and len(home.writes) == 11  # shadow computed the same order: stable
         assert not (job / "979-STOP.json").exists()
         saved = json.loads(next(backups.glob("auto979-config-*.json")).read_text())
         assert saved["scope"] == "priorities-only" and len(saved["accounts"]) == 13
@@ -240,21 +228,30 @@ def execution():
         assert event["readback_ok"] is True and event["backup"] and len(event["order"]) == 13
         before = len(home.writes)
         assert run("apply") == 0 and len(home.writes) == before
-        # A hand edit of live priorities is kept until the next renewal changes the computed order.
+
+        def last_reason():
+            return json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"]
+
+        # One noisy read (an account briefly at 100 %) never writes: the new order must repeat first.
+        window = home.details["fake-02"]["windows"][0]
+        old_used = window["used"]
+        window["used"] = 100
+        assert run("apply") == 0 and len(home.writes) == before
+        assert last_reason() == "order_differs_waiting_for_stable_repeat"
+        window["used"] = old_used
+        assert run("apply") == 0 and len(home.writes) == before
+        window["used"] = 100
+        assert run("apply") == 0 and len(home.writes) == before
+        assert run("apply") == 0 and len(home.writes) > before  # repeated twice: applied
+        window["used"] = old_used
+        assert run("apply") == 0 and run("apply") == 0
+        # The rule owns the order: a hand edit is put back once the order repeats (pin with a holdout or the hold).
+        before = len(home.writes)
         x, y = home.rows[0], home.rows[1]
+        ruled = (x["priority"], y["priority"])
         x["priority"], y["priority"] = y["priority"], x["priority"]
-        assert run("apply") == 0 and len(home.writes) == before
-        assert json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"] == "live_differs_no_new_renewal_kept"
-        x["priority"], y["priority"] = y["priority"], x["priority"]
-        # Review case: swapping a disabled account's number with an active one must not trigger writes either.
-        z = home.rows[2]
-        x["disabled"] = True
-        assert run("shadow") == 0  # the disable is real new evidence; shadow consumes it
-        x["priority"], z["priority"] = z["priority"], x["priority"]
-        assert run("apply") == 0 and len(home.writes) == before
-        x["priority"], z["priority"] = z["priority"], x["priority"]
-        x["disabled"] = False
-        assert run("shadow") == 0
+        assert run("apply") == 0 and run("apply") == 0
+        assert len(home.writes) == before + 2 and (x["priority"], y["priority"]) == ruled
         # An operator hold (taken under 979.lock) blocks apply before any GET or write.
         (job / "979-HOLD").write_text("")
         held_home = FakeHome(rows, details)
@@ -271,7 +268,6 @@ def execution():
         paused = FakeHome(rows, details)
         paused.fleet_enabled = False
         assert run("shadow", paused) == 0
-        before_renewal(job, rows)
         assert run("apply", paused) == 2 and not paused.writes and not (job / "979-STOP.json").exists()
         assert json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"] == "fleet_maintenance_paused_no_writes"
         assert len(list(backups.glob("auto979-config-*.json"))) == 2  # no backup taken while paused
@@ -288,7 +284,6 @@ def execution():
             else:
                 home.concurrent_edit = True
             assert run("shadow", home) == 0
-            before_renewal(job, rows)
             assert run("apply", home) == 2
             writes = len(home.writes)
             if fail == "concurrent":
@@ -367,7 +362,6 @@ def review_cases():
         home = FakeHome(rows, details)
         with contextlib.redirect_stdout(io.StringIO()):
             assert a.execute(home, cfg, "shadow", applyjob, backups, clock=lambda: NOW) == 0
-            before_renewal(applyjob, rows)
             for detail in home.details.values():
                 detail["generated_at"] = a.iso(gap)
             assert a.execute(home, cfg, "apply", applyjob, backups, clock=lambda: gap) == 0

@@ -260,24 +260,6 @@ def state_guard(previous, current, cfg, now):
     require(changed <= cfg["max_state_changes"], "too_many_unexpected_state_changes")
 
 
-def evidence_of(current):
-    """Renewal evidence only: never priorities, so a hand edit can never trigger an apply."""
-    return {key: [v["eligible"], v["disabled"], v["reauth_required"], v["exhausted"], v["reset"]]
-            for key, v in current.items()}
-
-
-def evidence_changed(old, new):
-    if set(old) != set(new):
-        return True
-    for key, (*flags, reset) in new.items():
-        *old_flags, old_reset = old[key]
-        if flags != old_flags or (old_reset is None) != (reset is None):
-            return True
-        if reset is not None and abs((timestamp(old_reset) - timestamp(reset)).total_seconds()) > 120:
-            return True
-    return False
-
-
 def label(row):
     return {"label": row["email"].split("@")[0][:6], "id6": row["id"][:6]}
 
@@ -405,15 +387,13 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
         event["weekly"] = public["weekly"]
         event["notices"] = sorted({notice for q in quotas.values() for notice in q["assumptions"]})
         event["reason"] = "order_unchanged" if wanted == live else "weekly_renewal_order_differs"
-        # Write only after new renewal evidence (reset/exhausted/eligibility); hand edits of priorities are kept.
-        last_evidence = baseline.get("evidence") if baseline else None
-        evidence = evidence_of(current)
-        renewal_changed = last_evidence is not None and evidence_changed(last_evidence, evidence)
-        if wanted != live and not renewal_changed:
-            event["reason"] = "live_differs_no_new_renewal_kept"
+        # Debounce: write only when the previous run computed the same order (one noisy read never writes).
+        stable = baseline is not None and baseline.get("last_wanted") == wanted
+        if wanted != live and not stable:
+            event["reason"] = "order_differs_waiting_for_stable_repeat"
         if mode == "apply" and rebaseline and wanted != live:
             event["reason"] = "apply_deferred_after_gap"
-        if mode == "apply" and wanted != live and renewal_changed and not rebaseline:
+        if mode == "apply" and wanted != live and stable and not rebaseline:
             require(credentials(home, cfg) == rows, "credentials_changed_during_plan")
             # Upgrades and rollbacks pause Home's fleet policy first; never write during maintenance.
             policy = home.call("/fleet").get("policy")
@@ -440,9 +420,7 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
             event["readback_ok"] = True
             event["reason"] = "applied_weekly_renewal_order"
         if mode != "dry-run":
-            # After a gap keep the old evidence, so a renewal during the gap is still applied next run.
-            kept = last_evidence if (rebaseline and last_evidence is not None) else evidence
-            write_json(state_path, {"observed_at": iso(now), "accounts": current, "evidence": kept})
+            write_json(state_path, {"observed_at": iso(now), "accounts": current, "last_wanted": wanted})
             log_event(job, event)
             if event["readback_ok"]:
                 pending.unlink()
