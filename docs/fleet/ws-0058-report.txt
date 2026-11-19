@@ -1,0 +1,23 @@
+Builder report — 2026-11-19
+Model: gpt-6.1-sol[1m]
+Branch: ws-0058/catalog-retention, based on origin/fleet 248ebb9.
+
+Changed tools/fleet-worker/catalog_sync.py:75-80: retention optionally protects current directory ahead of modification-time ordering. Existing Claude caller is unchanged.
+Changed catalog_sync.py:282-284 and removed success-only retention: prune after both complete backup files are closed, before schema validation. Failures now retain current plus latest previous directory. A future-dated older backup cannot delete the candidate being validated. Runtime rollback still restores in-memory before model fields, preserves unrelated edits, and keeps before.json for manual recovery if conflict prevents automatic rollback.
+Changed tools/fleet-worker/test_catalog_sync.py:159 onward: two tests exercise success/idempotence and five successive attempts for each of invalid schema, validation timeout, and failed runtime. Tests assert exact retained directory identities, candidate/before files, original live config or model-only restoration preserving a concurrent unrelated default change. Explicit future mtimes avoid sleeps.
+
+Checks:
+- Before implementation: python3 -I -m unittest discover -s <checkout>/tools/fleet-worker -p test_catalog_sync.py: Ran 13 tests, FAILED (failures=3), one failure per failure-path subtest.
+- Final: python3 -I -m unittest discover -s /Users/chansearrington/GitHub/personal/CLIProxyAPIHome-ws-0058/tools/fleet-worker -p '*test*.py' -v
+  Ran 77 tests in 5.120s. OK (skipped=1): 76 passed, one existing explicit Linux/root-only chroot test skipped on macOS. MANUAL_SYNTAX shell_blocks=20 Python_blocks=15 PASS. READINESS_CLOCK controls=4 PASS.
+- git diff --check: exit 0, no output.
+No Go code changed; no Go check needed. No production writes, deploys or restarts.
+
+Read-only Hyper unload investigation:
+SSH to hyper@100.70.69.110 succeeded. Narrow unified log queries for launchd + gateway label and for launchctl/unload/bootout returned header only, both 06:36–06:40 and local 00:36–00:40 windows. This does NOT prove the absence of an unload: there is no retained matching event naming an actor.
+Gateway lifecycle file confirms SIGTERM at 2026-11-15T00:37:51.847-06:00 (06:37:51.847Z), drain and clean close receipt by 00:37:53.170-06:00. No actor is named. Gateway error log and gateway-restart log had no matching safe lifecycle event in the narrow window.
+Both rotated system.log files containing Nov15 were inspected (109 Nov15 lines total); no openclaw/bootout/unload/reboot/shutdown matches. Worker stdout was inspected by structured date keys; no matching Nov15 records found with checked_at/at/timestamp fields, so historical worker attribution is unavailable, not evidence of no activity. Worker stderr is empty. Installed current worker.py/catalog_sync.py contain no launchctl, bootout, kickstart, gateway-stop or gateway-restart source matches; these normal worker paths do not directly unload the gateway. Earlier diagnostic notes separately excluded the refresh scripts' control of this gateway label; not re-read here.
+Cause: UNKNOWN. An external termination with orderly shutdown is established; person/process that unloaded the LaunchAgent is not established. No evidence in available logs for crash or host reboot; absence of log matches does not fully rule either out. Unified log stats overview did not complete within 60 seconds; stopped the local SSH task rather than wait or expand scope. No sessions, shell histories, secrets, env files or request content opened.
+
+Limits: candidate backup write failures before both files finish are outside this focused fix; existing worker serialization remains assumed. Tests use synthetic config and mocked gateway/network, not a live deploy. Lead must independently review before any merge/deployment.
+Task states: implementation ready for PR; read-only investigation finished with unknown actor, not a proven root cause.

@@ -72,9 +72,9 @@ def atomic_write(path, content, expected):
             os.unlink(name)
 
 
-def retain_two_backups(directory, prefix):
+def retain_two_backups(directory, prefix, current=None):
     backups = sorted(directory.glob(prefix + '*'),
-                     key=lambda entry: entry.stat().st_mtime_ns, reverse=True)
+                     key=lambda entry: (entry == current, entry.stat().st_mtime_ns), reverse=True)
     for obsolete in backups[2:]:
         if obsolete.is_dir() and not obsolete.is_symlink():
             shutil.rmtree(obsolete)
@@ -279,6 +279,8 @@ def reconcile_openclaw(home, apply=False, metadata=None):
             with target.open('xb') as output:
                 os.chmod(target, 0o600)
                 output.write(data)
+        # Keep the active rollback copy even if older directories have future timestamps.
+        retain_two_backups(backup.parent, 'cpa-catalog-', current=backup)
         if cli(['config', 'validate', '--json'], backup/'candidate.json').get('valid') is not True:
             raise SyncError('schema_validation_failed')
         if fetch_ids(before) != ids:
@@ -307,8 +309,6 @@ def reconcile_openclaw(home, apply=False, metadata=None):
             current['agents']['defaults']['models'] = before['agents']['defaults']['models']
             atomic_write(path, (json.dumps(current, indent=2)+'\n').encode(), current_bytes)
         raise SyncError('runtime_failed_restored_model_fields') from None
-    if backup:
-        retain_two_backups(backup.parent, 'cpa-catalog-')
     return dict(report, status='updated' if backup else 'current', backup=str(backup) if backup else None)
 
 
