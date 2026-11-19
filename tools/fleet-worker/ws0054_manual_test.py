@@ -26,7 +26,7 @@ class ManualTest(unittest.TestCase):
         self.assertGreater(pythons, 0)
         print('MANUAL_SYNTAX shell_blocks=%d Python_blocks=%d PASS' % (shells, pythons))
 
-    def test_hot_time_contract_pins_nov20_and_rejects_stale_nov19(self):
+    def test_hot_time_contract_pins_window_and_rejects_stale_day(self):
         text = ANNEX.read_text().split('### HOT —', 1)[1]
         python = text.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
         tree = ast.parse(python)
@@ -39,17 +39,17 @@ class ManualTest(unittest.TestCase):
                        or isinstance(node, ast.FunctionDef) and node.name in ('stamp', 'contract')]
         namespace = {}
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(ANNEX), 'exec'), namespace)
-        self.assertEqual(namespace['WINDOW_DAY'], '2026-11-20')
+        self.assertEqual(namespace['WINDOW_DAY'], '2026-11-19')  # window actually run 11-19, verified-before 20:00Z
         base = Path('/synthetic/window')
         def check(day, completed='05:01:00+00:00'):
             start = day+'T05:00:00+00:00'
             finish = day+'T'+completed
             namespace['contract']({'started_utc': start, 'completed_utc': finish},
                 {'base': str(base), 'helper_sha256': namespace['PIN'], 'started_utc': start},
-                {'exit': 0, 'completed_utc': finish}, {}, base, namespace['DAY']+namespace['datetime'].timedelta(hours=8))
-        check('2026-11-20')
-        for day, completed in [('2026-11-19', '05:01:00+00:00'),
-                               ('2026-11-20', '07:00:00+00:00')]:
+                {'exit': 0, 'completed_utc': finish}, {}, base, namespace['DAY']+namespace['datetime'].timedelta(hours=21))
+        check('2026-11-19')
+        for day, completed in [('2026-11-18', '05:01:00+00:00'),
+                               ('2026-11-19', '20:00:00+00:00')]:
             with self.subTest(day=day, completed=completed), self.assertRaisesRegex(AssertionError, 'stale_or_late'):
                 check(day, completed)
 
