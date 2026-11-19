@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -196,11 +198,47 @@ func assertStartupBackfillRows(t *testing.T, db *gorm.DB, pass int, usageIDs []u
 
 func assertCleanStartupSkipsBackfillUpdates(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	var schemaBefore, schemaAfter int64
-	if db.Dialector.Name() == "sqlite" {
-		if errSchema := db.Raw("PRAGMA schema_version").Scan(&schemaBefore).Error; errSchema != nil {
+	indexNames := []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1", "idx_usage_dashboard_time_v1", "idx_usage_dashboard_provider_time_v1"}
+	type indexColumn struct {
+		Seqno int
+		Cid   int
+		Name  *string
+		Desc  int
+		Coll  *string
+		Key   int
+	}
+	type indexState struct {
+		SchemaRowID int64
+		Type        string
+		Name        string
+		TblName     string
+		Rootpage    int64
+		SQL         string
+		Columns     []indexColumn `gorm:"-"`
+	}
+	readIndexes := func() []indexState {
+		t.Helper()
+		var indexes []indexState
+		if errSchema := db.Raw(`SELECT rowid AS schema_row_id, type, name, tbl_name, rootpage, sql FROM sqlite_master WHERE type = 'index' AND name IN ? ORDER BY name`, indexNames).Scan(&indexes).Error; errSchema != nil {
 			t.Fatal(errSchema)
 		}
+		if len(indexes) != len(indexNames) {
+			t.Fatalf("startup indexes = %d, want %d", len(indexes), len(indexNames))
+		}
+		for index := range indexes {
+			state := &indexes[index]
+			if errColumns := db.Raw("PRAGMA index_xinfo('" + state.Name + "')").Scan(&state.Columns).Error; errColumns != nil {
+				t.Fatal(errColumns)
+			}
+			if state.Rootpage <= 0 || state.SQL == "" || len(state.Columns) == 0 {
+				t.Fatalf("incomplete startup index metadata: %+v", state)
+			}
+		}
+		return indexes
+	}
+	var indexesBefore []indexState
+	if db.Dialector.Name() == "sqlite" {
+		indexesBefore = readIndexes()
 	}
 	var logs bytes.Buffer
 	queryDB := db.Session(&gorm.Session{Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Info, ParameterizedQueries: true})})
@@ -208,11 +246,15 @@ func assertCleanStartupSkipsBackfillUpdates(t *testing.T, db *gorm.DB) {
 		t.Fatal(errMigrate)
 	}
 	if db.Dialector.Name() == "sqlite" {
-		if errSchema := db.Raw("PRAGMA schema_version").Scan(&schemaAfter).Error; errSchema != nil {
-			t.Fatal(errSchema)
+		// The global DDL counter also changes for the unchanged billing-model-price index.
+		if indexesAfter := readIndexes(); !reflect.DeepEqual(indexesAfter, indexesBefore) {
+			t.Errorf("clean startup changed fleet index identity/definitions: before=%+v after=%+v", indexesBefore, indexesAfter)
 		}
-		if schemaAfter != schemaBefore {
-			t.Errorf("clean startup rebuilt schema/indexes: schema_version %d -> %d", schemaBefore, schemaAfter)
+		// Rootpages can be reused after a rebuild, so also reject destructive recorded SQL.
+		sql := strings.NewReplacer(`"`, "", "`", "").Replace(logs.String())
+		rebuild := regexp.MustCompile(`(?i)\bDROP\s+INDEX\s+(IF\s+EXISTS\s+)?(main\.)?(` + strings.Join(indexNames, "|") + `)\b|\bREINDEX\b|\b(DROP\s+TABLE\s+(IF\s+EXISTS\s+)?|ALTER\s+TABLE\s+)(main\.)?(usage|billing_charge)\b`)
+		if statement := rebuild.FindString(sql); statement != "" {
+			t.Errorf("clean startup rebuilt fleet indexes: %s", statement)
 		}
 	}
 	for _, statement := range []string{`UPDATE "usage"`, "UPDATE `usage`", `UPDATE "billing_charge"`, "UPDATE `billing_charge`"} {
