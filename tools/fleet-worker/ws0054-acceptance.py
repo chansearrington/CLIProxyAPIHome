@@ -57,10 +57,11 @@ def opener():
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
 
-def request_json(url, key, body=None):
-    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
-        headers={'Authorization': 'Bearer '+key, 'x-api-key': key,
-                 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01'})
+def request_json(url, key, body=None, anthropic=True):
+    headers = {'Authorization': 'Bearer '+key, 'Content-Type': 'application/json'}
+    if anthropic:
+        headers.update({'x-api-key': key, 'anthropic-version': '2023-06-01'})
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(), headers=headers)
     try:
         started = time.monotonic()
         with opener().open(req, timeout=90) as response:
@@ -75,7 +76,15 @@ def request_json(url, key, body=None):
 
 
 def own_key():
-    providers = json.loads((Path.home()/'.openclaw/openclaw.json').read_bytes())['models']['providers']
+    config = json.loads((Path.home()/'.openclaw/openclaw.json').read_bytes())
+    if 'models' not in config:
+        # Claude-only laptop: no OpenClaw providers; its node key is the 0600 apiKeyHelper cache.
+        cache = Path.home()/'.config/cpa-home/client-key'
+        require(cache.is_file() and (cache.stat().st_mode & 0o077) == 0, 'own_key_unavailable')
+        value = cache.read_text().strip()
+        require(len(value) >= 32, 'own_key_unavailable')
+        return value
+    providers = config['models']['providers']
     keys = set()
     for provider in providers.values():
         url = urllib.parse.urlparse(provider.get('baseUrl', ''))
@@ -84,6 +93,8 @@ def own_key():
         value = provider.get('apiKey', '')
         if value.startswith('${') and value.endswith('}'):
             value = os.environ.get(value[2:-1], '')
+            if not value:
+                continue  # Gateway-only env reference, unset in a non-interactive SSH shell; a literal entry remains.
         require(isinstance(value, str) and bool(value), 'own_key_unavailable')
         keys.add(value)
     require(len(keys) == 1, 'own_key_missing_or_ambiguous')
@@ -92,7 +103,8 @@ def own_key():
 
 def node_probe(_payload):
     key = own_key()
-    catalog, _, _ = request_json(NODE_URL+'/v1/models', key)
+    # The anthropic-version header makes CPA return only its Claude-format list (no GPT models).
+    catalog, _, _ = request_json(NODE_URL+'/v1/models', key, anthropic=False)
     models = {row['id'] for row in catalog['data']}
     haikus = [m for m in models if re.fullmatch(r'claude-haiku-\d[\d.-]*', m)]
     require(haikus and 'gpt-6.2-sol' in models, 'required_catalog_model_missing')

@@ -309,6 +309,30 @@ class AcceptanceTest(unittest.TestCase):
                 self.assertRaisesRegex(proof.ProofError, 'stability_changed'):
             proof.finish('/synthetic/ready-boundary.json', first, [self.probe()])
 
+    def test_own_key_skips_unset_env_reference_but_keeps_literal(self):
+        with tempfile.TemporaryDirectory() as home:
+            (Path(home)/'.openclaw').mkdir()
+            providers = {'gui': {'baseUrl': 'http://127.0.0.1:18317', 'apiKey': 'fake-literal'},
+                         'lite': {'baseUrl': 'http://127.0.0.1:18317/v1', 'apiKey': '${WS54_UNSET_TEST}'},
+                         'other': {'baseUrl': 'http://127.0.0.1:9999', 'apiKey': 'ignored'}}
+            (Path(home)/'.openclaw/openclaw.json').write_text(json.dumps({'models': {'providers': providers}}))
+            with patch.object(proof.Path, 'home', return_value=Path(home)), patch.dict(proof.os.environ, {}, clear=False):
+                proof.os.environ.pop('WS54_UNSET_TEST', None)
+                self.assertEqual(proof.own_key(), 'fake-literal')
+                providers['gui']['apiKey'] = '${WS54_UNSET_TEST}'
+                (Path(home)/'.openclaw/openclaw.json').write_text(json.dumps({'models': {'providers': providers}}))
+                with self.assertRaises(proof.ProofError):
+                    proof.own_key()
+            (Path(home)/'.openclaw/openclaw.json').write_text(json.dumps({'gateway': {}}))
+            (Path(home)/'.config/cpa-home').mkdir(parents=True)
+            cache = Path(home)/'.config/cpa-home/client-key'
+            cache.write_text('k'*64+'\n'); cache.chmod(0o600)
+            with patch.object(proof.Path, 'home', return_value=Path(home)):
+                self.assertEqual(proof.own_key(), 'k'*64)
+                cache.chmod(0o644)
+                with self.assertRaises(proof.ProofError):
+                    proof.own_key()
+
 
 if __name__ == '__main__':
     unittest.main()
