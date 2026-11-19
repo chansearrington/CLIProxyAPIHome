@@ -101,6 +101,41 @@ func TestFleetStatusMasksHookAndPolicyForceIsAudited(t *testing.T) {
 	}
 }
 
+func TestFleetReviewAuditsCallerAndRejectsInactiveHold(t *testing.T) {
+	db, cleanup := openManagementLogTestDB(t)
+	defer cleanup()
+	repo := cluster.NewRepository(db)
+	state := fleet.State{Schema: 1, Policy: fleet.Policy{IntervalSeconds: 3600}, Latest: &fleet.Release{Version: "8.0.30"}}
+	raw, errEncode := json.Marshal(state)
+	if errEncode != nil {
+		t.Fatal(errEncode)
+	}
+	if swapped, errSwap := repo.FleetSwap(context.Background(), nil, false, raw); errSwap != nil || !swapped {
+		t.Fatal(errSwap)
+	}
+	h := NewHandler(repo, nil, "home", 8327)
+	router := gin.New()
+	router.POST("/fleet/releases/:version/:action", h.ReviewFleetRelease)
+	for _, tc := range []struct {
+		action string
+		code   int
+	}{{"hold", http.StatusConflict}, {"approve", http.StatusOK}, {"hold", http.StatusOK}, {"hold", http.StatusConflict}} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/fleet/releases/8.0.30/"+tc.action, nil)
+		request.RemoteAddr = "192.0.2.11:1234"
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != tc.code {
+			t.Fatalf("%s: %d %s", tc.action, recorder.Code, recorder.Body.String())
+		}
+	}
+	stored, _ := fleet.New(repo).Status(context.Background())
+	for _, event := range stored.History {
+		if event.Operation == "review" && event.Caller != "192.0.2.11:1234" {
+			t.Fatal("review caller not audited")
+		}
+	}
+}
+
 func TestFleetPolicyPersistsAndRejectsInvalidChanges(t *testing.T) {
 	db, cleanup := openManagementLogTestDB(t)
 	defer cleanup()

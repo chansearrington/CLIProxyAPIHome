@@ -2,7 +2,6 @@ package management
 
 import (
 	"net/http"
-	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/fleet"
@@ -16,11 +15,7 @@ func (h *Handler) GetFleet(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "fleet_state_failed", errState)
 		return
 	}
-	if endpoint, errURL := url.Parse(state.Policy.AnnouncementURL); errURL == nil && endpoint.Host != "" {
-		state.Policy.AnnouncementURL = endpoint.Scheme + "://" + endpoint.Host
-	} else {
-		state.Policy.AnnouncementURL = ""
-	}
+	state.Policy.AnnouncementURL = fleet.MaskAnnouncementURL(state.Policy.AnnouncementURL)
 	c.JSON(http.StatusOK, state)
 }
 
@@ -74,7 +69,7 @@ func (h *Handler) ReviewFleetRelease(c *gin.Context) {
 	}
 	ctx, cancel := h.requestContext(c)
 	defer cancel()
-	if errReview := fleet.New(h.repo).Review(ctx, c.Param("version"), action == "approve"); errReview != nil {
+	if errReview := fleet.New(h.repo).Review(ctx, c.Param("version"), action == "approve", c.Request.RemoteAddr); errReview != nil {
 		respondError(c, http.StatusConflict, "fleet_review_failed", errReview)
 		return
 	}

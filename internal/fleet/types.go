@@ -52,11 +52,13 @@ type NodeState struct {
 }
 
 type Release struct {
-	Version       string `json:"version"`
-	URL           string `json:"url"`
-	ArchiveSHA256 string `json:"archive_sha256"`
-	SHA256        string `json:"sha256"`
-	Size          int64  `json:"size"`
+	Version        string    `json:"version"`
+	URL            string    `json:"url"`
+	ArchiveSHA256  string    `json:"archive_sha256"`
+	SHA256         string    `json:"sha256"`
+	Size           int64     `json:"size"`
+	ArchiveSize    int64     `json:"archive_size,omitempty"`
+	AssetUpdatedAt time.Time `json:"asset_updated_at,omitzero"`
 }
 
 type Job struct {
@@ -88,6 +90,8 @@ type Rollout struct {
 	Error               string               `json:"error,omitempty"`
 	Rollback            []string             `json:"rollback,omitempty"`
 	RollbackNodes       []string             `json:"rollback_nodes,omitempty"`
+	RollbackStartedAt   time.Time            `json:"rollback_started_at"`
+	RollbackUnannounced bool                 `json:"rollback_unannounced,omitempty"`
 	RollbackAnnounced   bool                 `json:"rollback_announced,omitempty"`
 	RollbackFailedNodes []string             `json:"rollback_failed_nodes,omitempty"`
 	RollbackFailed      bool                 `json:"rollback_failed,omitempty"`
@@ -121,6 +125,7 @@ type Announcement struct {
 type Notice struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
+	Attempts  int       `json:"attempts,omitempty"`
 	WindowID  string    `json:"window_id"`
 	Announcement
 }
@@ -143,6 +148,7 @@ type State struct {
 	Active           *Job                 `json:"active,omitempty"`
 	Rollout          *Rollout             `json:"rollout,omitempty"`
 	Latest           *Release             `json:"latest,omitempty"`
+	Accepted         *Release             `json:"accepted_release,omitempty"`
 	LastCheck        time.Time            `json:"last_check"`
 	CheckLease       time.Time            `json:"check_lease"`
 	CheckError       string               `json:"check_error,omitempty"`

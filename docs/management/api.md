@@ -4863,8 +4863,8 @@ Returns database-backed `schema`, `revision`, `policy`, per-certificate `nodes`,
 `latest` CPA release, `last_check`, `check_error`, an optional `active` task, optional `rollout`,
 and the last 100 `history` events. Task lease tokens and catalog metadata are omitted/redacted
 from Management reads. `policy.announcement_url` is masked to scheme and host; retain the
-original configured endpoint separately rather than copying this masked value into a policy
-write. Node IDs are the existing mTLS client certificate IDs. Forced changes record `force:true`
+original configured endpoint separately when editing it. A PUT matching the stored endpoint's
+masked scheme/host means unchanged, preserving its full path without rescheduling. Node IDs are the existing mTLS client certificate IDs. Forced changes record `force:true`
 and the caller's remote address (never the key itself) in history.
 
 `check_error: "release_requires_review"` means the latest stable release is outside the current
@@ -4875,11 +4875,15 @@ instant, when provided; `check_retry_at` is Home's earliest retry (at least the 
 interval, and at least the reset plus one minute or `Retry-After`, capped at six hours).
 Untrusted headers cannot postpone checks indefinitely. Policy writes do not bypass that backoff.
 An unchanged tag, URL and published asset digest reuse the already verified artifact without
-re-downloading its checksums or archive. Release checks continue while patch updates or fleet maintenance are paused;
+re-downloading its checksums or archive. When a digest is absent, archive `size` and `updated_at`
+are compared instead; missing metadata forces verification. `latest.archive_size` and
+`latest.asset_updated_at` persist that Home-only cache metadata and are not sent to workers. Release checks continue while patch updates or fleet maintenance are paused;
 no GitHub token is required. Offline or unregistered executors cannot be mistaken for proof.
 
 `rollout.release` is the exact verified artifact pinned to the announced target, independent of
-later `latest` discoveries. `rollout.window` contains `id`, `window_start`, ordered node IDs in
+later `latest` discoveries. State `accepted_release` retains the last completed required target,
+independent of a newer pending rollout. Worker attestations still require matching current
+required-node binaries. `rollout.window` contains `id`, `window_start`, ordered node IDs in
 `nodes`, `announced_at`, `started_at`, `reminder` and `closed`. `rollout.optional_windows` maps
 optional node IDs to their own windows. `announcements` is the durable pending delivery queue;
 `announcement_error`, `announcement_retry_at`, and `announcement_lease` show delivery health.
@@ -4898,7 +4902,7 @@ credentials or selected agent models. Initial policy is disabled. Example:
   "catalog_sync": true,
   "patch_updates": true,
   "announcement_url": "https://hooks.example.invalid/fleet-announcements",
-  "optional_window": "02:00",
+  "optional_window": "",
   "interval_seconds": 3600,
   "nodes": [
     {"id": "00000000-0000-4000-8000-000000000001", "name": "Always-on canary", "required": true},
@@ -4919,8 +4923,10 @@ returns `409`. Node membership/order changes with pending windows also return `4
 release first, or include `force:true` in the policy body to close pending windows and hold the
 partial rollout without discarding completed-node receipts. Force cannot erase an active task.
 Node renames alone do not count as membership changes. Changing the hook or optional window
-clock re-announces open windows with a fresh notice period. `optional_window` is HH:MM in
-America/Chicago (default 02:00). Disabling `enabled` or `patch_updates` sends one `postponed`
+clock re-announces affected open windows with a fresh notice period, never earlier than an
+already postponed start. `optional_window` is HH:MM in America/Chicago when configured;
+its default empty value disables automatic optional upgrades. Set an operator-chosen time
+when the optional laptop is expected awake (for example `09:30`) to enable its own windows. Disabling `enabled` or `patch_updates` sends one `postponed`
 notice with `reason:"paused"` for each announced open window. Never-announced windows close
 without a postponement message. Role separation and webhook signing are out of scope; do not
 embed tokens or credentials anywhere in `announcement_url`.
@@ -4935,8 +4941,9 @@ optional asset digest, and extracted executable hash before offering a task. Loc
 those hashes again, preserve the previous binary, restart their node in place and complete native
 Claude/Codex probes. Failed upgrades queue reverse-order rollback; that release then remains
 latched until explicitly reviewed. A failed optional-node upgrade reverses only that optional
-node, never healthy required nodes. All reverse jobs require a delivered `rollback` notice
-first. Genuine upstream quota is never reset or bypassed.
+node, never healthy required nodes. Reverse jobs wait for a delivered `rollback` notice, but a 15-minute hook outage must not
+strand a broken node: after that wait they proceed, record `rollback_unannounced`, and keep
+retrying the notice. Genuine upstream quota is never reset or bypassed.
 
 #### Announced windows and webhook contract
 
@@ -4944,7 +4951,8 @@ A new eligible target schedules the next **02:00 America/Chicago** window at lea
 away. Time-zone data is embedded, including DST; on the spring-forward day when 02:00 does
 not exist, the window begins at 03:00. A window admits new upgrade jobs for one hour. An
 already running task must always reconcile, even after the window closes. An upgrade job that
-has never reported `running` is voided when its window closes and cannot resume on a later wake. Offline required
+has never reported `running` is voided once both its window and lease expire; a fresh lease
+survives the boundary for its first heartbeat. Offline required
 nodes or a missed window cause a next-night postponement and a fresh announcement. Optional
 nodes have separate announcements and must report awake during their own configured window.
 An optional node that has not polled for 24 hours gets no recurring nightly announcements;
@@ -4980,18 +4988,20 @@ than five minutes later. Pending notices and receipts survive restart. Delivery 
 once: the hook must deduplicate `Idempotency-Key`, which is the persisted notice ID (not part of
 the JSON body). Payloads contain the four base fields above plus optional `reason` and
 `failed_nodes`, never credentials or provider response text. Delivery failures log only phase
-and HTTP status, not endpoint paths, queries or error bodies. The queue is capped at 20 and
-receipts older than 24 hours expire; history records expiry/capping. Unacknowledged gating
-notices regenerate safely. A permanently rejected 4xx notice fails that window and triggers
+and HTTP status, not endpoint paths, queries or error bodies. Ordinary notices are capped at
+20 and expire after 24 hours; history records expiry/capping. `done`, `rollback`, `rolled_back`
+and `rollback_failed` are never dropped on 4xx, expiry or capping: they retry indefinitely with
+backoff capped at one hour, outside the ordinary-notice limit. Unacknowledged gating notices
+regenerate safely. A permanently rejected 4xx notice fails that window and triggers
 re-announcement instead of leaving an obsolete receipt at the head of the queue forever.
 
 New dispatch requires successful `scheduled` delivery at least one hour before the window,
 plus successful `reminder` and `started` delivery. Missing or failed delivery blocks upgrades;
 a failed gating notice postpones to a newly announced next-night window. Delayed delivery
 that leaves less than one hour also reschedules. Completion notices remain queued until
-accepted or expire under the bounded queue rules; no following upgrade dispatches while a
-notice remains queued. Reverse rollback also requires its own delivered announcement;
-reconciliation of already running work remains available for safety. Catalog reconciliation continues normally while
+accepted; no following upgrade dispatches while a notice remains queued. Reverse rollback
+waits up to 15 minutes for its announcement, then proceeds for safety while continuing retries.
+Reconciliation of already running work remains available. Catalog reconciliation continues normally while
 waiting for a patch window; one window may bundle the pinned CPA patch with existing catalog
 work. Home image upgrades remain manual, outside this API.
 
@@ -5022,7 +5032,10 @@ Records an explicit decision on the exact currently verified candidate. Approval
 announced serial rollout, including a major/minor transition, or retries a previously failed
 candidate; it never bypasses the window or notice gate. Hold cancels pending windows and
 prevents further installation of that candidate. Hold is allowed on a partial rollout and retains
-`Completed` receipts; an already running task still reconciles. Re-approving the held target
+`Completed` receipts; an already running task still reconciles. Hold is accepted only in
+`upgrade` and `rollback` phases; other phases return a clear `409`. Approve and hold both
+record the remote caller in history. Finished reverse attempts remove those nodes from
+`Completed` so a retry cannot falsely declare old binaries complete. Re-approving the held target
 announces a fresh window for remaining nodes without erasing those receipts. Approval clears
 `check_error`. A mismatched candidate, an active task on approval, or replacing an unheld partial
 rollout/rollback returns `409`. These routes do not accept arbitrary URLs, shell commands or artifacts.
@@ -5043,7 +5056,7 @@ receives the Management secret and cannot select another node ID:
 
 Supported operations are `catalog`, `upgrade` and `rollback`; arbitrary command execution is not
 part of the protocol. An expired running operation blocks fleet advancement until its owner
-reconciles its retained receipt; an unstarted upgrade is voided after its announced window. A dropped acknowledgement is safe to retry. Unrevoked certificate identity,
+reconciles its retained receipt; an unstarted upgrade is voided after both its window and lease expire. A dropped acknowledgement is safe to retry. Unrevoked certificate identity,
 policy registration, task ownership and lease token are checked independently. Home-only state
 uses the reserved `__home:fleet:` database KV namespace, inaccessible through general RESP KV commands.
 

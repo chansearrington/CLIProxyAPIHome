@@ -97,9 +97,11 @@ func fetchStableRelease(ctx context.Context, client *http.Client, previous *Rele
 		Prerelease bool   `json:"prerelease"`
 		Draft      bool   `json:"draft"`
 		Assets     []struct {
-			Name   string `json:"name"`
-			URL    string `json:"browser_download_url"`
-			Digest string `json:"digest"`
+			Name      string    `json:"name"`
+			URL       string    `json:"browser_download_url"`
+			Digest    string    `json:"digest"`
+			Size      int64     `json:"size"`
+			UpdatedAt time.Time `json:"updated_at"`
 		} `json:"assets"`
 	}
 	if errDecode := json.Unmarshal(raw, &release); errDecode != nil {
@@ -111,10 +113,14 @@ func fetchStableRelease(ctx context.Context, client *http.Client, previous *Rele
 	}
 	name := "CLIProxyAPI_" + version + "_darwin_aarch64.tar.gz"
 	archiveURL, checksURL, assetDigest := "", "", ""
+	var assetSize int64
+	var assetUpdatedAt time.Time
 	for _, asset := range release.Assets {
 		if asset.Name == name {
 			archiveURL = asset.URL
 			assetDigest = asset.Digest
+			assetSize = asset.Size
+			assetUpdatedAt = asset.UpdatedAt
 		}
 		if asset.Name == "checksums.txt" {
 			checksURL = asset.URL
@@ -124,8 +130,12 @@ func fetchStableRelease(ctx context.Context, client *http.Client, previous *Rele
 	if !strings.HasPrefix(archiveURL, expectedPrefix) || !strings.HasPrefix(checksURL, expectedPrefix) {
 		return Release{}, &ReleaseCheckError{Code: "unexpected_release_asset_origin"}
 	}
-	if previous != nil && previous.Version == version && previous.URL == archiveURL && assetDigest == "sha256:"+previous.ArchiveSHA256 && hashPattern.MatchString(previous.ArchiveSHA256) {
-		return *previous, nil
+	if previous != nil && previous.Version == version && previous.URL == archiveURL && hashPattern.MatchString(previous.ArchiveSHA256) {
+		sameDigest := assetDigest == "sha256:"+previous.ArchiveSHA256
+		sameMetadata := assetDigest == "" && assetSize > 0 && assetSize == previous.ArchiveSize && !assetUpdatedAt.IsZero() && assetUpdatedAt.Equal(previous.AssetUpdatedAt)
+		if sameDigest || sameMetadata {
+			return *previous, nil
+		}
 	}
 	checks, errChecks := read(checksURL, 1<<20)
 	if errChecks != nil {
@@ -182,7 +192,7 @@ func fetchStableRelease(ctx context.Context, client *http.Client, previous *Rele
 		if size != header.Size {
 			return Release{}, &ReleaseCheckError{Code: "binary_size_mismatch"}
 		}
-		return Release{Version: version, URL: archiveURL, ArchiveSHA256: actual, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size}, nil
+		return Release{Version: version, URL: archiveURL, ArchiveSHA256: actual, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, ArchiveSize: assetSize, AssetUpdatedAt: assetUpdatedAt}, nil
 	}
 	return Release{}, &ReleaseCheckError{Code: "binary_missing_from_release_archive"}
 }

@@ -4838,8 +4838,9 @@ Home 已在启动时及每三小时刷新模型定义。维护策略、任务租
 
 返回 `policy`、`nodes`、已校验的 `latest`、`last_check`、`check_error`、`check_retry_at`、
 `rate_limit_reset`、`active`、`rollout`、`history`。任务令牌与模型目录元数据被隐藏；
-`policy.announcement_url` 仅显示协议和主机。请单独保留完整配置地址，不要将已遮蔽的地址复制回策略。
-`rollout.release` 固定为已公告的精确版本及校验值，不随 `latest` 改变。
+`policy.announcement_url` 仅显示协议和主机。PUT 若与已存地址的遮蔽形式相同，则视为未修改，保留完整地址且不重排窗口。
+`rollout.release` 固定为已公告的精确版本及校验值，不随 `latest` 改变。独立的 `accepted_release`
+保存上次已完成的必需节点目标，而非新排队的版本；执行器确认仍要求当前必需节点实际二进制匹配。
 `rollout.window` 包含 `id`、`window_start`、有序 `nodes`、`announced_at`、`started_at`、
 `reminder`、`closed`；`optional_windows` 保存可选节点各自的窗口。
 `announcements`、`announcement_error`、`announcement_retry_at`、`announcement_lease` 显示投递状态；
@@ -4850,7 +4851,8 @@ Home 已在启动时及每三小时刷新模型定义。维护策略、任务租
 `archive_checksum_mismatch`；跨主/次版本需要 `release_requires_review`。
 `rate_limit_reset` 显示 GitHub 的实际重置时刻，`check_retry_at` 结合检查间隔、重置后一分钟及
 `Retry-After`，但退避最多六小时；写入策略不能绕过退避。tag、下载地址及已发布摘要未变时复用已验证
-文件，不重新下载校验和与压缩包。
+文件，不重新下载校验和与压缩包。没有摘要时比较 tag、size、updated_at；缺少元数据时重新校验。
+`latest.archive_size`、`latest.asset_updated_at` 仅用于 Home 缓存，不发送给现有执行器。
 
 ### PUT `/fleet/policy`
 
@@ -4858,19 +4860,20 @@ Home 已在启动时及每三小时刷新模型定义。维护策略、任务租
 `announcement_url` 和 `optional_window`。初始禁用；间隔 300–86400 秒；最多 64 个唯一证书 UUID，
 节点包含 `id`、`name`、`required`。启用补丁升级需要必需节点及 HTTP(S) 公告地址；地址不能含 URL 用户信息、
 fragment、token 或凭据。旧策略没有公告地址时仍可读取，但不能开始新升级。签名与角色隔离暂不在范围内。
-`optional_window` 为 America/Chicago 的 HH:MM，默认 `02:00`。
+`optional_window` 配置后为 America/Chicago 的 HH:MM；默认空字符串表示不自动升级可选节点。
+请明确设置预计笔记本在线的时间（如 `09:30`），才会为它安排独立窗口。必需节点仍默认 02:00。
 
 必需节点按配置顺序串行执行；可选离线节点不阻止必需节点。正在执行任务或投递公告时，策略修改返回 `409`。
 开放窗口期间改变成员、顺序或必需角色也返回 `409`；仅改名字不算成员变化。先 hold，或在策略请求中加入
 `force:true` 关闭待处理窗口、保留 Completed 记录并挂起部分完成的发布，然后修改节点。force 不能删除活动任务。
-修改公告地址或可选窗口时间会重新公告开放窗口。关闭 enabled 或 patch_updates 时，对已公告的窗口仅发送一次
+修改公告地址或可选窗口时间会重新公告受影响的开放窗口，但绝不早于已延期的开始时间。关闭 enabled 或 patch_updates 时，对已公告的窗口仅发送一次
 `postponed`，`reason:"paused"`；从未公告的窗口不发送延期消息。
 
 ### 已公告窗口与 webhook
 
 默认下一个 America/Chicago **02:00**，成功公告必须至少提前一小时。内置 DST 数据；春季不存在的 02:00
 使用 03:00。窗口可发出新升级任务的时长为一小时。已报告 running 的任务继续对账；从未报告 running 的升级
-任务在窗口关闭后作废，不能在稍后唤醒时恢复。错过窗口或必需节点不在线时重新安排下一晚。
+任务在窗口和当前租约都过期后作废；窗口最后一分钟发出的任务仍保留有效租约等待首次心跳。错过窗口或必需节点不在线时重新安排下一晚。
 可选节点有独立公告，必须在自己的窗口内在线；超过 24 小时未轮询则停止每晚重复公告，下次轮询再安排新窗口，
 绝不醒来就升级。后来发现的新版本需要自己的公告与窗口；可通过 postponed 替代旧可选窗口。
 
@@ -4885,15 +4888,17 @@ phase 包括 `scheduled`、`reminder`、`started`、`done`、`rollback`、`rolle
 `postponed`。可选 `reason` 解释暂停、hold、替代或睡眠；`failed_nodes` 列出回滚失败节点。
 `nodes` 是执行顺序；rollback 为执行前公告，rolled_back 表示全部成功，rollback_failed 的 nodes 为所有尝试节点，
 其中 failed_nodes 之外的节点成功。可选节点升级失败仅回滚该可选节点，不回滚健康的必需节点。
-所有回滚派发前也必须成功投递 rollback；失败版本保留锁定状态，失败详情同时保存在历史和
+回滚先等待 rollback 公告；若投递失败达 15 分钟，为恢复故障节点仍派发回滚，记录 rollback_unannounced，
+并持续重试公告。失败版本保留锁定状态，失败详情同时保存在历史和
 `rollout.rollback_failed_nodes`。真实上游配额不会重置或绕过。
 
 投递超时 20 秒，不跟随重定向，失败至少五分钟后重试。公告状态跨重启保存，投递至少一次；接收方必须用
 `Idempotency-Key` 去重，该值就是持久化 notice ID，位于请求头而非 JSON。日志仅包含 phase 和 HTTP 状态码，
-不包含 URL 路径、查询参数或响应正文。队列最多 20 条，超过 24 小时的消息过期，历史记录丢弃/过期；未确认的
-门控公告会安全重建。永久 4xx 拒绝不会让旧消息永久堵塞队列，而会使相关窗口失败并重新公告。
+不包含 URL 路径、查询参数或响应正文。普通消息最多 20 条，超过 24 小时过期，历史记录丢弃/过期；未确认的
+门控公告安全重建。done、rollback、rolled_back、rollback_failed 不受此数量或期限限制，4xx 也不删除，
+持续退避重试，间隔最多一小时。普通旧消息的永久 4xx 拒绝会使相关窗口失败并重新公告，而不是永久堵塞队列。
 只有 scheduled（至少提前一小时）、reminder 和 started 都成功后才能派发升级；投递太晚或失败则安排下一晚。
-完成消息在接受或过期前留队，队列非空时不派发后续升级。已运行任务始终可对账。等待补丁窗口期间目录同步照常，
+完成消息一直留队直到被接受，队列非空时不派发后续升级；回滚有上述 15 分钟安全例外。已运行任务始终可对账。等待补丁窗口期间目录同步照常，
 同一公告窗口可包含固定 CPA 补丁及现有目录协调；Home 镜像升级仍是人工操作。
 
 ### POST `/fleet/postpone`
@@ -4909,7 +4914,9 @@ DST 变化时可以是 23 或 25 小时。若已过去，则使用仍满足一�
 ### POST `/fleet/releases/:version/approve` / `hold`
 
 approve 允许已校验候选版本（包括跨主/次版本或重试失败版本）并安排公告窗口，绝不跳过公告；同时清除 check_error。
-hold 可停止部分完成发布的后续派发而不丢失 Completed，已经运行的任务仍可对账。再次批准相同 held 目标时保留这些
+hold 仅接受 upgrade 或 rollback 阶段，其他阶段明确返回 409；可停止部分完成发布的后续安装而不丢失
+Completed，已经运行的任务仍可对账。完成回滚尝试后从 Completed 移除对应节点，避免重试时误报旧版本已完成。
+approve 和 hold 都记录调用方远程地址。再次批准相同 held 目标时保留这些
 记录，为剩余节点安排新公告窗口。批准时有活动任务、目标不匹配或替换未 hold 的部分发布/回滚，返回 409。
 不接受任意下载地址、shell 命令或文件。
 

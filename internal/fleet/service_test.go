@@ -46,7 +46,7 @@ func fixture(t *testing.T) (*Service, *memoryStore) {
 	s := New(store)
 	s.Announce = func(context.Context, string, Notice) error { return nil }
 	s.Catalog = func() map[string]map[string]any { return map[string]map[string]any{"shared": {"name": "Shared"}} }
-	policy := Policy{Enabled: true, CatalogSync: false, PatchUpdates: true, IntervalSeconds: 3600, AnnouncementURL: "https://hooks.example.invalid/fleet", Nodes: []NodePolicy{{ID: testIDs[0], Name: "Canary", Required: true}, {ID: testIDs[1], Name: "Second", Required: true}, {ID: testIDs[2], Name: "Laptop", Required: false}}}
+	policy := Policy{Enabled: true, CatalogSync: false, PatchUpdates: true, IntervalSeconds: 3600, AnnouncementURL: "https://hooks.example.invalid/fleet", OptionalWindow: "02:00", Nodes: []NodePolicy{{ID: testIDs[0], Name: "Canary", Required: true}, {ID: testIDs[1], Name: "Second", Required: true}, {ID: testIDs[2], Name: "Laptop", Required: false}}}
 	if errPolicy := s.SetPolicy(context.Background(), policy); errPolicy != nil {
 		t.Fatal(errPolicy)
 	}

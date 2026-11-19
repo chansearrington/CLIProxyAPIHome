@@ -127,7 +127,7 @@ func TestQueueBoundsExpiryAndPermanentRejectionDoNotStickOrDrift(t *testing.T) {
 	if errChange := s.change(context.Background(), func(st *State, now time.Time) error {
 		st.Rollout = nil
 		for i := 0; i < 50; i++ {
-			queueNotice(st, &Window{ID: fmt.Sprint(i), WindowStart: now, Nodes: testIDs[:1]}, "8.0.30", "done", now.Add(-25*time.Hour))
+			queueNotice(st, &Window{ID: fmt.Sprint(i), WindowStart: now, Nodes: testIDs[:1]}, "8.0.30", "scheduled", now.Add(-25*time.Hour))
 		}
 		return nil
 	}); errChange != nil {
@@ -143,6 +143,31 @@ func TestQueueBoundsExpiryAndPermanentRejectionDoNotStickOrDrift(t *testing.T) {
 	st, _ = s.Status(context.Background())
 	if len(st.Notices) != 0 || st.NoticeError != "" {
 		t.Fatal("expired receipts block fleet forever")
+	}
+}
+
+func TestRejectedOldPostponementCannotUndoOperatorDelay(t *testing.T) {
+	s, store, _ := pending(t)
+	deliverAll(t, s)
+	if errPostpone := s.Postpone(context.Background(), "8.0.30", "", false); errPostpone != nil {
+		t.Fatal(errPostpone)
+	}
+	st, _ := s.Status(context.Background())
+	delayed := st.Rollout.Window.WindowStart
+	s.Announce = func(_ context.Context, _ string, n Notice) error {
+		if n.Phase == "postponed" {
+			return &announcementError{Status: 400}
+		}
+		return nil
+	}
+	if errDeliver := s.deliverNotice(context.Background()); errDeliver != nil {
+		t.Fatal(errDeliver)
+	}
+	store.now = store.now.Add(5 * time.Minute)
+	deliverAll(t, s)
+	st, _ = s.Status(context.Background())
+	if st.Rollout.Window.WindowStart.Before(delayed) || st.Rollout.Window.AnnouncedAt.IsZero() || len(st.Notices) != 0 {
+		t.Fatal("obsolete 4xx notice undid postponement or blocked its reannouncement")
 	}
 }
 
@@ -186,7 +211,7 @@ func TestUnstartedJobsAreVoidedAfterWindowButRunningJobsReconcile(t *testing.T) 
 			store.now = store.now.Add(2 * time.Hour)
 			resume, _ := s.Plan(context.Background(), testIDs[0], inv("8.0.29"))
 			if running {
-				if resume.Job == nil || resume.Job.ID != first.Job.ID {
+				if resume.Job == nil || resume.Job.ID != first.Job.ID || resume.Job.Running {
 					t.Fatal("running job lost reconciliation")
 				}
 			} else {

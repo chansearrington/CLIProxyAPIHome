@@ -31,6 +31,18 @@ func validateAnnouncementURL(raw string) error {
 	return nil
 }
 
+func MaskAnnouncementURL(raw string) string {
+	u, errURL := url.Parse(raw)
+	if errURL != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func importantNotice(phase string) bool {
+	return phase == "done" || phase == "rollback" || phase == "rolled_back" || phase == "rollback_failed"
+}
+
 func nextWindow(earliest time.Time) time.Time { return nextWindowAt(earliest, "02:00") }
 
 // On a DST gap, use the first real hour after the gap, never the earlier normalized hour.
@@ -69,8 +81,22 @@ func queueNotice(st *State, w *Window, version, phase string, now time.Time) {
 	st.Notices = append(st.Notices, Notice{ID: uuid.NewString(), WindowID: w.ID, CreatedAt: now, Announcement: Announcement{
 		Phase: phase, TargetVersion: version, WindowStart: w.WindowStart, Nodes: append([]string(nil), w.Nodes...),
 	}})
-	if len(st.Notices) > maxNotices {
-		st.Notices = st.Notices[len(st.Notices)-maxNotices:]
+	ordinary := 0
+	for _, n := range st.Notices {
+		if !importantNotice(n.Phase) {
+			ordinary++
+		}
+	}
+	if ordinary > maxNotices {
+		kept := st.Notices[:0]
+		for _, n := range st.Notices {
+			if !importantNotice(n.Phase) && ordinary > maxNotices {
+				ordinary--
+				continue
+			}
+			kept = append(kept, n)
+		}
+		st.Notices = kept
 		addEvent(st, now, "", "announcement", "queue_capped", version)
 	}
 }
@@ -111,7 +137,7 @@ func findWindow(st *State, id string) *Window {
 func removeWindowNotices(st *State, id string) {
 	kept := st.Notices[:0]
 	for _, n := range st.Notices {
-		if n.WindowID != id {
+		if n.WindowID != id || importantNotice(n.Phase) {
 			kept = append(kept, n)
 		}
 	}
@@ -165,7 +191,7 @@ func pruneNotices(st *State, now time.Time) {
 		if n.CreatedAt.IsZero() {
 			n.CreatedAt = now
 		}
-		if now.Sub(n.CreatedAt) <= 24*time.Hour {
+		if importantNotice(n.Phase) || now.Sub(n.CreatedAt) <= 24*time.Hour {
 			kept = append(kept, n)
 		} else {
 			addEvent(st, now, "", "announcement", "expired", n.TargetVersion)
@@ -180,6 +206,9 @@ func pruneNotices(st *State, now time.Time) {
 
 func queueRollback(st *State, now time.Time) {
 	run := st.Rollout
+	if run.RollbackStartedAt.IsZero() {
+		run.RollbackStartedAt = now
+	}
 	start := now
 	if run.Window != nil {
 		start = run.Window.WindowStart
@@ -189,7 +218,7 @@ func queueRollback(st *State, now time.Time) {
 
 func voidUnstartedJob(st *State, now time.Time) bool {
 	job := st.Active
-	if job == nil || job.Operation != "upgrade" || job.Running || st.Rollout == nil {
+	if job == nil || job.Operation != "upgrade" || job.Running || job.ExpiresAt.After(now) || st.Rollout == nil {
 		return false
 	}
 	w := st.Rollout.Window
@@ -227,6 +256,10 @@ func maintainWindows(st *State, now time.Time) {
 		if st.Active != nil {
 			continue
 		} // Reconcile running work before changing its window.
+		if w.Optional && st.Policy.OptionalWindow == "" {
+			closeWindow(st, w, run.Release.Version, "postponed", "optional_window_unconfigured", now)
+			continue
+		}
 		if w.Optional && len(w.Nodes) > 0 && now.Sub(st.Nodes[w.Nodes[0]].SeenAt) > 24*time.Hour {
 			closeWindow(st, w, run.Release.Version, "postponed", "asleep", now)
 			continue
@@ -424,7 +457,17 @@ func (s *Service) deliverNotice(ctx context.Context) error {
 		w := findWindow(st, notice.WindowID)
 		if errDeliver != nil {
 			st.NoticeError = "announcement_delivery_failed"
-			st.NoticeRetryAt = now.Add(5 * time.Minute)
+			st.Notices[0].Attempts++
+			delay := 5 * time.Minute
+			if importantNotice(notice.Phase) {
+				for attempt := 1; attempt < st.Notices[0].Attempts && delay < time.Hour; attempt++ {
+					delay *= 2
+				}
+				if delay > time.Hour {
+					delay = time.Hour
+				}
+			}
+			st.NoticeRetryAt = now.Add(delay)
 			permanent := status >= 400 && status < 500 && status != 408 && status != 429
 			if w != nil && !w.Closed && (notice.Phase == "scheduled" || notice.Phase == "reminder" || notice.Phase == "started") {
 				if !w.DeliveryFailed {
@@ -435,13 +478,17 @@ func (s *Service) deliverNotice(ctx context.Context) error {
 					reschedule(st, w, notice.TargetVersion, now, start)
 					w.DeliveryFailed = true
 				}
-			} else if permanent && notice.Phase != "rollback" {
+			} else if permanent && !importantNotice(notice.Phase) {
 				// An obsolete/rejected receipt must not block the current window forever.
 				st.Notices = st.Notices[1:]
 				if st.Rollout != nil {
 					for _, pending := range windows(st.Rollout) {
-						if !pending.Closed {
-							reschedule(st, pending, st.Rollout.Release.Version, now, windowTime(st, pending, now.Add(noticeLead)))
+						if !pending.Closed && !pending.AnnouncedAt.IsZero() {
+							start := windowTime(st, pending, now.Add(noticeLead))
+							if !start.After(pending.WindowStart) {
+								start = windowTime(st, pending, pending.WindowStart.Add(time.Second))
+							}
+							reschedule(st, pending, st.Rollout.Release.Version, now, start)
 						}
 					}
 				}
