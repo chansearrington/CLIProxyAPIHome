@@ -1,5 +1,6 @@
 """Source-only manual checks: synthetic shell clock, never Home/Docker/SSH."""
 import ast
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -52,6 +53,26 @@ class ManualTest(unittest.TestCase):
                                ('2026-11-19', '20:00:00+00:00')]:
             with self.subTest(day=day, completed=completed), self.assertRaisesRegex(AssertionError, 'stale_or_late'):
                 check(day, completed)
+
+    def test_recovery_fence_release_fails_visibly_and_tries_every_container(self):
+        text = Path(__file__).resolve().parents[2].joinpath('docs/fleet/ws-0054-upgrade-1110-8076.md').read_text()
+        block = text.split('## Annex R', 1)[1]
+        python = block.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+        release = next(n for n in ast.parse(python).body if isinstance(n, ast.FunctionDef) and n.name == 'release')
+        calls = []
+        class Sub:
+            @staticmethod
+            def run(args, **_):
+                calls.append(tuple(args[:2]))
+            @staticmethod
+            def check_output(args, **_):
+                return json.dumps([{'State': {'Paused': args[2] == 'b'*64}}])
+        namespace = {'subprocess': Sub, 'json': json}
+        exec(compile(ast.Module(body=[release], type_ignores=[]), 'annex-r', 'exec'), namespace)
+        namespace['release'](['a'*64, 'c'*64])
+        with self.assertRaisesRegex(AssertionError, 'could not unpause fenced containers: '+'b'*12):
+            namespace['release'](['a'*64, 'b'*64, 'c'*64])
+        self.assertEqual([c for c in calls if c[0] == 'docker'].count(('docker', 'unpause')), 5)
 
     def test_readiness_deadline_routes_late_success_to_recovery(self):
         section = MANUAL.read_text().split('6 — ONE ACCEPTANCE CONTRACT', 1)[1]
