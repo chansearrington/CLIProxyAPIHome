@@ -45,6 +45,7 @@ class FakeHome:
         self.fail_readback = False
         self.readback_mismatch = False
         self.concurrent_edit = False
+        self.fleet_enabled = True
 
     def call(self, path, body=None):
         self.calls.append(path)
@@ -57,6 +58,8 @@ class FakeHome:
             if self.concurrent_edit and self.calls.count(path) == 3:
                 result[0]["disabled"] = True
             return {"files": result}
+        if path == "/fleet":
+            return {"policy": {"enabled": self.fleet_enabled}}
         if path == "/credentials/fields":
             assert set(body) == {"id", "priority"}
             self.writes.append(body)
@@ -227,6 +230,12 @@ def execution():
             a.backup(rows, backups, NOW + dt.timedelta(seconds=n + 1))
         assert len(list(backups.glob("auto979-config-*.json"))) == 2
         assert unrelated.read_text() == "unrelated targeted backup"
+        paused = FakeHome(rows, details)
+        paused.fleet_enabled = False
+        assert run("shadow", paused) == 0
+        assert run("apply", paused) == 2 and not paused.writes and not (job / "979-STOP.json").exists()
+        assert json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"] == "fleet_maintenance_paused_no_writes"
+        assert len(list(backups.glob("auto979-config-*.json"))) == 2  # no backup taken while paused
         for fail in ("patch", "readback", "mismatch", "concurrent"):
             home = FakeHome(rows, details)
             if fail == "patch":

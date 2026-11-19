@@ -380,6 +380,9 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
             event["reason"] = "apply_deferred_after_gap"
         if mode == "apply" and wanted != live and not rebaseline:
             require(credentials(home, cfg) == rows, "credentials_changed_during_plan")
+            # Upgrades and rollbacks pause Home's fleet policy first; never write during maintenance.
+            policy = home.call("/fleet").get("policy")
+            require(isinstance(policy, dict) and policy.get("enabled") is True, "fleet_maintenance_paused_no_writes")
             wall = clock()
             require(0 <= (wall - now).total_seconds() <= 120, "plan_expired")
             for quota in quotas.values():
