@@ -21,6 +21,9 @@ const usageDedupeKeyBackfillBatchSize = 500
 // with the context carried by db, so startup cancellation stops it.
 func migrateUsageDedupeKeys(db *gorm.DB) error {
 	startedAt := time.Now()
+	if errIndex := db.Exec(`CREATE INDEX IF NOT EXISTS idx_usage_dedupe_pending ON usage(id) WHERE dedupe_key = ''`).Error; errIndex != nil {
+		return errIndex
+	}
 	scanned, keyed, errBackfill := backfillUsageDedupeKeys(db, usageDedupeKeyBackfillBatchSize)
 	if errBackfill != nil {
 		return errBackfill
@@ -76,9 +79,7 @@ func backfillUsageDedupeKeys(db *gorm.DB, batchSize int) (int, int, error) {
 			args = append(args, row.ID, key)
 		}
 
-		// A key that already exists keeps the current row unkeyed: the first keyed
-		// row already deduplicates redeliveries of that event. The explicit nonempty
-		// predicate lets the lookup use the partial index.
+		// The first keyed row deduplicates redeliveries; the nonempty predicate uses the partial index.
 		update := db.Exec(
 			`UPDATE "usage" SET "dedupe_key" = v.usage_key FROM (`+strings.Join(selects, " UNION ALL ")+`) AS v `+
 				`WHERE "usage"."id" = v.usage_id AND "usage"."dedupe_key" = '' `+
@@ -89,6 +90,15 @@ func backfillUsageDedupeKeys(db *gorm.DB, batchSize int) (int, int, error) {
 			return scanned, keyed, update.Error
 		}
 		keyed += int(update.RowsAffected)
+		// Row-specific markers cannot match exec:/sha256: keys and avoid rehashing historical duplicates.
+		ids := make([]uint, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID
+		}
+		if errMark := db.Model(&UsageRecord{}).Where("id IN ? AND dedupe_key = ''", ids).
+			Update("dedupe_key", gorm.Expr("'legacy-duplicate:' || CAST(id AS TEXT)")).Error; errMark != nil {
+			return scanned, keyed, errMark
+		}
 		if len(rows) < batchSize {
 			return scanned, keyed, nil
 		}

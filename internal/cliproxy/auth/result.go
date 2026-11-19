@@ -307,8 +307,10 @@ func (m *Manager) applyResultTransition(auth *Auth, result Result, resultModel s
 		if result.Error != nil {
 			state.LastError = cloneError(result.Error)
 			state.StatusMessage = result.Error.Message
-			auth.LastError = cloneError(result.Error)
-			auth.StatusMessage = result.Error.Message
+			if !preserveRefreshAcquisition {
+				auth.LastError = cloneError(result.Error)
+				auth.StatusMessage = result.Error.Message
+			}
 		}
 		auth.UpdatedAt = now
 		return transition

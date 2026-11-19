@@ -148,13 +148,18 @@ func TestMigrateUsageDedupeKeysKeysEveryLegacyRowAndPreventsDoubleCharge(t *test
 	if keys[old.ID] == "" || keys[recent.ID] == "" {
 		t.Fatalf("legacy rows must be keyed regardless of age: old=%q recent=%q", keys[old.ID], keys[recent.ID])
 	}
-	if keys[duplicate.ID] != "" || keys[crossBatch.ID] != "" {
-		t.Fatalf("pre-existing duplicates must keep an empty key, got %q and %q", keys[duplicate.ID], keys[crossBatch.ID])
+	if keys[duplicate.ID] != fmt.Sprintf("legacy-duplicate:%d", duplicate.ID) || keys[crossBatch.ID] != fmt.Sprintf("legacy-duplicate:%d", crossBatch.ID) {
+		t.Fatalf("pre-existing duplicates must be marked processed, got %q and %q", keys[duplicate.ID], keys[crossBatch.ID])
 	}
 
 	// Rerunning is a no-op; the migration is idempotent.
-	if _, keyedAgain, errAgain := backfillUsageDedupeKeys(db, 2); errAgain != nil || keyedAgain != 0 {
-		t.Fatalf("second backfill keyed=%d err=%v, want 0/nil", keyedAgain, errAgain)
+	if scannedAgain, keyedAgain, errAgain := backfillUsageDedupeKeys(db, 2); errAgain != nil || scannedAgain != 0 || keyedAgain != 0 {
+		t.Fatalf("second backfill scanned=%d keyed=%d err=%v, want 0/0/nil (zero hashing)", scannedAgain, keyedAgain, errAgain)
+	}
+	// A late old-writer row must still be repaired, without revisiting processed duplicates.
+	insertLegacyUsageRow(t, repo, legacyUsagePayload("exec-recent", now.Add(-time.Minute)))
+	if scannedLate, keyedLate, errLate := backfillUsageDedupeKeys(db, 2); errLate != nil || scannedLate != 1 || keyedLate != 0 {
+		t.Fatalf("late repair scanned=%d keyed=%d err=%v, want 1/0/nil", scannedLate, keyedLate, errLate)
 	}
 
 	// The redelivered old event collapses onto its row and is not charged again.

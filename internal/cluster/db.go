@@ -200,6 +200,9 @@ func autoMigratePostgresContext(ctx context.Context, db *gorm.DB, runWhenCurrent
 				if errBaseAmounts := migrateBillingBaseAmounts(lockedDB); errBaseAmounts != nil {
 					return errBaseAmounts
 				}
+				if errDedupe := migrateUsageDedupeKeys(lockedDB); errDedupe != nil {
+					return errDedupe
+				}
 				return migrateUsageServiceTiers(lockedDB)
 			}
 			if errSchema := autoMigrateSchema(lockedDB); errSchema != nil {

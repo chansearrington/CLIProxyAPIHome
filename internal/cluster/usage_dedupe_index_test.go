@@ -58,6 +58,18 @@ func TestUsageDedupeQueriesUsePartialIndex(t *testing.T) {
 		t.Fatalf("backfill scanned=%d keyed=%d err=%v, want %d rows keyed", scanned, keyed, errBackfill, len(records))
 	}
 
+	var pendingPlan []struct{ Detail string }
+	if errPlan := db.Raw("EXPLAIN QUERY PLAN SELECT id, payload FROM usage WHERE id > ? AND dedupe_key = '' ORDER BY id ASC LIMIT 500", 0).Scan(&pendingPlan).Error; errPlan != nil {
+		t.Fatal(errPlan)
+	}
+	usesPendingIndex := false
+	for _, step := range pendingPlan {
+		usesPendingIndex = usesPendingIndex || strings.Contains(step.Detail, "INDEX idx_usage_dedupe_pending ")
+	}
+	if !usesPendingIndex {
+		t.Fatalf("warm-start query does not use pending index: %+v", pendingPlan)
+	}
+
 	var lookupSQL string
 	var lookupArgs []any
 	if errRegister := db.Callback().Query().After("gorm:query").Register("test:capture_usage_dedupe_lookup", func(tx *gorm.DB) {
