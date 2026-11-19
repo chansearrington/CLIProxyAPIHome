@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -153,6 +154,84 @@ class ClaudeCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(catalog_sync.SyncError, 'invalid_claude_picker_state'):
             catalog_sync.reconcile_claude(self.home, self.ids, True)
         self.assertEqual(json.loads(self.path.read_text()), self.config)
+
+
+class OpenClawRetentionTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.home = Path(self.directory.name)
+        self.path = self.home / '.openclaw/openclaw.json'
+        self.path.parent.mkdir()
+        self.config = {
+            'models': {'providers': {'cpa-gui': {
+                'baseUrl': 'http://127.0.0.1:18317/v1', 'apiKey': 'fake-key',
+                'models': [{'id': 'old', 'name': 'old'}]}}},
+            'agents': {'defaults': {'modelPolicy': {'allow': ['cpa-gui/*']},
+                                    'models': {'cpa-gui/old': {}}, 'model': 'operator-choice'}}}
+        self.path.write_text(json.dumps(self.config))
+
+    def test_success_retains_current_rollback_backup_and_current_sync_is_idempotent(self):
+        with patch.object(catalog_sync, 'fetch_ids', return_value=['old', 'new']), \
+                patch.object(catalog_sync, 'cli', return_value={'valid': True}), \
+                patch.object(catalog_sync, 'verify_views'):
+            result = catalog_sync.reconcile_openclaw(self.home, True)
+            backup = Path(result['backup'])
+            self.assertEqual(json.loads((backup / 'before.json').read_text()), self.config)
+            self.assertEqual((backup / 'candidate.json').read_bytes(), self.path.read_bytes())
+            self.assertEqual(result['status'], 'updated')
+            current = catalog_sync.reconcile_openclaw(self.home, True)
+            self.assertEqual(current['status'], 'current')
+            self.assertIsNone(current['backup'])
+            self.assertTrue(backup.is_dir())
+
+    def test_failed_attempts_retain_two_candidates_and_current_backup(self):
+        for failure in ('schema', 'timeout', 'runtime'):
+            with self.subTest(failure=failure):
+                seen = []
+                def validate(args, candidate):
+                    backup = candidate.parent
+                    seen.append(backup)
+                    self.assertEqual(json.loads((backup / 'before.json').read_text()), self.config)
+                    self.assertEqual(json.loads(candidate.read_text())['models']['providers']
+                                     ['cpa-gui']['models'][-1]['id'], 'new')
+                    if failure == 'timeout':
+                        raise catalog_sync.SyncError('openclaw_command_timeout')
+                    return {'valid': failure != 'schema'}
+
+                def runtime(ids):
+                    current = json.loads(self.path.read_text())
+                    current['agents']['defaults']['model'] = 'concurrent-choice'
+                    self.path.write_text(json.dumps(current))
+                    raise catalog_sync.SyncError('gateway_unhealthy')
+
+                expected_error = {'schema': 'schema_validation_failed',
+                                  'timeout': 'openclaw_command_timeout',
+                                  'runtime': 'runtime_failed_restored_model_fields'}[failure]
+                with patch.object(catalog_sync, 'fetch_ids', return_value=['old', 'new']), \
+                        patch.object(catalog_sync, 'cli', side_effect=validate), \
+                        patch.object(catalog_sync, 'verify_views', side_effect=runtime), \
+                        patch.object(catalog_sync.time, 'sleep'):
+                    for attempt in range(5):
+                        self.path.write_text(json.dumps(self.config))
+                        with self.assertRaisesRegex(catalog_sync.SyncError, expected_error):
+                            catalog_sync.reconcile_openclaw(self.home, True)
+                        current = seen[-1]
+                        remaining = set(current.parent.glob('cpa-catalog-*'))
+                        self.assertEqual(remaining, set(seen[-2:]))
+                        self.assertTrue((current / 'candidate.json').is_file())
+                        self.assertEqual(json.loads((current / 'before.json').read_text()), self.config)
+                        restored = copy.deepcopy(self.config)
+                        if failure == 'runtime':
+                            restored['agents']['defaults']['model'] = 'concurrent-choice'
+                        self.assertEqual(json.loads(self.path.read_text()), restored)
+                        # Older backups can be future-dated after a clock correction.
+                        os.utime(current, ns=(2_000_000_000_000_000_000 + attempt,
+                                             2_000_000_000_000_000_000 + attempt))
+                for backup in seen[-2:]:
+                    for child in backup.iterdir():
+                        child.unlink()
+                    backup.rmdir()
 
 
 if __name__ == '__main__':
