@@ -89,6 +89,41 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   3,461,537,792 bytes, full integrity check `ok`, SHA-256
   `595c33ef8bb1baec302286c5719d035120f2a7d3da5a48e9cff4572c4987fc97`.
 
+## Whole-day usage reporting indexes (ws-0051, not deployed)
+
+- The SQLite-only migration adds `idx_usage_dashboard_time_v1` and
+  `idx_usage_dashboard_provider_time_v1`, covering aggregate fields in timestamp-descending,
+  ID-ascending order. On the verified November 10 backup (3,050,397 usage rows), a whole
+  November 8 day took **1.36–4.81 s** across all nine groupings and no/Codex/Claude provider
+  filters, versus **3.34–15.21 s** before. Complete response fingerprints matched in all
+  27 cases; all 34 non-null amounts in model/provider/credential groups also matched bit-for-bit.
+- Identical column/order definitions took **175–240 s** to build in two runs, with approximately
+  **889 MiB** peak sort temporary space and **1.74 GiB** permanent index space. The review
+  added `_v1` to the names only; it did not change the measured column/order definitions.
+  Every inserted or updated usage row now also maintains two wide indexes: extra disk space
+  and write work are deliberate costs, not free acceleration. Current production is larger
+  than this backup; these timings and space figures are not upper bounds.
+- Do not let the next image swap build these indexes at startup. Pre-build the exact versioned
+  names and definitions from `migrateUsageObservabilityIndexes` in a separately approved,
+  announced overnight maintenance window, under all four fleet locks with fleet policy paused
+  and independent direct recovery available. `CREATE INDEX` blocks SQLite writes, including
+  ingestion and liveness; plan it as a disruptive maintenance operation. Set both
+  `SQLITE_TMPDIR` and `TMPDIR` to the data volume, never the production container's small
+  `/tmp`, and reserve substantially more than the measured sort peak plus permanent growth.
+  Compare complete `sqlite_master` definitions and `PRAGMA index_xinfo` against a freshly
+  migrated isolated database before swapping the image. Names alone are not a definition check.
+  With both definitions already present, the measured migration was a **1.9 ms** no-op.
+- Rollback, only as an approved maintenance action, is
+  `DROP INDEX IF EXISTS idx_usage_dashboard_time_v1;` and
+  `DROP INDEX IF EXISTS idx_usage_dashboard_provider_time_v1;`. This restores the old query
+  plans, not a fast whole-day query. A binary containing this migration recreates missing
+  indexes at its next startup; coordinate any drop with the intended image/startup plan.
+- This change does **not** claim to fix the 24-hour overview, health last-error lookups or the
+  usage-record list. The all-provider overview improved from 42.40 s to 17.50 s but remains
+  above the unchanged 10 s request budget. No production change occurred in ws-0051.
+  See the [private evidence and maintenance review page](https://agents.thebearingtons.com/inbox/a/Eb56Hfumrq)
+  (source: `docs/fleet/ws-0051-usage-aggregate-day.html`).
+
 ## Account additions
 
 - User-selected rule (2026-11-07): give a newly added account the next highest priority
