@@ -1,0 +1,92 @@
+ws-0060 build report — November 19, 2026
+
+REVIEW FIXES (current; supersedes the original verification limits below)
+Model ID: gpt-6.1-sol[1m]
+Task 53: both requested fixes verified; commit/push and PR description recorded in the delivery message. Parent deployment task 27 stays open. No deployment or policy change.
+Merged origin/fleet b45bae9 with normal merge commit d934f22 before editing.
+
+Changes:
+- tools/fleet-announce/receiver.py:37-42 validates RFC3339 first, then pads/truncates fractional seconds to six digits for Python 3.9 parsing only. Original notice, durable journal and dedupe body stay unchanged.
+- tools/fleet-announce/test_receiver.py:65 tests rollback_failed timestamps with 1, 3, 6 and 9 fractional digits, both Z and numeric offsets, persisted replay, invalid calendar/time values and invalid fraction lengths.
+- internal/fleet/types.go:96 persists rollback_notice_rejected separately from successful rollback_announced.
+- internal/fleet/schedule.go:211 central queueRollback guard covers both maintainWindows and Plan regeneration paths; :484 latches permanent rejection only for the matching rollback version and ordered nodes.
+- internal/fleet/service.go:656 resets rejection on each newly triggered rollback. New rollout allocations also start with a clear marker. The existing Plan 15-minute emergency rule is unchanged.
+- internal/fleet/announcement_rejection_test.go:79 uses populated RollbackNodes and persisted JSON state: two delivery cycles plus Plan keep exactly one send/audit, no regenerated notice, no false success/failure, no early rollback; rollback dispatches at 15 minutes and a subsequent failed upgrade with different nodes queues a fresh notice.
+- docs/management/api.md:5006 and api_CN.md:4905 describe the persisted marker and unchanged emergency wait; build instructions document fraction normalization and required checks.
+
+Observed pre-fix failures:
+- /usr/bin/python3 -I -B tools/fleet-announce/test_receiver.py: 7 tests, FAILED (failures=5); 1/9-digit fractions returned 400 for both zones, leaving only 4 of 8 journal notices.
+- Ark go test ./internal/fleet/... -run TestRejectedRollbackDoesNotRegenerateAndKeepsEmergencyGate -count=1: FAIL, rejected rollback notice regenerated or outcome changed. Output was captured again because archive metadata warnings obscured the first invocation; both were red.
+
+Final checks:
+- Mac /usr/bin/python3 3.9.6: /usr/bin/python3 -I -B tools/fleet-announce/test_receiver.py => Ran 7 tests in 3.578s, OK.
+- Mac python3 3.14.7: python3 -I -B tools/fleet-announce/test_receiver.py => Ran 7 tests in 3.577s, OK.
+- Ark /mnt/user/appdata/cpa-home-build/run-go.sh, golang:1.26-bookworm, working /src/ws0060 only:
+  gofmt -w internal/fleet/schedule.go internal/fleet/service.go internal/fleet/types.go internal/fleet/announcement_rejection_test.go
+  go test -v ./internal/fleet/... => 47 top-level tests PASS; ok internal/fleet 0.104s.
+  go vet ./... => no diagnostics, exit 0 (the historical upstream finding was not present).
+  go build -o /out/ws0060-test-output ./cmd/home && rm /out/ws0060-test-output => exit 0, output removed.
+  go test -json ./... > /out/ws0060-review-full-tests.json => exit 0; 2,096 top-level tests passed, 55 skipped, zero failed. Including nested cases: 4,104 passed, 149 skipped, zero failed. Packages: 36 passed, 14 no-test skips, zero failed. Fleet package 0.387s.
+- git diff --check => no output, exit 0.
+Go never ran on the laptop. Ark formatting was copied back. Full tests used the exact final Go/Python sources after the merge; later changes were documentation only.
+
+No live delivery, receiver installation, real terminal message, production data/container access, policy write, node restart, or PR merge. The existing hosted-page durable-acceptance blocker and MacBook-sleep delivery limits remain. No independent reviewer was spawned (helper may not delegate). Full-suite skips are reported, not counted as passes.
+
+ORIGINAL BUILD REPORT (historical)
+
+PR: https://github.com/chansearrington/CLIProxyAPIHome/pull/52
+Branch: ws-0060/announce-receiver
+Implementation commit: cd27e5a
+Model ID: gpt-6.1-sol[1m]
+Task 41: scoped implementation and PR delivered; independent review belongs to the lead. Parent deployment task 27 remains open.
+
+Changed
+- internal/fleet/schedule.go:405 adds optional FLEET_ANNOUNCE_TOKEN Bearer authentication. No secret-bearing policy field, credential URL, Management key forwarding, or redirect following.
+- internal/fleet/schedule.go:475 discards all permanent 4xx receipts (except temporary 408/429), clears that retry delay, and audits rejected_PHASE. Rejection does not mutate rollout outcome. Removed the loop that shifted unrelated windows after an ordinary receipt rejection; failed gating notices still postpone only their own window.
+- internal/fleet/announcement_rejection_test.go:11 covers optional authentication and refused redirects; :38 covers all four critical phases and unchanged rollback outcome; :79 covers all four ordinary phases with an unrelated optional window preserved.
+- internal/fleet/recovery_test.go:144 and :182 use temporary 503 failures for indefinite-backoff and emergency rollback-outage tests, rather than asserting the rejected old permanent-4xx behavior.
+- tools/fleet-announce/receiver.py:27 validates bounded notice fields; :71 implements locked JSONL outbox/dedupe/acks with file and directory fsync; :120 handles authenticated HTTP; :165 implements explicit private IPv4 binding and private SSH CLI operations.
+- tools/fleet-announce/relay.py:20 builds safe one-paragraph messages and acknowledges only accepted sends; :34 imports the existing installed ws-0056 helper. The helper resolves the exact live Orchestrator terminal and uses hc send --json; no alternate platform or copied terminal resolver.
+- tools/fleet-announce/test_receiver.py:27 has six isolated unittest cases.
+- docs/management/api.md:4964 and docs/management/api_CN.md:4881 document authentication and permanent-rejection behavior.
+- docs/fleet/ws-0060-announce-receiver.md documents future deployment steps, existing relay limitations, and the hosted-page acceptance blocker. docs/fleet/ws-0060-plan.md records the working plan and discarded URL-token idea.
+
+Real checks
+All tests and Go commands ran on the Ark in isolated /mnt/user/appdata/cpa-home-build/src/ws0060. No Go toolchain was installed or used on the laptop. Go used the existing run-go.sh wrapper and golang:1.26-bookworm, shared array caches, exec-enabled 3 GiB tmpfs, and /out compile output.
+
+Commands:
+  python3 -I /mnt/user/appdata/cpa-home-build/src/ws0060/tools/fleet-announce/test_receiver.py
+Output:
+  Ran 6 tests in 3.019s
+  OK
+
+Container commands, working directory /src/ws0060:
+  gofmt -w internal/fleet/schedule.go internal/fleet/recovery_test.go internal/fleet/announcement_rejection_test.go
+  go test -v ./internal/fleet/...
+  go vet ./internal/fleet/...
+  go build -o /out/ws0060-test-output ./cmd/home
+  rm /out/ws0060-test-output
+  go vet ./...
+Output:
+  PASS
+  ok github.com/router-for-me/CLIProxyAPIHome/internal/fleet 0.078s
+  No vet/compile diagnostics; remote command exited 0.
+  46 top-level Go tests passed, including three new tests and eight new phase subcases. Full repository vet was clean on this source; the historical refresh.go baseline finding described in FLEET.md did not appear in this run.
+
+Earlier pre-header iteration also passed six Python cases and the then-45-test fleet suite (0.135s), fleet vet, and compile. It is not counted as extra coverage. Both runs emitted harmless macOS archive metadata warnings during source transfer.
+
+Laptop-only static checks:
+  git diff --check — no output, success.
+  Python AST parse of the three new Python sources — Python syntax: 3 files OK.
+
+Verification source: 248ebb9 plus implementation changes. Before commit, origin/fleet advanced to f53d4a8; branch fast-forwarded without rewriting history. Its only intervening changes were unrelated tools/fleet-worker catalog retention and their notes/tests; no tested Go/receiver source changed. Ark gofmt output was copied back before commit.
+
+Open deployment questions / limitations
+- Existing webhook contract requires durable acceptance of BOTH Orchestrator messaging and Chanse's hosted review page before 2xx. This scoped source build supplies durable Ark logging and Orchestrator outbox transport only. It does not create or durably queue the hosted page. Do not set this as the live gate or enable upgrades until the separate page-acceptance path is integrated and reviewed.
+- ws-0056 delivery is MacBook-local hc, not an always-on Ark push endpoint. The always-on receiver retains pending notices; the MacBook relay must resume after sleep. No prompt nighttime delivery while the Mac sleeps is claimed.
+- hc accepted input is not proof anyone read it. A crash between acceptance and Ark acknowledgement may repeat one notice; at-least-once delivery is deliberate.
+- Secrets must later be supplied privately to Home and the receiver by the operator. Nothing was generated/read/copied here. Plain LAN HTTP is not encrypted; prefer the explicit Tailscale binding or separately approved HTTPS.
+- Journal replay is intentionally simple and unrotated at this small announcement volume. Corrupt or partial records fail closed and need operator reconciliation, never automatic history deletion.
+
+Not run / not changed
+No live authenticated announcement, real Orchestrator TEST, installation, launchd job creation, listener deployment, policy write, patch setting change, production database read/write, node restart, merge, or full Go test suite. No independent reviewer was spawned because this helper was instructed not to delegate; the workspace lead has the PR and must arrange/verify review.

@@ -127,6 +127,14 @@ def credentials(home, cfg):
                    for f in rows), key=lambda f: -f["priority"])
 
 
+def priorities_now(home):
+    """Mid-pass read: slots may be briefly duplicated, so compare only id -> priority/flags."""
+    files = home.call("/credentials").get("files")
+    require(isinstance(files, list), "credential_list_missing")
+    return {f.get("id"): (f.get("priority"), f.get("disabled"), f.get("reauth_required"))
+            for f in files if f.get("provider", "").lower() == "claude"}
+
+
 def eligible(row):
     return not row["disabled"] and not row["reauth_required"]
 
@@ -303,7 +311,7 @@ def log_event(job, event, error=False):
     now = timestamp(event["time_utc"])
     hourly = previous is None or (now - timestamp(previous["logged_at"])).total_seconds() >= 3600
     stopped = (job / "979-STOP.json").exists()
-    signature = {k: event.get(k) for k in ("order", "exclusions", "notices")}
+    signature = {k: event.get(k) for k in ("order", "exclusions", "notices", "reason")}
     changed = previous is None or previous["signature"] != signature or previous["stopped"] != stopped
     latched = event["reason"] == "STOP_operator_reconciliation_required"
     needed = (hourly or previous is None or not previous["stopped"]) if latched else (
@@ -338,6 +346,9 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
     state_path = job / "979-state.json"
     try:
         require(not pending.exists(), "STOP_operator_reconciliation_required")
+        # Operators create 979-HOLD only while holding 979.lock (see the doc), so no pass is mid-flight
+        # when maintenance or an emergency stop begins, and every later pass sees it.
+        require(mode != "apply" or not (job / "979-HOLD").exists(), "operator_hold_no_writes")
         baseline = json.loads(state_path.read_text()) if state_path.exists() else None
         previous = baseline["accounts"] if baseline else {}
         rows = credentials(home, cfg)
@@ -376,10 +387,19 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
         event["weekly"] = public["weekly"]
         event["notices"] = sorted({notice for q in quotas.values() for notice in q["assumptions"]})
         event["reason"] = "order_unchanged" if wanted == live else "weekly_renewal_order_differs"
+        # Debounce: write only when the previous run computed the same order (one noisy read never writes).
+        # The earlier sample must be recent (two scheduled runs), so a pass after a hold or errors never pairs with old data.
+        stable = (baseline is not None and baseline.get("last_wanted") == wanted
+                  and 0 <= (now - timestamp(baseline["observed_at"])).total_seconds() <= 600)
+        if wanted != live and not stable:
+            event["reason"] = "order_differs_waiting_for_stable_repeat"
         if mode == "apply" and rebaseline and wanted != live:
             event["reason"] = "apply_deferred_after_gap"
-        if mode == "apply" and wanted != live and not rebaseline:
+        if mode == "apply" and wanted != live and stable and not rebaseline:
             require(credentials(home, cfg) == rows, "credentials_changed_during_plan")
+            # Upgrades and rollbacks pause Home's fleet policy first; never write during maintenance.
+            policy = home.call("/fleet").get("policy")
+            require(isinstance(policy, dict) and policy.get("enabled") is True, "fleet_maintenance_paused_no_writes")
             wall = clock()
             require(0 <= (wall - now).total_seconds() <= 120, "plan_expired")
             for quota in quotas.values():
@@ -388,16 +408,21 @@ def execute(home, cfg, mode, job=JOB, backups=BACKUPS, clock=lambda: dt.datetime
             event["backup"] = backup(rows, backups, now)
             # Persist before the first PATCH: even SIGKILL/power loss forbids another write pass.
             write_json(pending, {**event, "reason": "APPLY_PENDING_operator_reconciliation_required"})
+            seen = [dict(r) for r in rows]
             for row in rows:
                 if wanted[row["id"]] != row["priority"]:
+                    # Re-read right before each write so a concurrent hand edit stops the pass (STOP latch).
+                    require(priorities_now(home) == {r["id"]: (r["priority"], r["disabled"], r["reauth_required"])
+                                                     for r in seen}, "credentials_changed_during_apply")
                     result = home.call("/credentials/fields", {"id": row["id"], "priority": wanted[row["id"]]})
                     require(result.get("status") == "ok", "patch_not_acknowledged")
+                    next(r for r in seen if r["id"] == row["id"])["priority"] = wanted[row["id"]]
             expected = sorted(({**r, "priority": wanted[r["id"]]} for r in rows), key=lambda r: -r["priority"])
             require(credentials(home, cfg) == expected, "READBACK_FAILED_STOP_no_more_writes")
             event["readback_ok"] = True
             event["reason"] = "applied_weekly_renewal_order"
         if mode != "dry-run":
-            write_json(state_path, {"observed_at": iso(now), "accounts": current})
+            write_json(state_path, {"observed_at": iso(now), "accounts": current, "last_wanted": wanted})
             log_event(job, event)
             if event["readback_ok"]:
                 pending.unlink()

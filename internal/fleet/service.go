@@ -653,6 +653,7 @@ func (s *Service) Report(ctx context.Context, nodeID string, result Result) erro
 				}
 				run.RollbackNodes = append([]string(nil), run.Rollback...)
 				run.RollbackAnnounced = false
+				run.RollbackNoticeRejected = false
 				run.RollbackStartedAt = now
 				run.RollbackUnannounced = false
 				run.RollbackFailedNodes = nil

@@ -45,6 +45,8 @@ class FakeHome:
         self.fail_readback = False
         self.readback_mismatch = False
         self.concurrent_edit = False
+        self.fleet_enabled = True
+        self.edit_after_first_write = False
 
     def call(self, path, body=None):
         self.calls.append(path)
@@ -57,12 +59,18 @@ class FakeHome:
             if self.concurrent_edit and self.calls.count(path) == 3:
                 result[0]["disabled"] = True
             return {"files": result}
+        if path == "/fleet":
+            return {"policy": {"enabled": self.fleet_enabled}}
         if path == "/credentials/fields":
             assert set(body) == {"id", "priority"}
             self.writes.append(body)
             if len(self.writes) == self.fail_write:
                 raise a.Unsafe("fake_patch_failure")
             next(r for r in self.rows if r["id"] == body["id"])["priority"] = body["priority"]
+            if self.edit_after_first_write and len(self.writes) == 1:
+                # A human swaps two other accounts in the panel while the pass is running.
+                x, y = [r for r in self.rows if r["id"] != body["id"]][-2:]
+                x["priority"], y["priority"] = y["priority"], x["priority"]
             return {"status": "ok"}
         assert path.startswith("/quota/credentials/") and body is None
         return copy.deepcopy(self.details[path.rsplit("/", 1)[-1]])
@@ -208,7 +216,7 @@ def execution():
         assert run("dry-run") == 0 and not home.writes and not list(job.iterdir()) and not list(backups.iterdir())
         assert run("apply") == 2 and not home.writes  # baseline absent
         assert run("shadow") == 0 and not home.writes and not list(backups.iterdir())
-        assert run("apply") == 0 and len(home.writes) == 11
+        assert run("apply") == 0 and len(home.writes) == 11  # shadow computed the same order: stable
         assert not (job / "979-STOP.json").exists()
         saved = json.loads(next(backups.glob("auto979-config-*.json")).read_text())
         assert saved["scope"] == "priorities-only" and len(saved["accounts"]) == 13
@@ -220,6 +228,52 @@ def execution():
         assert event["readback_ok"] is True and event["backup"] and len(event["order"]) == 13
         before = len(home.writes)
         assert run("apply") == 0 and len(home.writes) == before
+
+        def last_reason():
+            return json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"]
+
+        # One noisy read (an account briefly at 100 %) never writes: the new order must repeat first.
+        window = home.details["fake-02"]["windows"][0]
+        old_used = window["used"]
+        window["used"] = 100
+        assert run("apply") == 0 and len(home.writes) == before
+        assert last_reason() == "order_differs_waiting_for_stable_repeat"
+        window["used"] = old_used
+        assert run("apply") == 0 and len(home.writes) == before
+        window["used"] = 100
+        assert run("apply") == 0 and len(home.writes) == before
+        assert run("apply") == 0 and len(home.writes) > before  # repeated twice: applied
+        window["used"] = old_used
+        assert run("apply") == 0 and run("apply") == 0
+        # A pass after a long hold/error gap never pairs with an old sample: it waits for a fresh repeat.
+        stalejob, stalebackups = root / "stale", root / "stale-backups"
+        a.private_dir(stalejob)
+        stalebackups.mkdir()
+        stale = FakeHome(rows, details)
+        stale.details["fake-02"]["windows"][0]["used"] = 100
+        def at(t):
+            for detail in stale.details.values():
+                detail["generated_at"] = a.iso(t)
+            return lambda: t
+        later = NOW + dt.timedelta(seconds=700)
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert a.execute(stale, cfg, "shadow", stalejob, stalebackups, clock=at(NOW)) == 0
+            assert a.execute(stale, cfg, "apply", stalejob, stalebackups, clock=at(later)) == 0 and not stale.writes
+            assert a.execute(stale, cfg, "apply", stalejob, stalebackups, clock=at(later + dt.timedelta(seconds=300))) == 0
+        assert len(stale.writes) == 11
+        # The rule owns the order: a hand edit is put back once the order repeats (pin with a holdout or the hold).
+        before = len(home.writes)
+        x, y = home.rows[0], home.rows[1]
+        ruled = (x["priority"], y["priority"])
+        x["priority"], y["priority"] = y["priority"], x["priority"]
+        assert run("apply") == 0 and run("apply") == 0
+        assert len(home.writes) == before + 2 and (x["priority"], y["priority"]) == ruled
+        # An operator hold (taken under 979.lock) blocks apply before any GET or write.
+        (job / "979-HOLD").write_text("")
+        held_home = FakeHome(rows, details)
+        assert run("apply", held_home) == 2 and not held_home.calls and not (job / "979-STOP.json").exists()
+        assert json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"] == "operator_hold_no_writes"
+        (job / "979-HOLD").unlink()
         assert len(list(backups.glob("*.json"))) == 1
         unrelated = backups / "home-config-keep.json"
         unrelated.write_text("unrelated targeted backup")
@@ -227,7 +281,13 @@ def execution():
             a.backup(rows, backups, NOW + dt.timedelta(seconds=n + 1))
         assert len(list(backups.glob("auto979-config-*.json"))) == 2
         assert unrelated.read_text() == "unrelated targeted backup"
-        for fail in ("patch", "readback", "mismatch", "concurrent"):
+        paused = FakeHome(rows, details)
+        paused.fleet_enabled = False
+        assert run("shadow", paused) == 0
+        assert run("apply", paused) == 2 and not paused.writes and not (job / "979-STOP.json").exists()
+        assert json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])["reason"] == "fleet_maintenance_paused_no_writes"
+        assert len(list(backups.glob("auto979-config-*.json"))) == 2  # no backup taken while paused
+        for fail in ("patch", "readback", "mismatch", "concurrent", "midpass"):
             home = FakeHome(rows, details)
             if fail == "patch":
                 home.fail_write = 2
@@ -235,6 +295,8 @@ def execution():
                 home.fail_readback = True
             elif fail == "mismatch":
                 home.readback_mismatch = True
+            elif fail == "midpass":
+                home.edit_after_first_write = True
             else:
                 home.concurrent_edit = True
             assert run("shadow", home) == 0
@@ -245,6 +307,8 @@ def execution():
             else:
                 assert (job / "979-STOP.json").exists()
                 assert run("apply", home) == 2 and len(home.writes) == writes
+                if fail == "midpass":
+                    assert writes == 1  # the pass stopped before overwriting the hand edit
                 event = json.loads((job / "979-apply.jsonl").read_text().splitlines()[-1])
                 assert event["readback_ok"] is False and event["reason"].startswith("CRITICAL_")
                 assert "@" not in (job / "979-STOP.json").read_text()
@@ -321,6 +385,10 @@ def review_cases():
         last = json.loads((applyjob / "979-apply.jsonl").read_text().splitlines()[-1])
         assert last["baseline_reason"] == "rebaseline_after_gap" and last["readback_ok"] is None
         assert last["reason"] == "apply_deferred_after_gap"
+        # The renewal seen during the gap is still applied by the next guarded run.
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert a.execute(home, cfg, "apply", applyjob, backups, clock=lambda: gap + dt.timedelta(seconds=60)) == 0
+        assert len(home.writes) == 11 and not (applyjob / "979-STOP.json").exists()
         for path in root.rglob("*.json*"):
             assert "@" not in path.read_text(), path.name
     print("PASS reset tolerance, historical reset, two unknown slots, held/reserve without quota, outage rebaseline, no email files")

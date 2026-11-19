@@ -83,20 +83,21 @@ type Result struct {
 }
 
 type Rollout struct {
-	Approved            bool                 `json:"approved"`
-	Release             Release              `json:"release"`
-	Completed           map[string]Inventory `json:"completed"`
-	Phase               string               `json:"phase"`
-	Error               string               `json:"error,omitempty"`
-	Rollback            []string             `json:"rollback,omitempty"`
-	RollbackNodes       []string             `json:"rollback_nodes,omitempty"`
-	RollbackStartedAt   time.Time            `json:"rollback_started_at"`
-	RollbackUnannounced bool                 `json:"rollback_unannounced,omitempty"`
-	RollbackAnnounced   bool                 `json:"rollback_announced,omitempty"`
-	RollbackFailedNodes []string             `json:"rollback_failed_nodes,omitempty"`
-	RollbackFailed      bool                 `json:"rollback_failed,omitempty"`
-	Window              *Window              `json:"window,omitempty"`
-	OptionalWindows     map[string]*Window   `json:"optional_windows,omitempty"`
+	Approved               bool                 `json:"approved"`
+	Release                Release              `json:"release"`
+	Completed              map[string]Inventory `json:"completed"`
+	Phase                  string               `json:"phase"`
+	Error                  string               `json:"error,omitempty"`
+	Rollback               []string             `json:"rollback,omitempty"`
+	RollbackNodes          []string             `json:"rollback_nodes,omitempty"`
+	RollbackStartedAt      time.Time            `json:"rollback_started_at"`
+	RollbackUnannounced    bool                 `json:"rollback_unannounced,omitempty"`
+	RollbackAnnounced      bool                 `json:"rollback_announced,omitempty"`
+	RollbackNoticeRejected bool                 `json:"rollback_notice_rejected,omitempty"`
+	RollbackFailedNodes    []string             `json:"rollback_failed_nodes,omitempty"`
+	RollbackFailed         bool                 `json:"rollback_failed,omitempty"`
+	Window                 *Window              `json:"window,omitempty"`
+	OptionalWindows        map[string]*Window   `json:"optional_windows,omitempty"`
 }
 
 // Window is pinned to its rollout's verified release, never to Latest.
