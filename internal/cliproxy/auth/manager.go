@@ -2088,7 +2088,8 @@ func RefreshBlocksDispatch(auth *Auth) bool {
 	if auth.RuntimeRefreshBlocked {
 		return true
 	}
-	return auth.LastError != nil && strings.EqualFold(strings.TrimSpace(auth.LastError.Code), refreshTransientErrorCode)
+	return auth.LastError != nil && (strings.EqualFold(strings.TrimSpace(auth.LastError.Code), refreshTransientErrorCode) ||
+		strings.EqualFold(strings.TrimSpace(auth.LastError.Code), ErrorCodeRefreshOutcomeUnknown))
 }
 
 func newTransientRefreshError() *Error {
