@@ -12,9 +12,10 @@ import (
 )
 
 type memoryStore struct {
-	mu  sync.Mutex
-	raw []byte
-	now time.Time
+	mu        sync.Mutex
+	raw       []byte
+	now       time.Time
+	conflicts int
 }
 
 func (m *memoryStore) FleetLoad(context.Context) ([]byte, bool, error) {
@@ -25,6 +26,10 @@ func (m *memoryStore) FleetLoad(context.Context) ([]byte, bool, error) {
 func (m *memoryStore) FleetSwap(_ context.Context, old []byte, exists bool, next []byte) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.conflicts > 0 {
+		m.conflicts--
+		return false, nil
+	}
 	if exists != (len(m.raw) > 0) || !bytes.Equal(old, m.raw) {
 		return false, nil
 	}
@@ -39,8 +44,9 @@ func fixture(t *testing.T) (*Service, *memoryStore) {
 	t.Helper()
 	store := &memoryStore{now: time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC)}
 	s := New(store)
+	s.Announce = func(context.Context, string, Notice) error { return nil }
 	s.Catalog = func() map[string]map[string]any { return map[string]map[string]any{"shared": {"name": "Shared"}} }
-	policy := Policy{Enabled: true, CatalogSync: false, PatchUpdates: true, IntervalSeconds: 3600, Nodes: []NodePolicy{{ID: testIDs[0], Name: "Canary", Required: true}, {ID: testIDs[1], Name: "Second", Required: true}, {ID: testIDs[2], Name: "Laptop", Required: false}}}
+	policy := Policy{Enabled: true, CatalogSync: false, PatchUpdates: true, IntervalSeconds: 3600, AnnouncementURL: "https://hooks.example.invalid/fleet", OptionalWindow: "02:00", Nodes: []NodePolicy{{ID: testIDs[0], Name: "Canary", Required: true}, {ID: testIDs[1], Name: "Second", Required: true}, {ID: testIDs[2], Name: "Laptop", Required: false}}}
 	if errPolicy := s.SetPolicy(context.Background(), policy); errPolicy != nil {
 		t.Fatal(errPolicy)
 	}
@@ -60,13 +66,56 @@ func ready(t *testing.T, s *Service, version string) {
 		}
 	}
 }
-func setRelease(t *testing.T, s *Service, version string) {
+func publishRelease(t *testing.T, s *Service, version string) {
 	t.Helper()
 	release := candidate(version)
 	s.FetchRelease = func(context.Context) (Release, error) { return release, nil }
 	if errCheck := s.Check(context.Background()); errCheck != nil {
 		t.Fatal(errCheck)
 	}
+}
+func setRelease(t *testing.T, s *Service, version string) {
+	t.Helper()
+	publishRelease(t, s, version)
+	if errChange := s.change(context.Background(), func(st *State, now time.Time) error { maybeSchedule(st, now); return nil }); errChange != nil {
+		t.Fatal(errChange)
+	}
+	st, _ := s.Status(context.Background())
+	if st.Rollout != nil && st.Rollout.Window != nil {
+		advanceWindow(t, s, st.Rollout.Window)
+	}
+}
+func deliverAll(t *testing.T, s *Service) {
+	t.Helper()
+	for i := 0; i < 10; i++ {
+		if errDeliver := s.deliverNotice(context.Background()); errDeliver != nil {
+			t.Fatal(errDeliver)
+		}
+		st, _ := s.Status(context.Background())
+		if len(st.Notices) == 0 {
+			return
+		}
+	}
+	t.Fatal("announcements did not drain")
+}
+func advanceWindow(t *testing.T, s *Service, w *Window) {
+	t.Helper()
+	deliverAll(t, s)
+	store := s.store.(*memoryStore)
+	store.now = w.WindowStart.Add(-noticeLead)
+	deliverAll(t, s)
+	store.now = w.WindowStart
+	if errChange := s.change(context.Background(), func(st *State, now time.Time) error {
+		for _, id := range w.Nodes {
+			ns := st.Nodes[id]
+			ns.SeenAt = now
+			st.Nodes[id] = ns
+		}
+		return nil
+	}); errChange != nil {
+		t.Fatal(errChange)
+	}
+	deliverAll(t, s)
 }
 func report(t *testing.T, s *Service, job *Job, status string) {
 	t.Helper()
@@ -82,6 +131,7 @@ func report(t *testing.T, s *Service, job *Job, status string) {
 	if errReport := s.Report(context.Background(), job.NodeID, Result{ID: job.ID, Token: job.Token, Status: status, Inventory: inventory, Error: map[bool]string{true: "fixture_failure"}[status == "failed"]}); errReport != nil {
 		t.Fatal(errReport)
 	}
+	deliverAll(t, s)
 }
 func TestPatchReleasePolicy(t *testing.T) {
 	for _, tc := range []struct {
@@ -122,8 +172,14 @@ func TestOptionalOfflineLaptopDoesNotBlockCanaryAndSerialRollout(t *testing.T) {
 	if errLaptop != nil {
 		t.Fatal(errLaptop)
 	}
-	if laptop.Job == nil || laptop.Job.Operation != "upgrade" {
-		t.Fatalf("returning optional node not upgraded: %+v", laptop)
+	if laptop.Job != nil || laptop.Status != "optional_scheduled" {
+		t.Fatalf("returning optional node upgraded on wake: %+v", laptop)
+	}
+	st, _ := s.Status(context.Background())
+	advanceWindow(t, s, st.Rollout.OptionalWindows[testIDs[2]])
+	laptop, errLaptop = s.Plan(context.Background(), testIDs[2], inv("8.0.29"))
+	if errLaptop != nil || laptop.Job == nil || laptop.Job.Operation != "upgrade" {
+		t.Fatalf("announced optional window unavailable: %+v %v", laptop, errLaptop)
 	}
 }
 func TestLeaseAndCertificateScopeCannotBeSpoofed(t *testing.T) {
@@ -200,6 +256,8 @@ func TestMajorRequiresExplicitReview(t *testing.T) {
 	if errReview := s.Review(context.Background(), "8.1.0", true); errReview != nil {
 		t.Fatal(errReview)
 	}
+	st, _ := s.Status(context.Background())
+	advanceWindow(t, s, st.Rollout.Window)
 	approved, errPlan := s.Plan(context.Background(), testIDs[0], inv("8.0.29"))
 	if errPlan != nil || approved.Job == nil {
 		t.Fatalf("approved release unavailable: %+v %v", approved, errPlan)

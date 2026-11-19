@@ -1,11 +1,14 @@
 package fleet
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,10 +28,19 @@ type Service struct {
 	store        Store
 	FetchRelease func(context.Context) (Release, error)
 	Catalog      func() map[string]map[string]any
+	Announce     func(context.Context, string, Notice) error
 }
 
 func New(store Store) *Service {
-	return &Service{store: store, FetchRelease: FetchStableRelease, Catalog: catalogMetadata}
+	s := &Service{store: store, Catalog: catalogMetadata, Announce: postAnnouncement}
+	s.FetchRelease = func(ctx context.Context) (Release, error) {
+		st, errState := s.Status(ctx)
+		if errState != nil {
+			return Release{}, errState
+		}
+		return fetchStableRelease(ctx, &http.Client{Timeout: 2 * time.Minute}, st.Latest)
+	}
+	return s
 }
 
 func catalogMetadata() map[string]map[string]any {
@@ -82,6 +94,10 @@ func decode(raw []byte) (State, error) {
 	if state.Nodes == nil {
 		state.Nodes = map[string]NodeState{}
 	}
+	if state.Accepted == nil && state.Rollout != nil && state.Rollout.Phase == "complete" {
+		r := state.Rollout.Release
+		state.Accepted = &r
+	}
 	return state, nil
 }
 
@@ -115,8 +131,15 @@ func (s *Service) change(ctx context.Context, fn func(*State, time.Time) error) 
 		if errChange := fn(&state, now); errChange != nil {
 			return errChange
 		}
-		state.Revision++
 		next, errEncode := json.Marshal(state)
+		if errEncode != nil {
+			return errEncode
+		}
+		if bytes.Equal(raw, next) {
+			return nil
+		}
+		state.Revision++
+		next, errEncode = json.Marshal(state)
 		if errEncode != nil {
 			return errEncode
 		}
@@ -132,6 +155,17 @@ func (s *Service) change(ctx context.Context, fn func(*State, time.Time) error) 
 }
 
 func ValidatePolicy(policy Policy) error {
+	if policy.OptionalWindow != "" {
+		if parsed, errParse := time.Parse("15:04", policy.OptionalWindow); errParse != nil || parsed.Format("15:04") != policy.OptionalWindow {
+			return fmt.Errorf("optional_window must be HH:MM in America/Chicago")
+		}
+	}
+	if errURL := validateAnnouncementURL(policy.AnnouncementURL); errURL != nil {
+		return errURL
+	}
+	if policy.Enabled && policy.PatchUpdates && policy.AnnouncementURL == "" {
+		return fmt.Errorf("patch updates require announcement_url")
+	}
 	if policy.IntervalSeconds < 300 || policy.IntervalSeconds > 86400 {
 		return fmt.Errorf("interval_seconds must be between 300 and 86400")
 	}
@@ -153,17 +187,74 @@ func ValidatePolicy(policy Policy) error {
 	return nil
 }
 
-func (s *Service) SetPolicy(ctx context.Context, policy Policy) error {
+func sameMembership(a, b []NodePolicy) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Required != b[i].Required {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) SetPolicy(ctx context.Context, policy Policy, operation ...PolicyChange) error {
 	if errPolicy := ValidatePolicy(policy); errPolicy != nil {
 		return errPolicy
 	}
+	audit := PolicyChange{}
+	if len(operation) > 0 {
+		audit = operation[0]
+	}
 	return s.change(ctx, func(st *State, now time.Time) error {
+		nextPolicy := policy
+		if st.Policy.AnnouncementURL != "" && nextPolicy.AnnouncementURL == MaskAnnouncementURL(st.Policy.AnnouncementURL) {
+			nextPolicy.AnnouncementURL = st.Policy.AnnouncementURL
+		}
 		if st.Active != nil {
 			return fmt.Errorf("a fleet operation is active; wait before changing policy")
 		}
-		st.Policy = policy
+		if st.NoticeLease.After(now) {
+			return fmt.Errorf("announcement is being delivered; retry")
+		}
+		if audit.Force {
+			closeWindows(st, "operator_force", now)
+			if st.Rollout != nil && st.Rollout.Phase == "upgrade" {
+				st.Rollout.Phase = "held"
+			}
+		}
+		if !sameMembership(st.Policy.Nodes, nextPolicy.Nodes) {
+			for _, w := range windows(st.Rollout) {
+				if !w.Closed {
+					return fmt.Errorf("hold the pending release or use operator force before changing node membership or order")
+				}
+			}
+		}
+		if (st.Policy.Enabled && !nextPolicy.Enabled) || (st.Policy.PatchUpdates && !nextPolicy.PatchUpdates) {
+			closeWindows(st, "paused", now)
+		}
+		changedHook := st.Policy.AnnouncementURL != nextPolicy.AnnouncementURL
+		changedClock := st.Policy.OptionalWindow != nextPolicy.OptionalWindow
+		st.Policy = nextPolicy
+		if (changedHook || changedClock) && st.Rollout != nil {
+			for _, w := range windows(st.Rollout) {
+				if !w.Closed && (changedHook || w.Optional) {
+					if w.Optional && nextPolicy.OptionalWindow == "" {
+						closeWindow(st, w, st.Rollout.Release.Version, "postponed", "optional_window_unconfigured", now)
+						continue
+					}
+					start := windowTime(st, w, now.Add(noticeLead))
+					if start.Before(w.WindowStart) {
+						start = w.WindowStart
+					}
+					reschedule(st, w, st.Rollout.Release.Version, now, start)
+				}
+			}
+		}
 		st.LastCheck = time.Time{}
 		addEvent(st, now, "", "policy", "updated", "")
+		auditEvent(st, audit.Force, audit.Caller)
 		return nil
 	})
 }
@@ -205,25 +296,54 @@ func VersionNewer(current, candidate string) bool {
 	return false
 }
 
-func (s *Service) Review(ctx context.Context, version string, approve bool) error {
+func (s *Service) Review(ctx context.Context, version string, approve bool, actor ...string) error {
+	caller := ""
+	if len(actor) > 0 {
+		caller = actor[0]
+	}
 	return s.change(ctx, func(st *State, now time.Time) error {
+		run := st.Rollout
+		if !approve {
+			if run == nil || run.Release.Version != version || (run.Phase != "upgrade" && run.Phase != "rollback") {
+				return fmt.Errorf("hold requires an upgrade or rollback in progress for this target")
+			}
+			closeWindows(st, "held", now)
+			if run.Phase != "rollback" {
+				run.Phase = "held"
+			}
+			run.Error = "held_by_operator"
+			addEvent(st, now, "", "review", "held", version)
+			auditEvent(st, false, caller)
+			return nil
+		}
 		if st.Active != nil {
 			return fmt.Errorf("a fleet operation is active")
+		}
+		if run != nil && (run.Phase == "rollback" || (run.Phase == "upgrade" && len(run.Completed) > 0)) {
+			return fmt.Errorf("hold the partial rollout before reviewing another release")
 		}
 		if st.Latest == nil || st.Latest.Version != version {
 			return fmt.Errorf("release is not the currently verified candidate")
 		}
-		if approve {
-			st.Rollout = &Rollout{Release: *st.Latest, Approved: true, Completed: map[string]Inventory{}, Phase: "upgrade"}
-			st.CheckError = ""
+		if run != nil && run.Phase == "held" && run.Release.Version == version {
+			ids := []string{}
+			for _, n := range st.Policy.Nodes {
+				if n.Required {
+					if _, ok := run.Completed[n.ID]; !ok {
+						ids = append(ids, n.ID)
+					}
+				}
+			}
+			run.Window = scheduleWindow(st, now, version, ids, false)
+			run.Phase = "upgrade"
+			run.Approved = true
+			run.Error = ""
 		} else {
-			st.Rollout = &Rollout{Release: *st.Latest, Completed: map[string]Inventory{}, Phase: "failed", Error: "held_by_operator"}
+			startRollout(st, *st.Latest, true, now)
 		}
-		status := "held"
-		if approve {
-			status = "approved"
-		}
-		addEvent(st, now, "", "review", status, version)
+		st.CheckError = ""
+		addEvent(st, now, "", "review", "approved", version)
+		auditEvent(st, false, caller)
 		return nil
 	})
 }
@@ -261,6 +381,7 @@ func (s *Service) Plan(ctx context.Context, nodeID string, in Inventory) (Plan, 
 		if !st.Policy.Enabled {
 			return nil
 		}
+		voidUnstartedJob(st, now)
 		if st.Active != nil {
 			plan.Status = "operation_active"
 			if st.Active.NodeID == nodeID {
@@ -275,6 +396,20 @@ func (s *Service) Plan(ctx context.Context, nodeID string, in Inventory) (Plan, 
 			return nil
 		}
 		if st.Rollout != nil && st.Rollout.Phase == "rollback" {
+			if !st.Rollout.RollbackAnnounced {
+				if len(st.Rollout.RollbackNodes) == 0 {
+					st.Rollout.RollbackNodes = append([]string(nil), st.Rollout.Rollback...)
+				}
+				queueRollback(st, now)
+				if now.Sub(st.Rollout.RollbackStartedAt) < 15*time.Minute {
+					plan.Status = "rollback_announcement"
+					return nil
+				}
+				if !st.Rollout.RollbackUnannounced {
+					st.Rollout.RollbackUnannounced = true
+					addEvent(st, now, "", "rollback", "rollback_unannounced", st.Rollout.Release.Version)
+				}
+			}
 			if len(st.Rollout.Rollback) == 0 {
 				st.Rollout.Phase = "failed"
 			} else {
@@ -290,67 +425,81 @@ func (s *Service) Plan(ctx context.Context, nodeID string, in Inventory) (Plan, 
 				return nil
 			}
 		}
-		if st.Policy.PatchUpdates && st.Latest != nil {
-			if st.Rollout == nil || (st.Rollout.Phase == "complete" && st.Rollout.Release.Version != st.Latest.Version) || (st.Rollout.Phase == "failed" && st.Rollout.Release.Version != st.Latest.Version) {
-				canStart := true
-				baseline := ""
-				for _, n := range st.Policy.Nodes {
-					if !n.Required {
-						continue
-					}
-					status, ok := st.Nodes[n.ID]
-					if !ok || now.Sub(status.SeenAt) > 5*time.Minute {
-						canStart = false
-						break
-					}
-					if baseline == "" {
-						baseline = status.Version
-					}
-					if baseline != status.Version {
-						canStart = false
-					}
-				}
-				if canStart && PatchAllowed(baseline, st.Latest.Version) {
-					st.Rollout = &Rollout{Release: *st.Latest, Completed: map[string]Inventory{}, Phase: "upgrade"}
-					addEvent(st, now, "", "rollout", "started", st.Latest.Version)
-				}
-			}
+		maybeSchedule(st, now)
+		if st.Policy.PatchUpdates {
 			run := st.Rollout
 			if run != nil && run.Phase == "upgrade" {
+				// Existing unstarted fleet state also receives a window after upgrading Home.
+				if run.Window == nil || run.Window.Closed {
+					ids := []string{}
+					for _, n := range st.Policy.Nodes {
+						if n.Required {
+							ids = append(ids, n.ID)
+						}
+					}
+					run.Window = scheduleWindow(st, now, run.Release.Version, ids, false)
+				}
+				maintainWindows(st, now)
 				next := ""
 				for _, n := range st.Policy.Nodes {
-					if !n.Required {
-						continue
-					}
-					if _, ok := run.Completed[n.ID]; !ok {
-						next = n.ID
-						break
+					if n.Required {
+						if _, ok := run.Completed[n.ID]; !ok {
+							next = n.ID
+							break
+						}
 					}
 				}
 				if next == "" {
 					run.Phase = "complete"
+					acceptedRelease := run.Release
+					st.Accepted = &acceptedRelease
+					closeWindow(st, run.Window, run.Release.Version, "done", "", now)
+					delete(st.PostponedTargets, run.Release.Version)
 					addEvent(st, now, "", "rollout", "complete_required", run.Release.Version)
 				} else {
-					if next == nodeID {
-						if !(PatchAllowed(in.Version, run.Release.Version) || (run.Approved && VersionNewer(in.Version, run.Release.Version)) || (in.Version == run.Release.Version && in.SHA256 == run.Release.SHA256)) {
-							return fmt.Errorf("worker version changed during rollout")
+					plan.Status = "scheduled"
+					if windowReady(st, run.Window, now) {
+						if next == nodeID {
+							if !(PatchAllowed(in.Version, run.Release.Version) || (run.Approved && VersionNewer(in.Version, run.Release.Version)) || (in.Version == run.Release.Version && in.SHA256 == run.Release.SHA256)) {
+								return fmt.Errorf("worker version changed during rollout")
+							}
+							job := newJob(nodeID, "upgrade", now, in)
+							job.Release = &run.Release
+							st.Active = job
+							plan.Job = job
 						}
+						plan.Status = "rollout"
+						return nil
+					}
+				}
+			}
+			if run != nil && run.Phase == "complete" && in.Version != run.Release.Version && (PatchAllowed(in.Version, run.Release.Version) || (run.Approved && VersionNewer(in.Version, run.Release.Version))) {
+				optional := false
+				for _, n := range st.Policy.Nodes {
+					if n.ID == nodeID {
+						optional = !n.Required
+					}
+				}
+				if optional && st.Policy.OptionalWindow != "" {
+					if run.OptionalWindows == nil {
+						run.OptionalWindows = map[string]*Window{}
+					}
+					w := run.OptionalWindows[nodeID]
+					if w == nil || w.Closed {
+						w = scheduleWindow(st, now, run.Release.Version, []string{nodeID}, true)
+						run.OptionalWindows[nodeID] = w
+					}
+					maintainWindows(st, now)
+					plan.Status = "optional_scheduled"
+					if windowReady(st, w, now) {
 						job := newJob(nodeID, "upgrade", now, in)
 						job.Release = &run.Release
 						st.Active = job
 						plan.Job = job
+						plan.Status = "optional_upgrade"
+						return nil
 					}
-					plan.Status = "rollout"
-					return nil
 				}
-			}
-			if run != nil && run.Phase == "complete" && in.Version != run.Release.Version && (PatchAllowed(in.Version, run.Release.Version) || (run.Approved && VersionNewer(in.Version, run.Release.Version))) {
-				job := newJob(nodeID, "upgrade", now, in)
-				job.Release = &run.Release
-				st.Active = job
-				plan.Job = job
-				plan.Status = "optional_upgrade"
-				return nil
 			}
 		}
 		if st.Policy.CatalogSync && in.Catalog && len(metadata) > 0 && (ns.CatalogHash != catalogHash || now.Sub(ns.CatalogAt) >= time.Duration(st.Policy.IntervalSeconds)*time.Second) {
@@ -362,11 +511,14 @@ func (s *Service) Plan(ctx context.Context, nodeID string, in Inventory) (Plan, 
 			plan.Status = "catalog"
 			return nil
 		}
-		plan.Status = "current"
+		if plan.Status == "disabled" {
+			plan.Status = "current"
+		}
 		return nil
 	})
 	if errPlan == nil {
-		if state, errState := s.Status(ctx); errState == nil && state.Latest != nil {
+		if state, errState := s.Status(ctx); errState == nil && state.Accepted != nil {
+			accepted := state.Accepted
 			verified := []string{}
 			ready := true
 			for _, node := range state.Policy.Nodes {
@@ -374,18 +526,32 @@ func (s *Service) Plan(ctx context.Context, nodeID string, in Inventory) (Plan, 
 					continue
 				}
 				status, ok := state.Nodes[node.ID]
-				if !ok || status.Version != state.Latest.Version || status.SHA256 != state.Latest.SHA256 || status.Size != state.Latest.Size {
+				if !ok || status.Version != accepted.Version || status.SHA256 != accepted.SHA256 || status.Size != accepted.Size {
 					ready = false
 					break
 				}
 				verified = append(verified, node.ID)
 			}
 			if ready && len(verified) > 0 {
-				release := *state.Latest
+				release := *accepted
+				release.ArchiveSize = 0
+				release.AssetUpdatedAt = time.Time{}
 				plan.Accepted = &release
 				plan.VerifiedNodes = verified
 			}
 		}
+	}
+	// Keep Home-only execution receipts and cache metadata off the existing worker wire format.
+	if plan.Job != nil {
+		job := *plan.Job
+		job.Running = false
+		if job.Release != nil {
+			release := *job.Release
+			release.ArchiveSize = 0
+			release.AssetUpdatedAt = time.Time{}
+			job.Release = &release
+		}
+		plan.Job = &job
 	}
 	return plan, errPlan
 }
@@ -402,6 +568,9 @@ func (s *Service) Report(ctx context.Context, nodeID string, result Result) erro
 		return fmt.Errorf("fleet result error is too long")
 	}
 	return s.change(ctx, func(st *State, now time.Time) error {
+		if voidUnstartedJob(st, now) {
+			return nil
+		}
 		ns := st.Nodes[nodeID]
 		if ns.LastJob == result.ID {
 			return nil
@@ -414,6 +583,7 @@ func (s *Service) Report(ctx context.Context, nodeID string, result Result) erro
 		ns.Status = result.Status
 		ns.Error = result.Error
 		if result.Status == "running" {
+			job.Running = true
 			job.ExpiresAt = now.Add(5 * time.Minute)
 			st.Nodes[nodeID] = ns
 			return nil
@@ -434,23 +604,66 @@ func (s *Service) Report(ctx context.Context, nodeID string, result Result) erro
 			}
 			if job.Operation == "upgrade" && st.Rollout != nil {
 				st.Rollout.Completed[nodeID] = job.Before
+				run := st.Rollout
+				if run.Phase == "complete" {
+					closeWindow(st, run.OptionalWindows[nodeID], run.Release.Version, "done", "", now)
+				} else {
+					complete := true
+					for _, n := range st.Policy.Nodes {
+						if n.Required {
+							if _, ok := run.Completed[n.ID]; !ok {
+								complete = false
+							}
+						}
+					}
+					if complete {
+						run.Phase = "complete"
+						acceptedRelease := run.Release
+						st.Accepted = &acceptedRelease
+						closeWindow(st, run.Window, run.Release.Version, "done", "", now)
+						delete(st.PostponedTargets, run.Release.Version)
+						addEvent(st, now, "", "rollout", "complete_required", run.Release.Version)
+					}
+				}
 			}
 			if job.Operation == "rollback" && st.Rollout != nil && len(st.Rollout.Rollback) > 0 {
+				delete(st.Rollout.Completed, nodeID)
 				st.Rollout.Rollback = st.Rollout.Rollback[1:]
 			}
 		} else if result.Status != "blocked" && (job.Operation == "upgrade" || job.Operation == "rollback") && st.Rollout != nil {
 			if job.Operation == "upgrade" {
-				st.Rollout.Completed[nodeID] = job.Before
-				st.Rollout.Rollback = nil
-				for i := len(st.Policy.Nodes) - 1; i >= 0; i-- {
-					id := st.Policy.Nodes[i].ID
-					if _, ok := st.Rollout.Completed[id]; ok {
-						st.Rollout.Rollback = append(st.Rollout.Rollback, id)
+				run := st.Rollout
+				run.Completed[nodeID] = job.Before
+				optional := false
+				for _, n := range st.Policy.Nodes {
+					if n.ID == nodeID {
+						optional = !n.Required
 					}
 				}
-				st.Rollout.Phase = "rollback"
+				run.Rollback = nil
+				if optional {
+					run.Rollback = []string{nodeID}
+				} else {
+					for i := len(st.Policy.Nodes) - 1; i >= 0; i-- {
+						id := st.Policy.Nodes[i].ID
+						if _, ok := run.Completed[id]; ok {
+							run.Rollback = append(run.Rollback, id)
+						}
+					}
+				}
+				run.RollbackNodes = append([]string(nil), run.Rollback...)
+				run.RollbackAnnounced = false
+				run.RollbackStartedAt = now
+				run.RollbackUnannounced = false
+				run.RollbackFailedNodes = nil
+				closeWindows(st, "rollback", now)
+				run.Phase = "rollback"
+				queueRollback(st, now)
 			} else {
+				st.Rollout.RollbackFailed = true
+				st.Rollout.RollbackFailedNodes = append(st.Rollout.RollbackFailedNodes, nodeID)
 				if len(st.Rollout.Rollback) > 0 {
+					delete(st.Rollout.Completed, nodeID)
 					st.Rollout.Rollback = st.Rollout.Rollback[1:]
 				}
 				if len(st.Rollout.Rollback) == 0 {
@@ -458,6 +671,24 @@ func (s *Service) Report(ctx context.Context, nodeID string, result Result) erro
 				}
 			}
 			st.Rollout.Error = result.Error
+		}
+		if st.Rollout != nil && job.Operation == "rollback" && len(st.Rollout.Rollback) == 0 {
+			st.Rollout.Phase = "failed"
+			run := st.Rollout
+			for _, w := range windows(run) {
+				removeWindowNotices(st, w.ID)
+				w.Closed = true
+			}
+			start := now
+			if run.Window != nil {
+				start = run.Window.WindowStart
+			}
+			phase := "rolled_back"
+			if run.RollbackFailed {
+				phase = "rollback_failed"
+			}
+			queueNotice(st, &Window{ID: uuid.NewString(), WindowStart: start, Nodes: run.RollbackNodes}, run.Release.Version, phase, now)
+			st.Notices[len(st.Notices)-1].FailedNodes = append([]string(nil), run.RollbackFailedNodes...)
 		}
 		ns.LastJob = result.ID
 		st.Nodes[nodeID] = ns
@@ -472,25 +703,23 @@ func (s *Service) Report(ctx context.Context, nodeID string, result Result) erro
 }
 
 // Check records a shared lease before any release network request, so cluster peers do not duplicate it.
-func (s *Service) Check(ctx context.Context) error {
+func (s *Service) checkRelease(ctx context.Context) error {
 	initial, errInitial := s.Status(ctx)
 	if errInitial != nil {
 		return errInitial
 	}
-	if !initial.Policy.Enabled || !initial.Policy.PatchUpdates {
-		return nil
-	}
+
 	nowDB, errNow := s.store.CurrentDatabaseTime(ctx)
 	if errNow != nil {
 		return errNow
 	}
-	if initial.CheckLease.After(nowDB) || (!initial.LastCheck.IsZero() && nowDB.Sub(initial.LastCheck) < time.Duration(initial.Policy.IntervalSeconds)*time.Second) {
+	if initial.CheckRetryAt.After(nowDB) || initial.CheckLease.After(nowDB) || (initial.CheckRetryAt.IsZero() && !initial.LastCheck.IsZero() && nowDB.Sub(initial.LastCheck) < time.Duration(initial.Policy.IntervalSeconds)*time.Second) {
 		return nil
 	}
 	run := false
 	errLease := s.change(ctx, func(st *State, now time.Time) error {
 		run = false
-		if !st.Policy.Enabled || !st.Policy.PatchUpdates || st.CheckLease.After(now) || (!st.LastCheck.IsZero() && now.Sub(st.LastCheck) < time.Duration(st.Policy.IntervalSeconds)*time.Second) {
+		if st.CheckRetryAt.After(now) || st.CheckLease.After(now) || (st.CheckRetryAt.IsZero() && !st.LastCheck.IsZero() && now.Sub(st.LastCheck) < time.Duration(st.Policy.IntervalSeconds)*time.Second) {
 			return nil
 		}
 		st.CheckLease = now.Add(3 * time.Minute)
@@ -506,13 +735,33 @@ func (s *Service) Check(ctx context.Context) error {
 		st.CheckLease = time.Time{}
 		if errFetch != nil {
 			st.CheckError = "release_check_failed"
+			st.RateLimitReset = time.Time{}
+			st.CheckRetryAt = now.Add(time.Duration(st.Policy.IntervalSeconds) * time.Second)
+			var failure *ReleaseCheckError
+			if errors.As(errFetch, &failure) {
+				st.CheckError = failure.Code
+				st.RateLimitReset = failure.ResetAt
+				if failure.RetryAt.After(st.CheckRetryAt) {
+					st.CheckRetryAt = failure.RetryAt
+				}
+				if now.Add(failure.RetryAfter).After(st.CheckRetryAt) {
+					st.CheckRetryAt = now.Add(failure.RetryAfter)
+				}
+			}
+			if st.CheckRetryAt.After(now.Add(6 * time.Hour)) {
+				st.CheckRetryAt = now.Add(6 * time.Hour)
+			}
 			return nil
 		}
 		if !versionPattern.MatchString(release.Version) || !hashPattern.MatchString(release.SHA256) || !hashPattern.MatchString(release.ArchiveSHA256) || release.Size <= 0 {
-			return fmt.Errorf("invalid stable release")
+			st.CheckError = "invalid_stable_release"
+			st.CheckRetryAt = now.Add(time.Duration(st.Policy.IntervalSeconds) * time.Second)
+			return nil
 		}
 		st.Latest = &release
 		st.CheckError = ""
+		st.CheckRetryAt = time.Time{}
+		st.RateLimitReset = time.Time{}
 		versions := []string{}
 		for _, n := range st.Policy.Nodes {
 			if node, ok := st.Nodes[n.ID]; ok && n.Required {
@@ -525,6 +774,13 @@ func (s *Service) Check(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+func (s *Service) Check(ctx context.Context) error {
+	if errNotice := s.deliverNotice(ctx); errNotice != nil {
+		return errNotice
+	}
+	return s.checkRelease(ctx)
 }
 
 func (s *Service) Run(ctx context.Context) {
