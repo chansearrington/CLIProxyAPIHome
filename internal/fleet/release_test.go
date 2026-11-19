@@ -34,7 +34,7 @@ func TestReleaseHTTPRateLimitCauseAndReset(t *testing.T) {
 			}
 			return &http.Response{StatusCode: tc.status, Header: tc.headers, Body: io.NopCloser(strings.NewReader("untrusted response not logged"))}, nil
 		})}
-		_, errFetch := fetchStableRelease(context.Background(), client)
+		_, errFetch := fetchStableRelease(context.Background(), client, nil)
 		var failure *ReleaseCheckError
 		if !errors.As(errFetch, &failure) || failure.Code != tc.code || failure.RetryAfter != tc.after {
 			t.Fatalf("bad failure: %+v", errFetch)

@@ -43,6 +43,9 @@ func releaseHTTPError(response *http.Response) *ReleaseCheckError {
 		failure.RetryAfter = 0
 	}
 	if retry, errRetry := strconv.Atoi(response.Header.Get("Retry-After")); errRetry == nil && retry > 0 {
+		if retry > 6*60*60 {
+			retry = 6 * 60 * 60
+		}
 		failure.RetryAfter = time.Duration(retry) * time.Second
 	} else if deadline, errDeadline := http.ParseTime(response.Header.Get("Retry-After")); errDeadline == nil && deadline.After(failure.RetryAt) {
 		failure.RetryAt = deadline
@@ -52,10 +55,12 @@ func releaseHTTPError(response *http.Response) *ReleaseCheckError {
 
 // FetchStableRelease verifies the official archive and derives its binary hash without executing it.
 func FetchStableRelease(ctx context.Context) (Release, error) {
-	return fetchStableRelease(ctx, &http.Client{Timeout: 2 * time.Minute})
+	return fetchStableRelease(ctx, &http.Client{Timeout: 2 * time.Minute}, nil)
 }
 
-func fetchStableRelease(ctx context.Context, client *http.Client) (Release, error) {
+func fetchStableRelease(ctx context.Context, client *http.Client, previous *Release) (Release, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel() // Keep the whole fetch inside the shared three-minute lease.
 	read := func(url string, limit int64) ([]byte, error) {
 		request, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if errRequest != nil {
@@ -118,6 +123,9 @@ func fetchStableRelease(ctx context.Context, client *http.Client) (Release, erro
 	expectedPrefix := releasePrefix + release.Tag + "/"
 	if !strings.HasPrefix(archiveURL, expectedPrefix) || !strings.HasPrefix(checksURL, expectedPrefix) {
 		return Release{}, &ReleaseCheckError{Code: "unexpected_release_asset_origin"}
+	}
+	if previous != nil && previous.Version == version && previous.URL == archiveURL && assetDigest == "sha256:"+previous.ArchiveSHA256 && hashPattern.MatchString(previous.ArchiveSHA256) {
+		return *previous, nil
 	}
 	checks, errChecks := read(checksURL, 1<<20)
 	if errChecks != nil {

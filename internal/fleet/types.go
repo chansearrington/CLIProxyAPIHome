@@ -24,7 +24,13 @@ type Policy struct {
 	PatchUpdates    bool         `json:"patch_updates"`
 	IntervalSeconds int          `json:"interval_seconds"`
 	Nodes           []NodePolicy `json:"nodes"`
+	OptionalWindow  string       `json:"optional_window,omitempty"`
 	AnnouncementURL string       `json:"announcement_url,omitempty"`
+}
+
+type PolicyChange struct {
+	Force  bool
+	Caller string
 }
 
 type Inventory struct {
@@ -58,6 +64,7 @@ type Job struct {
 	NodeID      string                    `json:"node_id"`
 	Operation   string                    `json:"operation"`
 	Token       string                    `json:"token"`
+	Running     bool                      `json:"running,omitempty"`
 	ExpiresAt   time.Time                 `json:"expires_at"`
 	Before      Inventory                 `json:"before"`
 	Release     *Release                  `json:"release,omitempty"`
@@ -74,29 +81,36 @@ type Result struct {
 }
 
 type Rollout struct {
-	Approved        bool                 `json:"approved"`
-	Release         Release              `json:"release"`
-	Completed       map[string]Inventory `json:"completed"`
-	Phase           string               `json:"phase"`
-	Error           string               `json:"error,omitempty"`
-	Rollback        []string             `json:"rollback,omitempty"`
-	RollbackFailed  bool                 `json:"rollback_failed,omitempty"`
-	Window          *Window              `json:"window,omitempty"`
-	OptionalWindows map[string]*Window   `json:"optional_windows,omitempty"`
+	Approved            bool                 `json:"approved"`
+	Release             Release              `json:"release"`
+	Completed           map[string]Inventory `json:"completed"`
+	Phase               string               `json:"phase"`
+	Error               string               `json:"error,omitempty"`
+	Rollback            []string             `json:"rollback,omitempty"`
+	RollbackNodes       []string             `json:"rollback_nodes,omitempty"`
+	RollbackAnnounced   bool                 `json:"rollback_announced,omitempty"`
+	RollbackFailedNodes []string             `json:"rollback_failed_nodes,omitempty"`
+	RollbackFailed      bool                 `json:"rollback_failed,omitempty"`
+	Window              *Window              `json:"window,omitempty"`
+	OptionalWindows     map[string]*Window   `json:"optional_windows,omitempty"`
 }
 
 // Window is pinned to its rollout's verified release, never to Latest.
 type Window struct {
-	ID          string    `json:"id"`
-	WindowStart time.Time `json:"window_start"`
-	Nodes       []string  `json:"nodes"`
-	AnnouncedAt time.Time `json:"announced_at"`
-	StartedAt   time.Time `json:"started_at"`
-	Reminder    bool      `json:"reminder"`
-	Closed      bool      `json:"closed"`
+	ID             string    `json:"id"`
+	WindowStart    time.Time `json:"window_start"`
+	Nodes          []string  `json:"nodes"`
+	AnnouncedAt    time.Time `json:"announced_at"`
+	StartedAt      time.Time `json:"started_at"`
+	Reminder       bool      `json:"reminder"`
+	Optional       bool      `json:"optional,omitempty"`
+	DeliveryFailed bool      `json:"delivery_failed,omitempty"`
+	Closed         bool      `json:"closed"`
 }
 
 type Announcement struct {
+	Reason        string    `json:"reason,omitempty"`
+	FailedNodes   []string  `json:"failed_nodes,omitempty"`
 	Phase         string    `json:"phase"`
 	TargetVersion string    `json:"target_version"`
 	WindowStart   time.Time `json:"window_start"`
@@ -105,8 +119,9 @@ type Announcement struct {
 
 // Notice is an at-least-once delivery receipt; ID is sent as the Idempotency-Key header.
 type Notice struct {
-	ID       string `json:"id"`
-	WindowID string `json:"window_id"`
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	WindowID  string    `json:"window_id"`
 	Announcement
 }
 
@@ -116,6 +131,8 @@ type Event struct {
 	Operation string    `json:"operation"`
 	Status    string    `json:"status"`
 	Version   string    `json:"version,omitempty"`
+	Force     bool      `json:"force,omitempty"`
+	Caller    string    `json:"caller,omitempty"`
 }
 
 type State struct {

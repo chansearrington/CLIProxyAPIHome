@@ -4830,29 +4830,92 @@ DELETE query：
 
 ## Home 管理的节点维护
 
-Home 已在启动时及每三小时自动刷新模型定义。新增维护功能使用 Home 数据库存储策略、任务租约、
-节点结果及最近 100 条历史记录；不依赖操作员笔记本上的调度程序。以下接口均需要原有管理密钥，
-同时支持 `/v0/management` 和 `/v8/management`。
+Home 已在启动时及每三小时刷新模型定义。维护策略、任务租约、节点结果、公告与最近 100 条历史记录
+保存在现有数据库 KV 中，不依赖笔记本调度器。以下接口需要原有管理认证，请使用 `/v8/management`；
+旧 `/v0/management` 兼容路由不属于此接口契约。状态仍为 `schema:1`，不新增数据库版本号。
 
-- `GET /fleet`：读取策略、节点状态、已校验版本、当前任务及发布进度。管理响应不返回任务租约密钥。
-- `PUT /fleet/policy`：完整替换 `enabled`、`catalog_sync`、`patch_updates`、`interval_seconds`
-  和 `nodes`。检查间隔为 300–86400 秒；最多 64 个唯一证书 UUID。`nodes` 中包含 `id`、
-  `name`、`required`。必需节点按配置顺序逐个升级，首个为金丝雀；离线可选节点不阻止其他节点。
-  正在执行任务时返回 `409`。
-- `POST /fleet/releases/:version/approve`：批准当前已校验候选版本，包括跨主/次版本升级或重试失败版本。
-- `POST /fleet/releases/:version/hold`：禁止自动安装当前候选版本。版本不匹配或任务正在运行时返回 `409`。
+### GET `/fleet`
 
-初始策略禁用。自动升级仅允许当前主/次版本内更高的稳定补丁版本；其他版本报告
-`release_requires_review`。Home 校验官方 GitHub 压缩包校验和及可执行文件 SHA256；节点再次校验，
-保留旧文件、原地重启并验证实际 Claude/Codex 请求。失败时按相反顺序回滚并锁定失败版本，
-不重置或绕过上游配额。
+返回 `policy`、`nodes`、已校验的 `latest`、`last_check`、`check_error`、`check_retry_at`、
+`rate_limit_reset`、`active`、`rollout`、`history`。任务令牌与模型目录元数据被隐藏；
+`policy.announcement_url` 仅显示协议和主机。请单独保留完整配置地址，不要将已遮蔽的地址复制回策略。
+`rollout.release` 固定为已公告的精确版本及校验值，不随 `latest` 改变。
+`rollout.window` 包含 `id`、`window_start`、有序 `nodes`、`announced_at`、`started_at`、
+`reminder`、`closed`；`optional_windows` 保存可选节点各自的窗口。
+`announcements`、`announcement_error`、`announcement_retry_at`、`announcement_lease` 显示投递状态；
+`postponed_targets` 保存每个待处理目标的延期限制。强制操作的 `force` 和调用方远程地址记入历史，不记录密钥。
 
-节点本地执行器沿用现有 RESP/mTLS 证书，使用 `GET fleet-plan <inventory-json>` 获取自己的
-`catalog`、`upgrade` 或 `rollback` 任务，通过 `RPUSH fleet-status <result-json>` 上报任务 ID、
-私有租约令牌及 `running`、`success`、`failed`、`blocked` 状态。身份由证书决定，不能选择其他节点。
-任务租约为五分钟，过期任务必须由原节点对账，不能被视为成功。不会向执行器分发管理密钥，
-不支持任意命令。首个适配器支持 `darwin/arm64`；安装器位于 `tools/fleet-worker/install.py`。
+暂停补丁升级或整个维护策略时仍检查版本。无需 GitHub token。失败保留上次校验成功的版本，原因包括
+`rate_limited`、`release_http_403`、`release_network_error`、`invalid_release_json`、
+`archive_checksum_mismatch`；跨主/次版本需要 `release_requires_review`。
+`rate_limit_reset` 显示 GitHub 的实际重置时刻，`check_retry_at` 结合检查间隔、重置后一分钟及
+`Retry-After`，但退避最多六小时；写入策略不能绕过退避。tag、下载地址及已发布摘要未变时复用已验证
+文件，不重新下载校验和与压缩包。
 
-目录同步保留显式默认模型、回退链、别名和会话选择，不将私有 Copilot 模型添加到共享菜单。
-维护状态位于已有数据库 KV 表的受保护 `__home:fleet:` 命名空间，包含在数据库快照中；通用 RESP KV
-命令不能读写该命名空间。原有 CPA 协议及负载保持不变，无需替换现有 CPA 二进制文件。
+### PUT `/fleet/policy`
+
+完整替换策略。字段为 `enabled`、`catalog_sync`、`patch_updates`、`interval_seconds`、`nodes`、
+`announcement_url` 和 `optional_window`。初始禁用；间隔 300–86400 秒；最多 64 个唯一证书 UUID，
+节点包含 `id`、`name`、`required`。启用补丁升级需要必需节点及 HTTP(S) 公告地址；地址不能含 URL 用户信息、
+fragment、token 或凭据。旧策略没有公告地址时仍可读取，但不能开始新升级。签名与角色隔离暂不在范围内。
+`optional_window` 为 America/Chicago 的 HH:MM，默认 `02:00`。
+
+必需节点按配置顺序串行执行；可选离线节点不阻止必需节点。正在执行任务或投递公告时，策略修改返回 `409`。
+开放窗口期间改变成员、顺序或必需角色也返回 `409`；仅改名字不算成员变化。先 hold，或在策略请求中加入
+`force:true` 关闭待处理窗口、保留 Completed 记录并挂起部分完成的发布，然后修改节点。force 不能删除活动任务。
+修改公告地址或可选窗口时间会重新公告开放窗口。关闭 enabled 或 patch_updates 时，对已公告的窗口仅发送一次
+`postponed`，`reason:"paused"`；从未公告的窗口不发送延期消息。
+
+### 已公告窗口与 webhook
+
+默认下一个 America/Chicago **02:00**，成功公告必须至少提前一小时。内置 DST 数据；春季不存在的 02:00
+使用 03:00。窗口可发出新升级任务的时长为一小时。已报告 running 的任务继续对账；从未报告 running 的升级
+任务在窗口关闭后作废，不能在稍后唤醒时恢复。错过窗口或必需节点不在线时重新安排下一晚。
+可选节点有独立公告，必须在自己的窗口内在线；超过 24 小时未轮询则停止每晚重复公告，下次轮询再安排新窗口，
+绝不醒来就升级。后来发现的新版本需要自己的公告与窗口；可通过 postponed 替代旧可选窗口。
+
+Home 向 announcement_url POST，下游负责同时可靠地接受 Hype Orchestrator 留言板消息和托管审核页后才返回 2xx。
+不发送管理密钥，也不能证明读者已阅读。基础 JSON：
+
+```json
+{"phase":"scheduled","target_version":"8.0.30","window_start":"2026-11-19T02:00:00-06:00","nodes":["00000000-0000-4000-8000-000000000001"]}
+```
+
+phase 包括 `scheduled`、`reminder`、`started`、`done`、`rollback`、`rolled_back`、`rollback_failed`、
+`postponed`。可选 `reason` 解释暂停、hold、替代或睡眠；`failed_nodes` 列出回滚失败节点。
+`nodes` 是执行顺序；rollback 为执行前公告，rolled_back 表示全部成功，rollback_failed 的 nodes 为所有尝试节点，
+其中 failed_nodes 之外的节点成功。可选节点升级失败仅回滚该可选节点，不回滚健康的必需节点。
+所有回滚派发前也必须成功投递 rollback；失败版本保留锁定状态，失败详情同时保存在历史和
+`rollout.rollback_failed_nodes`。真实上游配额不会重置或绕过。
+
+投递超时 20 秒，不跟随重定向，失败至少五分钟后重试。公告状态跨重启保存，投递至少一次；接收方必须用
+`Idempotency-Key` 去重，该值就是持久化 notice ID，位于请求头而非 JSON。日志仅包含 phase 和 HTTP 状态码，
+不包含 URL 路径、查询参数或响应正文。队列最多 20 条，超过 24 小时的消息过期，历史记录丢弃/过期；未确认的
+门控公告会安全重建。永久 4xx 拒绝不会让旧消息永久堵塞队列，而会使相关窗口失败并重新公告。
+只有 scheduled（至少提前一小时）、reminder 和 started 都成功后才能派发升级；投递太晚或失败则安排下一晚。
+完成消息在接受或过期前留队，队列非空时不派发后续升级。已运行任务始终可对账。等待补丁窗口期间目录同步照常，
+同一公告窗口可包含固定 CPA 补丁及现有目录协调；Home 镜像升级仍是人工操作。
+
+### POST `/fleet/postpone`
+
+请求 `{"target_version":"8.0.30","node_id":"00000000-0000-4000-8000-000000000003","force":false}`。
+省略 node_id 表示必需节点窗口；指定 node_id 表示该可选节点窗口。移动到下一个本地预定夜晚，而非固定加 24 小时；
+DST 变化时可以是 23 或 25 小时。若已过去，则使用仍满足一小时提前量的下个窗口。
+每个待处理目标允许一次普通延期，跨重启保存；目标完成或被替代后清除限制。force:true 仅允许操作员超出次数，
+不会立即执行或绕过公告。编排器适配器不得设置 force；现有管理认证仍是特权认证，不新增独立角色。
+强制操作及调用方远程地址进入历史。成功返回状态；格式错误 400；目标不匹配、窗口已开始/关闭、活动任务/投递，
+或第二次未强制延期返回 409。仅对曾成功公告的窗口发送 postponed，然后发送新的 scheduled。
+
+### POST `/fleet/releases/:version/approve` / `hold`
+
+approve 允许已校验候选版本（包括跨主/次版本或重试失败版本）并安排公告窗口，绝不跳过公告；同时清除 check_error。
+hold 可停止部分完成发布的后续派发而不丢失 Completed，已经运行的任务仍可对账。再次批准相同 held 目标时保留这些
+记录，为剩余节点安排新公告窗口。批准时有活动任务、目标不匹配或替换未 hold 的部分发布/回滚，返回 409。
+不接受任意下载地址、shell 命令或文件。
+
+节点本地执行器使用已有 RESP/mTLS：`GET fleet-plan <inventory-json>` 和 `RPUSH fleet-status <result-json>`。
+证书绑定身份，不分发管理密钥。支持 catalog、upgrade、rollback，状态为 running、success、failed、blocked；
+租约五分钟。已运行但过期的任务必须原节点对账，不能当成成功；作废未启动任务保留回执。所有必需节点校验通过后
+返回 accepted_release、verified_node_ids；可选节点不阻止此确认。平台 darwin/arm64，安装器 tools/fleet-worker/install.py。
+目录同步保留默认模型、回退链、别名和会话选择，不加入私有 Copilot 模型。维护状态仍位于受保护的
+`__home:fleet:` KV 命名空间，通用 RESP KV 不可读写；已有 CPA 命令和任务操作不变，不需要替换 CPA 二进制文件。

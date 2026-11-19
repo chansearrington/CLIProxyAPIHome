@@ -51,8 +51,53 @@ func TestFleetPostponePersistsAndEnforcesOncePerTarget(t *testing.T) {
 		}
 	}
 	stored, errStatus := fleet.New(repo).Status(ctx)
-	if errStatus != nil || stored.Schema != 1 || stored.Rollout.Release.Version != "8.0.30" || !stored.Rollout.Window.WindowStart.Equal(start.Add(48*time.Hour)) || !stored.PostponedTargets["8.0.30"] || len(stored.Notices) != 3 {
+	last := stored.History[len(stored.History)-1]
+	if !last.Force || last.Caller == "" {
+		t.Fatal("postpone force/caller not audited")
+	}
+	if errStatus != nil || stored.Schema != 1 || stored.Rollout.Release.Version != "8.0.30" || !stored.Rollout.Window.WindowStart.Equal(start.Add(48*time.Hour)) || !stored.PostponedTargets["8.0.30"] || len(stored.Notices) != 1 {
 		t.Fatalf("postponement not durably stored: %+v %v", stored, errStatus)
+	}
+}
+
+func TestFleetStatusMasksHookAndPolicyForceIsAudited(t *testing.T) {
+	db, cleanup := openManagementLogTestDB(t)
+	defer cleanup()
+	repo := cluster.NewRepository(db)
+	s := fleet.New(repo)
+	endpoint := "https://hooks.example.invalid/private-path?fake-private-value=test-only"
+	if errPolicy := s.SetPolicy(context.Background(), fleet.Policy{IntervalSeconds: 3600, AnnouncementURL: endpoint}); errPolicy != nil {
+		t.Fatal(errPolicy)
+	}
+	handler := NewHandler(repo, nil, "home", 8327)
+	router := gin.New()
+	router.GET("/fleet", handler.GetFleet)
+	router.PUT("/fleet/policy", handler.PutFleetPolicy)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/fleet", nil))
+	var state fleet.State
+	if errDecode := json.Unmarshal(recorder.Body.Bytes(), &state); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	if state.Policy.AnnouncementURL != "https://hooks.example.invalid" || bytes.Contains(recorder.Body.Bytes(), []byte("private-path")) {
+		t.Fatal("GET exposed webhook path/query")
+	}
+	stored, errStatus := s.Status(context.Background())
+	if errStatus != nil || stored.Policy.AnnouncementURL != endpoint {
+		t.Fatal("mask changed stored hook")
+	}
+	recorder = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/fleet/policy", bytes.NewBufferString(`{"interval_seconds":3600,"force":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.RemoteAddr = "192.0.2.10:1234"
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatal(recorder.Body.String())
+	}
+	stored, _ = s.Status(context.Background())
+	last := stored.History[len(stored.History)-1]
+	if !last.Force || last.Caller != "192.0.2.10:1234" {
+		t.Fatal("policy force/caller not audited")
 	}
 }
 

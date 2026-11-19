@@ -2,6 +2,7 @@ package management
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPIHome/internal/fleet"
@@ -15,22 +16,31 @@ func (h *Handler) GetFleet(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "fleet_state_failed", errState)
 		return
 	}
+	if endpoint, errURL := url.Parse(state.Policy.AnnouncementURL); errURL == nil && endpoint.Host != "" {
+		state.Policy.AnnouncementURL = endpoint.Scheme + "://" + endpoint.Host
+	} else {
+		state.Policy.AnnouncementURL = ""
+	}
 	c.JSON(http.StatusOK, state)
 }
 
 func (h *Handler) PutFleetPolicy(c *gin.Context) {
-	var policy fleet.Policy
-	if errBind := c.ShouldBindJSON(&policy); errBind != nil {
+	var request struct {
+		fleet.Policy
+		Force bool `json:"force"`
+	}
+	if errBind := c.ShouldBindJSON(&request); errBind != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_fleet_policy"})
 		return
 	}
+	policy := request.Policy
 	if errPolicy := fleet.ValidatePolicy(policy); errPolicy != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_fleet_policy", "message": errPolicy.Error()})
 		return
 	}
 	ctx, cancel := h.requestContext(c)
 	defer cancel()
-	if errSet := fleet.New(h.repo).SetPolicy(ctx, policy); errSet != nil {
+	if errSet := fleet.New(h.repo).SetPolicy(ctx, policy, fleet.PolicyChange{Force: request.Force, Caller: c.Request.RemoteAddr}); errSet != nil {
 		respondError(c, http.StatusConflict, "fleet_policy_failed", errSet)
 		return
 	}
@@ -49,7 +59,7 @@ func (h *Handler) PostponeFleet(c *gin.Context) {
 	}
 	ctx, cancel := h.requestContext(c)
 	defer cancel()
-	if errPostpone := fleet.New(h.repo).Postpone(ctx, request.TargetVersion, request.NodeID, request.Force); errPostpone != nil {
+	if errPostpone := fleet.New(h.repo).Postpone(ctx, request.TargetVersion, request.NodeID, request.Force, c.Request.RemoteAddr); errPostpone != nil {
 		respondError(c, http.StatusConflict, "fleet_postpone_failed", errPostpone)
 		return
 	}

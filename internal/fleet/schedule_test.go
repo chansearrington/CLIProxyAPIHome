@@ -349,7 +349,7 @@ func TestAnnouncementWebhookPayloadAndFailurePrivacy(t *testing.T) {
 	}))
 	defer server.Close()
 	notice := Notice{ID: "fake-notice", Announcement: Announcement{Phase: "scheduled", TargetVersion: "8.0.30", Nodes: testIDs[:2]}}
-	if errPost := postAnnouncement(context.Background(), server.URL+"?fake-private-value=do-not-log", notice); errPost == nil || errPost.Error() != "announcement_http_302" {
+	if errPost := postAnnouncement(context.Background(), server.URL+"?fake-private-value=do-not-log", notice); errPost == nil || errPost.Error() != "announcement_delivery_failed" {
 		t.Fatalf("unsafe/unexpected delivery error: %v", errPost)
 	}
 	if calls != 1 {
