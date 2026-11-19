@@ -729,7 +729,7 @@ func TestAutoMigratePostgresSchemaVersionGate(t *testing.T) {
 	if !db.Migrator().HasIndex(&UsageRecord{}, "idx_usage_service_tier_pending_v1") || !db.Migrator().HasIndex(&BillingChargeRecord{}, "idx_billing_charge_base_amount_pending_v1") {
 		t.Fatal("current schema did not install missing fleet indexes")
 	}
-	assertPostgresSchemaMigrationVersion(t, db, 17)
+	assertPostgresSchemaMigrationVersion(t, db, currentDatabaseVersion)
 
 	if errDrop := db.Migrator().DropTable(&schemaMigrationRecord{}); errDrop != nil {
 		t.Fatalf("drop version table for legacy upgrade: %v", errDrop)

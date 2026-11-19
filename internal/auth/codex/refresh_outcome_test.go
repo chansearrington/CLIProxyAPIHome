@@ -31,6 +31,7 @@ func TestRefreshTokensUnknownOutcomeDoesNotReplay(t *testing.T) {
 		body   string
 	}{
 		{"transport", "transport", 0, ""},
+		{"panic", "transport", 0, ""},
 		{"read", "response_read", http.StatusOK, ""},
 		{"decode", "response_decode", http.StatusOK, `{"access_token":`},
 		{"validate", "response_validate", http.StatusOK, `{}`},
@@ -44,6 +45,9 @@ func TestRefreshTokensUnknownOutcomeDoesNotReplay(t *testing.T) {
 			transportErr := errors.New("synthetic acceptance unknown: secret-refresh-material")
 			transport := outcomeRoundTripper(func(req *http.Request) (*http.Response, error) {
 				calls.Add(1)
+				if tc.name == "panic" {
+					panic("synthetic panic: secret-refresh-material")
+				}
 				if tc.status == 0 {
 					return nil, transportErr
 				}

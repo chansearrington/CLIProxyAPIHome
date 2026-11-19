@@ -121,46 +121,46 @@ func TestCodexRefreshJournalSurvivesInterruptedOwnerAndAuthReplacement(t *testin
 	auth := &coreauth.Auth{ID: t.Name(), Index: t.Name(), Provider: "codex", Status: coreauth.StatusActive,
 		Metadata: map[string]any{"access_token": "previous", "refresh_token": t.Name()},
 	}
-	if _, errUpsert := repo.UpsertAuth(ctx, auth, "register"); errUpsert != nil {
+	// Model an owner lost after its durable claim but before any result was saved.
+	leased := auth.Clone()
+	leased.Attributes = map[string]string{refreshLeaseAttribute: newRefreshLeaseID()}
+	coreauth.ApplyRefreshPendingState(leased, time.Now().UTC())
+	leased.NextRefreshAfter = time.Now().Add(-refreshLeaseDuration)
+	if _, errUpsert := repo.UpsertAuth(ctx, leased, "refresh-claim"); errUpsert != nil {
 		t.Fatal(errUpsert)
+	}
+	if owner, errClaim := repo.RefreshClaim(ctx, codexJournalTestKey(t.Name())); errClaim != nil || owner == "" {
+		t.Fatalf("create interrupted owner claim: %v", errClaim)
+	}
+	sqlDB, errDB := repo.db.DB()
+	if errDB != nil {
+		t.Fatal(errDB)
+	}
+	if errClose := sqlDB.Close(); errClose != nil {
+		t.Fatal(errClose)
 	}
 	var calls atomic.Int32
 	transport := refreshRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if calls.Add(1) == 1 {
-			// Stop execution after the durable claim and simulated submission,
-			// before the response or auth finalization can be persisted.
-			panic("injected refresh owner interruption")
-		}
+		calls.Add(1)
 		return codexJournalTestResponse(req, "unexpected-replay"), nil
 	})
 	installCodexJournalTransport(t, transport)
-	runtime := newRefreshTestRuntime(t, repo, auth, transport)
-	coordinator := NewCoordinator(repo, NodeIdentity{IP: "127.0.0.1", Port: 9389, Secret: "test"}, CoordinatorOptions{})
-	markRefreshTestMaster(t, repo, coordinator)
-	controller := NewRefreshController(coordinator, runtime, repo, nil)
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("refresh owner was not interrupted")
-			}
-		}()
-		_, _ = controller.RefreshNow(ctx, auth.ID)
-	}()
-	// A new connection and runtime have no dependency on the original owner.
+	// Reopen the actual database without the original owner or connection.
 	restarted := openRefreshTestRepositoryAt(t, path, false)
 	stored, _, errGet := restarted.GetAuth(ctx, auth.ID)
 	if errGet != nil {
 		t.Fatal(errGet)
 	}
-	stored.NextRefreshAfter = time.Now().Add(-refreshLeaseDuration)
-	if _, errUpsert := restarted.UpsertAuth(ctx, stored, "expire-lease"); errUpsert != nil {
-		t.Fatal(errUpsert)
+	if stored.Attributes[refreshLeaseAttribute] == "" || !stored.NextRefreshAfter.Before(time.Now()) {
+		t.Fatal("interrupted owner's expired lease was not persisted")
 	}
 	restartedRuntime := newRefreshTestRuntime(t, restarted, stored, transport)
+	coordinator := NewCoordinator(restarted, NodeIdentity{IP: "127.0.0.1", Port: 9389, Secret: "test"}, CoordinatorOptions{})
+	markRefreshTestMaster(t, restarted, coordinator)
 	restartedController := NewRefreshController(coordinator, restartedRuntime, restarted, nil)
 	_, errRefresh := restartedController.RefreshNow(ctx, auth.ID)
 	var authErr *coreauth.Error
-	if !errors.As(errRefresh, &authErr) || authErr.Code != coreauth.ErrorCodeRefreshOutcomeUnknown || calls.Load() != 1 {
+	if !errors.As(errRefresh, &authErr) || authErr.Code != coreauth.ErrorCodeRefreshOutcomeUnknown || calls.Load() != 0 {
 		t.Fatalf("orphaned claim was replayed after lease expiry: err=%v calls=%d", errRefresh, calls.Load())
 	}
 	if errDelete := restarted.SoftDeleteAuth(ctx, auth.ID); errDelete != nil {
@@ -173,8 +173,45 @@ func TestCodexRefreshJournalSurvivesInterruptedOwnerAndAuthReplacement(t *testin
 		t.Fatal(errUpsert)
 	}
 	_, errRefresh = restartedRuntime.CoreManager().RefreshAuthCredential(ctx, imported)
-	if !errors.As(errRefresh, &authErr) || authErr.Code != coreauth.ErrorCodeRefreshOutcomeUnknown || calls.Load() != 1 {
+	if !errors.As(errRefresh, &authErr) || authErr.Code != coreauth.ErrorCodeRefreshOutcomeUnknown || calls.Load() != 0 {
 		t.Fatalf("auth replacement discarded the grant claim: err=%v calls=%d", errRefresh, calls.Load())
+	}
+}
+
+func TestCodexRefreshJournalContainsOwnerPanicWithoutReplay(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "home.db")
+	repo := openRefreshTestRepositoryAt(t, path, true)
+	var calls atomic.Int32
+	installCodexJournalTransport(t, refreshRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		panic("synthetic refresh panic with private payload")
+	}))
+	svc := codexauth.NewCodexAuthWithProxyURL(nil, "")
+	_, errRefresh := svc.RefreshTokensWithRetry(codexauth.WithRefreshJournal(ctx, repo), t.Name(), 3)
+	if !codexauth.IsRefreshOutcomeUnknown(errRefresh) || calls.Load() != 1 {
+		t.Fatalf("owner panic did not return a fenced error: err=%v calls=%d", errRefresh, calls.Load())
+	}
+	if strings.Contains(errRefresh.Error(), "private payload") {
+		t.Fatal("refresh error exposed the panic payload")
+	}
+	sqlDB, errDB := repo.db.DB()
+	if errDB != nil {
+		t.Fatal(errDB)
+	}
+	if errClose := sqlDB.Close(); errClose != nil {
+		t.Fatal(errClose)
+	}
+	restarted := openRefreshTestRepositoryAt(t, path, false)
+	pending, errRead := restarted.RefreshRead(ctx, codexJournalTestKey(t.Name()))
+	if errRead != nil || string(pending) != `{"stage":"pending"}` {
+		t.Fatalf("owner panic lost the durable pending claim: %v", errRead)
+	}
+	restartedSvc := codexauth.NewCodexAuthWithProxyURL(nil, "")
+	_, errRefresh = restartedSvc.RefreshTokensWithRetry(codexauth.WithRefreshJournal(ctx, restarted), t.Name(), 3)
+	var unknown *codexauth.RefreshOutcomeUnknownError
+	if !errors.As(errRefresh, &unknown) || unknown.Stage() != "pending" || calls.Load() != 1 {
+		t.Fatalf("owner panic allowed a replay after reopen: err=%v calls=%d", errRefresh, calls.Load())
 	}
 }
 
