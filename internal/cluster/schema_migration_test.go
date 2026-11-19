@@ -704,6 +704,11 @@ func TestAutoMigratePostgresSchemaVersionGate(t *testing.T) {
 		t.Fatal("postgres upgrade did not create the billing time index")
 	}
 
+	for _, indexName := range []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1"} {
+		if errDrop := db.Exec("DROP INDEX " + indexName).Error; errDrop != nil {
+			t.Fatal(errDrop)
+		}
+	}
 	releaseLock, lockDone := holdPostgresSchemaMigrationLock(t, db)
 	fastCtx, cancelFast := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	errFast := AutoMigrateContext(fastCtx, db)
@@ -715,6 +720,16 @@ func TestAutoMigratePostgresSchemaVersionGate(t *testing.T) {
 	if errFast == nil || !strings.Contains(errFast.Error(), "wait for database schema migration coordination") || !errors.Is(errFast, context.DeadlineExceeded) {
 		t.Fatalf("current schema bypassed migration lock for fleet indexes: %v", errFast)
 	}
+	if db.Migrator().HasIndex(&UsageRecord{}, "idx_usage_service_tier_pending_v1") || db.Migrator().HasIndex(&BillingChargeRecord{}, "idx_billing_charge_base_amount_pending_v1") {
+		t.Fatal("current schema installed fleet indexes without acquiring the migration lock")
+	}
+	if errMigrate := AutoMigrateContext(ctx, db); errMigrate != nil {
+		t.Fatalf("install current-version fleet indexes after releasing lock: %v", errMigrate)
+	}
+	if !db.Migrator().HasIndex(&UsageRecord{}, "idx_usage_service_tier_pending_v1") || !db.Migrator().HasIndex(&BillingChargeRecord{}, "idx_billing_charge_base_amount_pending_v1") {
+		t.Fatal("current schema did not install missing fleet indexes")
+	}
+	assertPostgresSchemaMigrationVersion(t, db, 17)
 
 	if errDrop := db.Migrator().DropTable(&schemaMigrationRecord{}); errDrop != nil {
 		t.Fatalf("drop version table for legacy upgrade: %v", errDrop)

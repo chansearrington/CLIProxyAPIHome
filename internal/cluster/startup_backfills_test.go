@@ -47,8 +47,12 @@ func TestStartupBackfillsRepairLegacyAndSkipCleanRestart(t *testing.T) {
 			if errMigrate := AutoMigrate(db); errMigrate != nil {
 				t.Fatal(errMigrate)
 			}
-			// Simulate an existing v17 database upgrading without either sparse index.
-			for _, indexName := range []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1"} {
+			// Simulate an existing v17 database without the unversioned fleet indexes.
+			indexNames := []string{"idx_usage_service_tier_pending_v1", "idx_billing_charge_base_amount_pending_v1"}
+			if backend == "sqlite" {
+				indexNames = append(indexNames, "idx_usage_dashboard_time_v1", "idx_usage_dashboard_provider_time_v1")
+			}
+			for _, indexName := range indexNames {
 				if errDrop := db.Exec("DROP INDEX IF EXISTS " + indexName).Error; errDrop != nil {
 					t.Fatal(errDrop)
 				}
@@ -61,16 +65,50 @@ func TestStartupBackfillsRepairLegacyAndSkipCleanRestart(t *testing.T) {
 			if errAlter := db.Exec(`ALTER TABLE "usage" ADD COLUMN request_service_tier TEXT`).Error; errAlter != nil {
 				t.Fatal(errAlter)
 			}
-			// The second pass simulates an older writer after a successful migration.
+			// The second pass simulates older inserts and updates after a successful migration.
+			var firstUsageIDs []uint
 			for pass := 0; pass < 2; pass++ {
 				usageIDs := seedStartupBackfillRows(t, db, pass)
 				if errUpdate := db.Exec(`UPDATE "usage" SET request_service_tier = 'priority' WHERE id = ?`, usageIDs[1]).Error; errUpdate != nil {
 					t.Fatal(errUpdate)
 				}
-				if errMigrate := AutoMigrate(db); errMigrate != nil {
+				if pass == 0 {
+					firstUsageIDs = usageIDs
+				} else {
+					if errUpdate := db.Exec(`UPDATE "usage" SET service_tier = '' WHERE id = ?`, firstUsageIDs[0]).Error; errUpdate != nil {
+						t.Fatal(errUpdate)
+					}
+					if errUpdate := db.Exec(`UPDATE "billing_charge" SET base_amount = 0 WHERE id = ?`, "startup-0-0").Error; errUpdate != nil {
+						t.Fatal(errUpdate)
+					}
+				}
+				var migrationLogs bytes.Buffer
+				queryDB := db.Session(&gorm.Session{Logger: logger.New(log.New(&migrationLogs, "", 0), logger.Config{LogLevel: logger.Info, ParameterizedQueries: true})})
+				if errMigrate := AutoMigrate(queryDB); errMigrate != nil {
 					t.Fatal(errMigrate)
 				}
+				if backend == "postgres" {
+					for _, statement := range []string{"CREATE TABLE", "ALTER TABLE", "DROP "} {
+						if strings.Contains(migrationLogs.String(), statement) {
+							t.Errorf("current PostgreSQL v17 startup issued full schema DDL: %s", statement)
+						}
+					}
+				}
+				for _, indexName := range indexNames {
+					var count int64
+					if backend == "sqlite" {
+						if errCount := db.Raw(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&count).Error; errCount != nil {
+							t.Fatal(errCount)
+						}
+					} else if errCount := db.Raw(`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, indexName).Scan(&count).Error; errCount != nil {
+						t.Fatal(errCount)
+					}
+					if count != 1 {
+						t.Errorf("v17 startup did not install index %s", indexName)
+					}
+				}
 				assertStartupBackfillRows(t, db, pass, usageIDs, "priority")
+				assertStartupBackfillRows(t, db, 0, firstUsageIDs, "priority")
 				assertCleanStartupSkipsBackfillUpdates(t, db)
 			}
 			if backend == "postgres" {
@@ -158,10 +196,24 @@ func assertStartupBackfillRows(t *testing.T, db *gorm.DB, pass int, usageIDs []u
 
 func assertCleanStartupSkipsBackfillUpdates(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	var schemaBefore, schemaAfter int64
+	if db.Dialector.Name() == "sqlite" {
+		if errSchema := db.Raw("PRAGMA schema_version").Scan(&schemaBefore).Error; errSchema != nil {
+			t.Fatal(errSchema)
+		}
+	}
 	var logs bytes.Buffer
 	queryDB := db.Session(&gorm.Session{Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Info, ParameterizedQueries: true})})
 	if errMigrate := AutoMigrate(queryDB); errMigrate != nil {
 		t.Fatal(errMigrate)
+	}
+	if db.Dialector.Name() == "sqlite" {
+		if errSchema := db.Raw("PRAGMA schema_version").Scan(&schemaAfter).Error; errSchema != nil {
+			t.Fatal(errSchema)
+		}
+		if schemaAfter != schemaBefore {
+			t.Errorf("clean startup rebuilt schema/indexes: schema_version %d -> %d", schemaBefore, schemaAfter)
+		}
 	}
 	for _, statement := range []string{`UPDATE "usage"`, "UPDATE `usage`", `UPDATE "billing_charge"`, "UPDATE `billing_charge`"} {
 		if strings.Contains(logs.String(), statement) {
