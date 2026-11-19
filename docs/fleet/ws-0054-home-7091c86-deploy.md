@@ -58,15 +58,20 @@ Relay impact: 10:48–10:56 planned; 11:03–11:45 unplanned (Operations' alarm:
 ## Defects found in the live window and fixed (PR #48, `b5fe18d`)
 
 1. **Readiness compared a full container footprint with the old container.** Recreate deletes that container,
-   and the digest never matched a compose-made one. A healthy Home was failed. The check now asserts explicitly:
-   - restart policy and logging;
-   - both SQLite tmp variables;
-   - read-only root and the 64 MB `/tmp`;
-   - the four `/mnt/cache` mounts.
+   and the digest never matched a compose-made one, so a healthy Home was failed. Readiness now compares the
+   live container with the reviewed compose file and names any differing field without printing values:
+   - image, command, entrypoint, user, working dir and environment;
+   - privileged, capabilities and security options;
+   - read-only root, tmpfs, restart, network and logging;
+   - ports and the exact mount set (type, source, target, RW).
+
+   It matched the live 7091c86 container exactly. It also caught deliberately altered copies: privileged,
+   an added capability, an extra `/` mount, a writable `cluster.yaml` and an extra environment value.
 2. **The old-image recovery's other-writer check refused any container with a broad writable host mount.**
-   The Ark always runs two: `binhex-krusader` (`/mnt`) and `claude-code` (`/`). The check now refuses only
-   writable mounts of the data dir, anything inside it, or Home's app folder. The `fuser` no-open-file proof
-   still covers every host process.
+   The Ark always runs two: `binhex-krusader` (`/mnt`) and `claude-code` (`/`). The fix has two parts:
+   - It still refuses writable mounts of the data dir, anything inside it, or Home's app folder.
+   - Containers with a writable ancestor mount are **paused** from before the `fuser` proof until the old
+     image has started, then unpaused in a `finally`. Today that would pause exactly those two.
 
 The practice runs used a clone and never exercised route B against production's other containers. **Lesson:**
 before trusting an automatic rollback, dry-run its fence checks against the live host.
