@@ -55,10 +55,10 @@ Unraid server) as the central model router for the agent-os fleet. Everything up
   manifest); every node downloads and loads them, so access is fenced with channel groups, not
   per node. The GitHub Copilot plugin is the fork `chansearrington/cliproxyapi-copilot-plugin`
   (ws-0002; its `FORK.md` lists the patches it carries).
-- The four minis run CPA **8.0.79** (SHA-256 `29fae12d…`). Home's first announced rollout moved them there in the
-  2026-11-20 02:00 CT window: canary first, finished 02:04 CT, history `complete_required`, all healthy. The optional
-  MacBook stays on **8.0.69** (`e2d9d0cc…`) because it has no `optional_window`. Home scheduled and announced 8.0.80
-  for the 2026-11-21 02:00 CT window. Read versions from Home's `GET /fleet` `nodes`. On CPA ≤ 8.0.4, adding a new
+- The four minis run CPA **8.0.80** (SHA-256 `89387aaf…`). Home's announced rollouts moved them to 8.0.79 in the
+  2026-11-20 02:00 CT window and to 8.0.80 in the 2026-11-21 window. Both went canary first, finished by 02:04–02:05 CT
+  with `complete_required`, and left every node healthy. The optional MacBook stays on **8.0.69** (`e2d9d0cc…`) because
+  it has no `optional_window`. Read versions from Home's `GET /fleet` `nodes`. On CPA ≤ 8.0.4, adding a new
   plugin while nodes ran made every node loop on "installed but not loaded" (CPA issue #6225);
   8.0.5+ carries the fix (`bfa5aed`). It is proven by upstream's regression tests, not yet by a
   live plugin add — watch the first one, and if a node still loops, restart it in place. Bumping
